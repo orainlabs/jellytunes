@@ -1,0 +1,65 @@
+{
+  "name": "jellysync",
+  "version": "1.0.0",
+  "description": "Sincronizador de música Jellyfin → dispositivos MP3/FLAC",
+  "main": "dist/main/index.js",
+  "author": "Jellysync Team",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite build && electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm run typecheck && pnpm run build",
+    "preview": "electron-vite preview",
+    "start": "electron .",
+    "package": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^3.0.0",
+    "better-sqlite3": "^11.6.0",
+    "electron-log": "^5.2.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "lucide-react": "^0.460.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.4.49",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "com.jellysync.app",
+    "productName": "Jellysync",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": ["nsis", "zip"],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "assets/icon.png"
+    }
+  }
+}
