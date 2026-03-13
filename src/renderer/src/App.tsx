@@ -99,7 +99,7 @@ function App(): JSX.Element {
       })
       
       if (!response.ok) {
-        throw new Error(`Error de conexión: ${response.status} ${response.statusText}`)
+        throw new Error(`Connection error: ${response.status} ${response.statusText}`)
       }
       
       const data = await response.json()
@@ -172,7 +172,7 @@ function App(): JSX.Element {
       } catch (e) {
         console.warn('User ID fetch failed:', e)
         // Show user selector as last resort
-        setError('No se pudo identificar el usuario. Selecciona uno manualmente.')
+        setError('Could not identify user. Please select manually.')
       }
       
       setIsConnecting(false)
@@ -239,7 +239,7 @@ function App(): JSX.Element {
       setArtists(artistsData.Items || [])
     } catch (e) {
       console.error('Failed to load artists:', e)
-      setError('Error cargando artistas')
+      setError('Error loading artists')
       setArtists([])
     }
     
@@ -261,7 +261,7 @@ function App(): JSX.Element {
       }
     } catch (e) {
       console.error('Failed to load albums:', e)
-      setError('Error cargando álbumes')
+      setError('Error loading albums')
       setAlbums([])
     }
     
@@ -314,7 +314,7 @@ function App(): JSX.Element {
           </div>
           
           <div className="bg-zinc-900 rounded-xl p-6 border border-zinc-800">
-            <h2 className="text-lg font-semibold mb-4">Conectar a Jellyfin</h2>
+            <h2 className="text-lg font-semibold mb-4">Connect to Jellyfin</h2>
             
             <form onSubmit={(e) => {
               e.preventDefault()
@@ -324,7 +324,7 @@ function App(): JSX.Element {
             }}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm text-zinc-400 mb-1">URL del servidor</label>
+                  <label className="block text-sm text-zinc-400 mb-1">Server URL</label>
                   <input
                     data-testid="server-url-input"
                     name="url"
@@ -340,7 +340,7 @@ function App(): JSX.Element {
                     data-testid="api-key-input"
                     name="apiKey"
                     type="password"
-                    placeholder="Tu API key de Jellyfin"
+                    placeholder="Your Jellyfin API key"
                     required
                     className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500"
                   />
@@ -358,14 +358,14 @@ function App(): JSX.Element {
                   type="submit"
                   className="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-medium transition-colors"
                 >
-                  Conectar
+                  Connect
                 </button>
               </div>
             </form>
           </div>
           
           <p className="text-xs text-zinc-500 text-center mt-4">
-            Consigue tu API Key en Jellyfin → Dashboard → Usuario → Keys API
+            Get your API Key in Jellyfin → Dashboard → User → API Keys
           </p>
         </div>
       </div>
@@ -383,9 +383,9 @@ function App(): JSX.Element {
           </div>
           
           <div className="bg-zinc-900 rounded-xl p-6 border border-zinc-800">
-            <h2 className="text-lg font-semibold mb-2">Selecciona tu usuario</h2>
+            <h2 className="text-lg font-semibold mb-2">Select your user</h2>
             <p className="text-sm text-zinc-400 mb-4">
-              No se pudo identificar automáticamente tu cuenta. Por favor, selecciona qué usuario de Jellyfin quieres usar para sincronizar:
+              Could not automatically identify your account. Please select which Jellyfin user you want to use for sync:
             </p>
             
             <div className="space-y-2 max-h-64 overflow-y-auto mb-4">
@@ -420,7 +420,7 @@ function App(): JSX.Element {
                   <div className="flex-1">
                     <div className="font-medium">{user.Name as string}</div>
                     {user.Policy?.IsAdministrator && (
-                      <span className="text-xs text-yellow-500">Administrador</span>
+                      <span className="text-xs text-yellow-500">Administrator</span>
                     )}
                   </div>
                 </button>
@@ -431,7 +431,7 @@ function App(): JSX.Element {
               onClick={handleUserSelectorCancel}
               className="w-full py-2 rounded-lg font-medium bg-zinc-800 hover:bg-zinc-700 transition-colors"
             >
-              Cancelar
+              Cancel
             </button>
           </div>
         </div>
@@ -445,7 +445,7 @@ function App(): JSX.Element {
       <div className="h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
         <div className="text-center">
           <Loader2 className="w-10 h-10 animate-spin text-blue-500 mx-auto mb-4" />
-          <p>Conectando a Jellyfin...</p>
+          <p>Connecting to Jellyfin...</p>
         </div>
       </div>
     )
@@ -459,7 +459,7 @@ function App(): JSX.Element {
         <div className="flex items-center gap-2">
           <Music className="w-6 h-6 text-blue-500" />
           <h1 className="text-lg font-semibold">Jellysync</h1>
-          {isConnected && <span className="text-xs text-green-500 flex items-center gap-1"><Check className="w-3 h-3" /> Conectado</span>}
+          {isConnected && <span className="text-xs text-green-500 flex items-center gap-1"><Check className="w-3 h-3" /> Connected</span>}
         </div>
         <div className="flex items-center gap-2">
           <button className="p-2 hover:bg-zinc-800 rounded-lg">
@@ -484,7 +484,7 @@ function App(): JSX.Element {
           <input
             data-testid="search-input"
             type="text"
-            placeholder="Buscar en la biblioteca..."
+            placeholder="Search library..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-blue-500"
@@ -498,7 +498,7 @@ function App(): JSX.Element {
         <aside className="w-64 border-r border-zinc-800 p-4">
           {/* Library Section */}
           <div className="mb-6">
-            <h3 className="text-xs font-medium text-zinc-500 uppercase mb-2">Biblioteca</h3>
+            <h3 className="text-xs font-medium text-zinc-500 uppercase mb-2">Library</h3>
             <nav className="space-y-1">
               <button
                 data-testid="tab-artists"
@@ -510,7 +510,7 @@ function App(): JSX.Element {
                 }`}
               >
                 <User className="w-4 h-4" />
-                Artistas
+                Artists
                 <span className="ml-auto text-xs opacity-60">{artists.length}</span>
               </button>
               <button
@@ -523,7 +523,7 @@ function App(): JSX.Element {
                 }`}
               >
                 <Disc className="w-4 h-4" />
-                Álbumes
+                Albums
                 <span className="ml-auto text-xs opacity-60">{albums.length}</span>
               </button>
               <button
@@ -544,10 +544,10 @@ function App(): JSX.Element {
 
           {/* Devices Section */}
           <div>
-            <h3 className="text-xs font-medium text-zinc-500 uppercase mb-2">Dispositivos</h3>
+            <h3 className="text-xs font-medium text-zinc-500 uppercase mb-2">Devices</h3>
             <nav className="space-y-1">
               {devices.length === 0 ? (
-                <p className="text-xs text-zinc-500 px-3">No hay dispositivos USB</p>
+                <p className="text-xs text-zinc-500 px-3">No USB devices</p>
               ) : (
                 devices.map((device) => (
                   <button
@@ -578,15 +578,15 @@ function App(): JSX.Element {
         <main className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold">
-              {activeLibrary === 'artists' && 'Artistas'}
-              {activeLibrary === 'albums' && 'Álbumes'}
+              {activeLibrary === 'artists' && 'Artists'}
+              {activeLibrary === 'albums' && 'Albums'}
               {activeLibrary === 'playlists' && 'Playlists'}
-              {activeSection === 'devices' && 'Dispositivos USB'}
+              {activeSection === 'devices' && 'USB Devices'}
             </h2>
             {selectedTracks.size > 0 && (
               <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm">
                 <RefreshCw className="w-4 h-4" />
-                Sincronizar ({selectedTracks.size})
+                Sync ({selectedTracks.size})
               </button>
             )}
           </div>
@@ -603,7 +603,7 @@ function App(): JSX.Element {
                     </div>
                     <div className="flex-1">
                       <h3 className="font-medium">{artist.Name}</h3>
-                      <p className="text-sm text-zinc-500">{artist.AlbumCount} álbumes</p>
+                      <p className="text-sm text-zinc-500">{artist.AlbumCount} albums</p>
                     </div>
                     <button className="p-2 hover:bg-zinc-700 rounded-lg">
                       <Play className="w-5 h-5" />
@@ -639,7 +639,7 @@ function App(): JSX.Element {
                     </div>
                     <div className="flex-1">
                       <h3 className="font-medium">{playlist.Name}</h3>
-                      <p className="text-sm text-zinc-500">{playlist.TrackCount} canciones</p>
+                      <p className="text-sm text-zinc-500">{playlist.TrackCount} songs</p>
                     </div>
                     <button className="p-2 hover:bg-zinc-700 rounded-lg">
                       <Play className="w-5 h-5" />
@@ -655,7 +655,7 @@ function App(): JSX.Element {
               {devices.length === 0 ? (
                 <>
                   <HardDrive className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                  <p>Conecta un dispositivo USB para sincronizar</p>
+                  <p>Connect a USB device to sync</p>
                 </>
               ) : (
                 <div className="grid gap-4 text-left max-w-md mx-auto">
@@ -665,7 +665,7 @@ function App(): JSX.Element {
                         <HardDrive className="w-8 h-8 text-blue-500" />
                         <div>
                           <h3 className="font-medium text-zinc-100">
-                            {device.productName || 'Dispositivo USB'}
+                            {device.productName || 'USB Device'}
                           </h3>
                           {device.manufacturerName && (
                             <p className="text-xs text-zinc-500">{device.manufacturerName}</p>
@@ -673,7 +673,7 @@ function App(): JSX.Element {
                         </div>
                       </div>
                       <div className="text-xs text-zinc-500 space-y-1">
-                        <p>Dirección: {device.deviceAddress}</p>
+                        <p>Address: {device.deviceAddress}</p>
                         <p>VID: 0x{device.vendorId.toString(16).padStart(4, '0').toUpperCase()}</p>
                         <p>PID: 0x{device.productId.toString(16).padStart(4, '0').toUpperCase()}</p>
                       </div>
@@ -688,7 +688,7 @@ function App(): JSX.Element {
 
       {/* Footer Stats */}
       <footer className="h-10 border-t border-zinc-800 flex items-center px-4 text-xs text-zinc-500">
-        <span>{artists.length} artistas • {albums.length} álbumes • {playlists.length} playlists</span>
+        <span>{artists.length} artists • {albums.length} albums • {playlists.length} playlists</span>
       </footer>
     </div>
   )

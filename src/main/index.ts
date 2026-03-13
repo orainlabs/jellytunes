@@ -3,13 +3,13 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import log from 'electron-log'
 
-// Configurar logging
+// Configure logging
 log.transports.file.level = 'info'
 log.info('Jellysync starting...')
 
 let mainWindow: BrowserWindow | null = null
 
-// Detección USB - simplificada por ahora
+// USB detection - simplified for now
 interface UsbDeviceInfo {
   deviceAddress: number
   vendorId: number
@@ -19,13 +19,13 @@ interface UsbDeviceInfo {
 }
 
 function listUsbDevices(): UsbDeviceInfo[] {
-  // Detección USB deshabilitada debido a problemas con módulos nativos
-  // Devolver array vacío por ahora
+  // USB detection disabled due to native module issues
+  // Return empty array for now
   log.info('USB detection: disabled')
   return []
 }
 
-// Manejadores de eventos USB - deshabilitados
+// USB event handlers - disabled
 function setupUsbEvents(): void {
   log.info('USB events: disabled')
 }
@@ -56,7 +56,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // Cargar la aplicación
+  // Load the app
   const rendererUrl = process.env['ELECTRON_RENDERER_URL']
   if (is.dev && rendererUrl) {
     log.info('Loading dev URL:', rendererUrl)
@@ -68,7 +68,7 @@ function createWindow(): void {
   }
 }
 
-// Manejadores IPC
+// IPC handlers
 ipcMain.handle('usb:list', async () => {
   try {
     return listUsbDevices()

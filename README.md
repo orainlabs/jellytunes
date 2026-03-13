@@ -1,33 +1,33 @@
 # Jellysync
 
-Sincronizador de música Jellyfin → dispositivos MP3/FLAC
+Jellyfin music synchronizer → MP3/FLAC devices
 
 [![BDD Tests](https://github.com/edgarquasarz/jellysync/actions/workflows/bdd-tests.yml/badge.svg)](https://github.com/edgarquasarz/jellysync/actions/workflows/bdd-tests.yml)
 
-## Desarrollo
+## Development
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-## Tests BDD
+## BDD Tests
 
 ```bash
-# Ejecutar tests
+# Run tests
 pnpm test:bdd
 
-# Desarrollo con UI visible
+# Development with visible UI
 pnpm test:bdd:dev
 
 # CI (headless)
 pnpm test:bdd:ci
 
-# Ver reporte HTML
+# View HTML report
 pnpm test:bdd:report
 ```
 
-## Configuración ignored
+## Ignored configuration
 
 ```
 node_modules/
