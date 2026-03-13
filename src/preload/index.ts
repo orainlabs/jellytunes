@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-// USB device type
+// Tipo de dispositivo USB
 interface UsbDeviceInfo {
   deviceAddress: number
   vendorId: number
@@ -10,7 +10,7 @@ interface UsbDeviceInfo {
   manufacturerName?: string
 }
 
-// Custom APIs for renderer
+// APIs personalizadas para el renderer
 const api = {
   // USB
   listUsbDevices: (): Promise<UsbDeviceInfo[]> =>
@@ -24,7 +24,7 @@ const api = {
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:version')
 }
 
-// Expose APIs to renderer
+// Exponer APIs al renderer
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
