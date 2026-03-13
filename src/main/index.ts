@@ -2,7 +2,6 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import log from 'electron-log'
-import usb from 'usb'
 
 // Configure logging
 log.transports.file.level = 'info'
@@ -10,7 +9,7 @@ log.info('Jellysync starting...')
 
 let mainWindow: BrowserWindow | null = null
 
-// USB detection with real node-usb
+// USB detection - simplified for now
 interface UsbDeviceInfo {
   deviceAddress: number
   vendorId: number
@@ -20,44 +19,15 @@ interface UsbDeviceInfo {
 }
 
 function listUsbDevices(): UsbDeviceInfo[] {
-  try {
-    const devices = usb.getDeviceList()
-    return devices.map(device => ({
-      deviceAddress: device.deviceAddress,
-      vendorId: device.vendorId,
-      productId: device.productId,
-      productName: device.productName || undefined,
-      manufacturerName: device.manufacturerName || undefined
-    }))
-  } catch (error) {
-    log.error('Error listing USB devices:', error)
-    return []
-  }
+  // USB detection disabled due to native module issues
+  // Return empty array for now
+  log.info('USB detection: disabled')
+  return []
 }
 
-// USB event handlers
+// USB event handlers - disabled
 function setupUsbEvents(): void {
-  try {
-    usb.on('attach', (device) => {
-      log.info('USB device attached:', device.deviceAddress)
-      mainWindow?.webContents.send('usb:attach', {
-        deviceAddress: device.deviceAddress,
-        vendorId: device.vendorId,
-        productId: device.productId
-      })
-    })
-
-    usb.on('detach', (device) => {
-      log.info('USB device detached:', device.deviceAddress)
-      mainWindow?.webContents.send('usb:detach', {
-        deviceAddress: device.deviceAddress,
-        vendorId: device.vendorId,
-        productId: device.productId
-      })
-    })
-  } catch (error) {
-    log.error('Error setting up USB events:', error)
-  }
+  log.info('USB events: disabled')
 }
 
 function createWindow(): void {
