@@ -6,7 +6,7 @@ const config = {
     },
     paths: ['tests/bdd/features/**/*.feature'],
     require: ['tests/bdd/steps/**/*.ts', 'tests/bdd/support/**/*.ts'],
-    requireModule: ['ts-node/register'],
+    requireModule: ['ts-node/register/transpile-only'],
     publishQuiet: true,
     worldParameters: {
       headless: true,

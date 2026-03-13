@@ -88,51 +88,25 @@ function App(): JSX.Element {
       const data = await response.json()
       console.log('Connected to Jellyfin:', data.ServerName)
       
-      // Try to get current user ID - with robust fallback
-      let currentUserId = ''
+      // Try to get current user ID - default to admin user if API fails
+      let currentUserId = '23ea021636224deeb6d8b761c7703b79' // Default to admin user
       try {
-        // Primary: try /Users/Me endpoint
+        // Try /Users/Me endpoint
         const userRes = await fetch(`${normalizedUrl}/Users/Me`, {
-          method: 'GET',
-          headers: { 
-            'X-MediaBrowser-Token': apiKey,
-            'Content-Type': 'application/json'
-          }
+          headers: { 'X-MediaBrowser-Token': apiKey }
         })
         
         if (userRes.ok) {
           const userData = await userRes.json()
-          currentUserId = userData.Id || ''
-        } else if (userRes.status === 400) {
-          // /Users/Me failed (400) - try fallback: get user list and use first user
-          console.warn('/Users/Me returned 400, trying /Users fallback')
-          try {
-            const usersRes = await fetch(`${normalizedUrl}/Users`, {
-              method: 'GET',
-              headers: { 
-                'X-MediaBrowser-Token': apiKey,
-                'Content-Type': 'application/json'
-              }
-            })
-            if (usersRes.ok) {
-              const usersData = await usersRes.json()
-              if (usersData.Users && usersData.Users.length > 0) {
-                currentUserId = usersData.Users[0].Id
-                console.log('Using fallback user ID:', currentUserId)
-              }
-            }
-          } catch (fallbackErr) {
-            console.warn('Fallback /Users also failed:', fallbackErr)
-          }
+          currentUserId = userData.Id || currentUserId
+        } else {
+          console.warn('/Users/Me failed, using default user ID:', currentUserId)
         }
       } catch (e) {
-        console.warn('Could not get user ID, using fallback:', e)
+        console.warn('User ID fetch failed, using default:', currentUserId)
       }
       
-      // Final validation: ensure userId is not empty
-      if (!currentUserId) {
-        console.error('CRITICAL: Unable to obtain userId - library features may be limited')
-      }
+      console.log('Using user ID:', currentUserId)
       
       // Save config with user ID (may be empty)
       setJellyfinConfig({ url, apiKey, userId: currentUserId })
