@@ -188,7 +188,7 @@ function App(): JSX.Element {
   // Login screen if not connected
   if (!isConnected && !isConnecting) {
     return (
-      <div className="h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
+      <div data-testid="auth-screen" className="h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
         <div className="w-full max-w-md p-8">
           <div className="flex items-center gap-3 mb-8 justify-center">
             <Music className="w-10 h-10 text-blue-500" />
@@ -208,6 +208,7 @@ function App(): JSX.Element {
                 <div>
                   <label className="block text-sm text-zinc-400 mb-1">URL del servidor</label>
                   <input
+                    data-testid="server-url-input"
                     name="url"
                     type="url"
                     placeholder="https://jellyfin.tudominio.com"
@@ -218,6 +219,7 @@ function App(): JSX.Element {
                 <div>
                   <label className="block text-sm text-zinc-400 mb-1">API Key</label>
                   <input
+                    data-testid="api-key-input"
                     name="apiKey"
                     type="password"
                     placeholder="Tu API key de Jellyfin"
@@ -227,13 +229,14 @@ function App(): JSX.Element {
                 </div>
                 
                 {error && (
-                  <div className="flex items-center gap-2 text-red-400 text-sm">
+                  <div data-testid="error-message" className="flex items-center gap-2 text-red-400 text-sm">
                     <X className="w-4 h-4" />
                     {error}
                   </div>
                 )}
                 
                 <button
+                  data-testid="connect-button"
                   type="submit"
                   className="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-medium transition-colors"
                 >
@@ -294,6 +297,7 @@ function App(): JSX.Element {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
           <input
+            data-testid="search-input"
             type="text"
             placeholder="Buscar en la biblioteca..."
             value={searchQuery}
@@ -312,6 +316,7 @@ function App(): JSX.Element {
             <h3 className="text-xs font-medium text-zinc-500 uppercase mb-2">Biblioteca</h3>
             <nav className="space-y-1">
               <button
+                data-testid="tab-artists"
                 onClick={() => { setActiveSection('library'); setActiveLibrary('artists') }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
                   activeSection === 'library' && activeLibrary === 'artists'
@@ -324,6 +329,7 @@ function App(): JSX.Element {
                 <span className="ml-auto text-xs opacity-60">{artists.length}</span>
               </button>
               <button
+                data-testid="tab-albums"
                 onClick={() => { setActiveSection('library'); setActiveLibrary('albums') }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
                   activeSection === 'library' && activeLibrary === 'albums'
@@ -336,6 +342,7 @@ function App(): JSX.Element {
                 <span className="ml-auto text-xs opacity-60">{albums.length}</span>
               </button>
               <button
+                data-testid="tab-playlists"
                 onClick={() => { setActiveSection('library'); setActiveLibrary('playlists') }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
                   activeSection === 'library' && activeLibrary === 'playlists'

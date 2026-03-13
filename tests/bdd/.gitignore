@@ -1,0 +1,19 @@
+# Tests BDD - Archivos generados
+reports/
+screenshots/
+test-results/
+cucumber-report.html
+cucumber-report.json
+*.log
+
+# Playwright
+playwright-report/
+playwright/.cache/
+
+# TypeScript
+*.js.map
+*.d.ts.map
+
+# Coverage
+coverage/
+.nyc_output/
