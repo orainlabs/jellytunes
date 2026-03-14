@@ -464,6 +464,12 @@ function App(): JSX.Element {
   // Handle tab change - save current scroll and load new tab
   // Toggle track selection for sync
   const toggleTrackSelection = (id: string): void => {
+    // Validate ID - skip undefined/null/empty IDs
+    if (!id || typeof id !== 'string' || id.trim() === '') {
+      console.warn('Attempted to toggle invalid ID:', id)
+      return
+    }
+    
     setSelectedTracks(prev => {
       const newSet = new Set(prev)
       if (newSet.has(id)) {
@@ -518,57 +524,111 @@ function App(): JSX.Element {
   const fetchTracksForSync = async (ids: string[]): Promise<Array<{id: string, name: string, path: string, format: string}>> => {
     if (!jellyfinConfig || !userId) return []
     
+    // Filter out invalid IDs
+    const validIds = ids.filter(id => id && typeof id === 'string' && id.trim() !== '')
+    if (validIds.length === 0) {
+      console.warn('No valid IDs provided for sync')
+      return []
+    }
+    
     const headers = { 'X-MediaBrowser-Token': jellyfinConfig.apiKey, 'X-Emby-Token': jellyfinConfig.apiKey, 'Content-Type': 'application/json' }
     const baseUrl = jellyfinConfig.url.replace(/\/$/, '')
     const tracks: Array<{id: string, name: string, path: string, format: string}> = []
     
-    for (const id of ids) {
+    for (const id of validIds) {
       try {
-        // Try as album first (has tracks directly)
-        const albumRes = await fetch(`${baseUrl}/Items/${id}`, { headers })
-        if (albumRes.ok) {
-          const album = await albumRes.json()
-          // Check if it's a folder (artist) or album
-          if (album.Type === 'MusicAlbum' || album.Type === 'Folder') {
-            // Get children (tracks)
-            const childrenRes = await fetch(`${baseUrl}/Items/${id}/Children?Recursive=true`, { headers })
-            if (childrenRes.ok) {
-              const children = await childrenRes.json()
-              for (const track of children.Items || []) {
-                if (track.Type === 'Audio' && track.MediaSources?.[0]?.Path) {
-                  tracks.push({
-                    id: track.Id,
-                    name: track.Name,
-                    path: track.MediaSources[0].Path,
-                    format: track.MediaSources[0].Container || 'unknown'
-                  })
-                }
+        // First, get item info to determine its type
+        const itemRes = await fetch(`${baseUrl}/Items/${id}`, { headers })
+        
+        if (!itemRes.ok) {
+          console.warn(`Item ${id} not found or inaccessible: ${itemRes.status}`)
+          continue
+        }
+        
+        const item = await itemRes.json()
+        
+        if (item.Type === 'MusicAlbum') {
+          // For albums: get tracks directly using the correct endpoint
+          const tracksRes = await fetch(`${baseUrl}/Users/${userId}/Items?ParentId=${id}&IncludeItemTypes=Audio`, { headers })
+          if (tracksRes.ok) {
+            const tracksData = await tracksRes.json()
+            for (const track of tracksData.Items || []) {
+              if (track.MediaSources?.[0]?.Path) {
+                tracks.push({
+                  id: track.Id,
+                  name: track.Name,
+                  path: track.MediaSources[0].Path,
+                  format: track.MediaSources[0].Container || 'unknown'
+                })
               }
             }
-          } else if (album.Type === 'Playlist') {
-            // Get playlist items
-            const itemsRes = await fetch(`${baseUrl}/Playlists/${id}/Items`, { headers })
-            if (itemsRes.ok) {
-              const items = await itemsRes.json()
-              for (const item of items.Items || []) {
-                if (item.Type === 'Audio' && item.MediaSources?.[0]?.Path) {
-                  tracks.push({
-                    id: item.Id,
-                    name: item.Name,
-                    path: item.MediaSources[0].Path,
-                    format: item.MediaSources[0].Container || 'unknown'
-                  })
+          }
+        } else if (item.Type === 'Artist' || item.Type === 'Person') {
+          // For artists: first get their albums, then tracks from each album
+          const albumsRes = await fetch(`${baseUrl}/Users/${userId}/Items?ArtistIds=${id}&IncludeItemTypes=MusicAlbum`, { headers })
+          if (albumsRes.ok) {
+            const albumsData = await albumsRes.json()
+            for (const album of albumsData.Items || []) {
+              // Get tracks for each album
+              const tracksRes = await fetch(`${baseUrl}/Users/${userId}/Items?ParentId=${album.Id}&IncludeItemTypes=Audio`, { headers })
+              if (tracksRes.ok) {
+                const tracksData = await tracksRes.json()
+                for (const track of tracksData.Items || []) {
+                  if (track.MediaSources?.[0]?.Path) {
+                    tracks.push({
+                      id: track.Id,
+                      name: track.Name,
+                      path: track.MediaSources[0].Path,
+                      format: track.MediaSources[0].Container || 'unknown'
+                    })
+                  }
                 }
               }
             }
           }
+        } else if (item.Type === 'Playlist') {
+          // For playlists: get playlist items
+          const itemsRes = await fetch(`${baseUrl}/Playlists/${id}/Items`, { headers })
+          if (itemsRes.ok) {
+            const items = await itemsRes.json()
+            for (const item of items.Items || []) {
+              if (item.MediaSources?.[0]?.Path) {
+                tracks.push({
+                  id: item.Id,
+                  name: item.Name,
+                  path: item.MediaSources[0].Path,
+                  format: item.MediaSources[0].Container || 'unknown'
+                })
+              }
+            }
+          }
+        } else if (item.Type === 'Audio') {
+          // Already a track
+          if (item.MediaSources?.[0]?.Path) {
+            tracks.push({
+              id: item.Id,
+              name: item.Name,
+              path: item.MediaSources[0].Path,
+              format: item.MediaSources[0].Container || 'unknown'
+            })
+          }
+        } else {
+          console.warn(`Unknown item type: ${item.Type} for item ${id}`)
         }
       } catch (e) {
         console.error('Error fetching tracks for', id, e)
       }
     }
     
-    return tracks
+    // Deduplicate tracks by ID
+    const seen = new Set<string>()
+    const uniqueTracks = tracks.filter(track => {
+      if (seen.has(track.id)) return false
+      seen.add(track.id)
+      return true
+    })
+    
+    return uniqueTracks
   }
 
   // Handle sync start
@@ -596,7 +656,7 @@ function App(): JSX.Element {
       const tracks = await fetchTracksForSync(selectedIds)
       
       if (tracks.length === 0) {
-        alert('No tracks found for selected items')
+        alert('No tracks found for selected items.\n\nPossible reasons:\n• Selected items have no audio files\n• Invalid item IDs were selected\n• Network connectivity issues\n\nPlease try selecting albums or playlists instead of artists.')
         setIsSyncing(false)
         setSyncProgress(null)
         return
