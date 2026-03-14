@@ -125,32 +125,64 @@ function App(): JSX.Element {
         } else if (userRes.status === 400 || userRes.status === 401) {
           // /Users/Me doesn't work with API keys - fetch all users and let user choose
           console.warn('/Users/Me failed with API key, fetching user list...')
-          const usersRes = await fetch(`${normalizedUrl}/Users`, {
-            headers: { 'X-MediaBrowser-Token': apiKey }
-          })
+          let usersData: JellyfinUser[] | null = null
           
-          if (usersRes.ok) {
-            const usersData: JellyfinUser[] = await usersRes.json()
-            if (usersData.length === 1) {
-              // Only one user - use it directly
-              const singleUserId = usersData[0].Id
-              setJellyfinConfig({ url, apiKey, userId: singleUserId })
-              setUserId(singleUserId)
-              setIsConnected(true)
-              await loadLibrary(url, apiKey, singleUserId)
-              return true
-            } else if (usersData.length > 1) {
-              // Multiple users - show selector
-              setUsers(usersData)
-              setPendingConfig({ url, apiKey })
-              setShowUserSelector(true)
-              setIsConnecting(false)
-              return false
+          try {
+            const usersRes = await fetch(`${normalizedUrl}/Users`, {
+              headers: { 'X-MediaBrowser-Token': apiKey }
+            })
+            
+            if (usersRes.ok) {
+              usersData = await usersRes.json()
+              console.log('Users fetched from /Users endpoint:', usersData.length, usersData.map(u => u.Name))
+            } else {
+              console.error('/Users endpoint failed:', usersRes.status, usersRes.statusText)
             }
+          } catch (e) {
+            console.error('Exception fetching /Users:', e)
+          }
+          
+          // Show selector if we got any users, otherwise try fallback
+          if (usersData && usersData.length >= 1) {
+            setUsers(usersData)
+            setPendingConfig({ url, apiKey })
+            setShowUserSelector(true)
+            setIsConnecting(false)
+            console.log('Showing user selector (from /Users/Me 400 fallback)')
+            return false
+          } else {
+            // Try alternative endpoints or show error
+            console.warn('No users from /Users endpoint, trying alternative...')
+            // Try public users endpoint as last resort
+            try {
+              const publicUsersRes = await fetch(`${normalizedUrl}/Users/Public`)
+              if (publicUsersRes.ok) {
+                const publicUsersData: JellyfinUser[] = await publicUsersRes.json()
+                if (publicUsersData.length >= 1) {
+                  console.log('Public users fetched:', publicUsersData.length)
+                  setUsers(publicUsersData)
+                  setPendingConfig({ url, apiKey })
+                  setShowUserSelector(true)
+                  setIsConnecting(false)
+                  console.log('Showing user selector (from public endpoint)')
+                  return false
+                }
+              }
+            } catch (e) {
+              console.error('Public users endpoint also failed:', e)
+            }
+            
+            // If we still can't get users, use default admin
+            console.warn('Could not fetch any users, using default admin')
+            setJellyfinConfig({ url, apiKey, userId: currentUserId })
+            setUserId(currentUserId)
+            setIsConnected(true)
+            await loadLibrary(url, apiKey, currentUserId)
+            return true
           }
         } else {
           // Show user selector as fallback
-          console.warn('/Users/Me failed, showing user selector')
+          console.warn('/Users/Me failed with status', userRes.status, '- showing user selector')
           try {
             const usersRes = await fetch(`${normalizedUrl}/Users`, {
               headers: { 'X-MediaBrowser-Token': apiKey }
