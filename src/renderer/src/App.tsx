@@ -61,9 +61,9 @@ interface JellyfinUser {
 
 // Pagination state
 interface PaginationState {
-  artists: { items: Artist[]; total: number; startIndex: number; hasMore: boolean }
-  albums: { items: Album[]; total: number; startIndex: number; hasMore: boolean }
-  playlists: { items: Playlist[]; total: number; startIndex: number; hasMore: boolean }
+  artists: { items: Artist[]; total: number; startIndex: number; hasMore: boolean; scrollPos: number }
+  albums: { items: Album[]; total: number; startIndex: number; hasMore: boolean; scrollPos: number }
+  playlists: { items: Playlist[]; total: number; startIndex: number; hasMore: boolean; scrollPos: number }
 }
 
 interface Track {
@@ -99,16 +99,22 @@ function App(): JSX.Element {
   // Library statistics (from /Users/{userId}/Items/Counts)
   const [stats, setStats] = useState<LibraryStats | null>(null)
   
-  // Pagination state
+  // Pagination state - independent per tab
   const [pagination, setPagination] = useState<PaginationState>({
-    artists: { items: [], total: 0, startIndex: 0, hasMore: true },
-    albums: { items: [], total: 0, startIndex: 0, hasMore: true },
-    playlists: { items: [], total: 0, startIndex: 0, hasMore: true }
+    artists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
+    albums: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
+    playlists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 }
   })
+  
+  // Track which tab data is currently loaded in main state
+  const [loadedTabs, setLoadedTabs] = useState<Set<'artists' | 'albums' | 'playlists'>>(new Set(['artists']))
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   
   // Infinite scroll ref
   const loadMoreRef = useRef<HTMLDivElement>(null)
+  
+  // Main content scroll ref for restoring scroll position
+  const contentScrollRef = useRef<HTMLDivElement>(null)
 
   // Connect to Jellyfin
   const connectToJellyfin = async (url: string, apiKey: string): Promise<boolean> => {
@@ -326,7 +332,128 @@ function App(): JSX.Element {
     }
   }
 
-  // Load first page of library data (pagination)
+  // Load first page for a specific tab (lazy loading)
+  const loadTab = async (tab: 'artists' | 'albums' | 'playlists'): Promise<void> => {
+    if (!jellyfinConfig || !userId) return
+    
+    const headers = { 
+      'X-MediaBrowser-Token': jellyfinConfig.apiKey,
+      'Content-Type': 'application/json'
+    }
+    const baseUrl = jellyfinConfig.url.replace(/\/$/, '')
+    const safeUserId = userId && userId.trim() !== '' ? userId.trim() : null
+    
+    // Check if already loaded
+    if (loadedTabs.has(tab)) {
+      // Restore scroll position
+      setTimeout(() => {
+        const scrollPos = pagination[tab].scrollPos
+        if (contentScrollRef.current && scrollPos > 0) {
+          contentScrollRef.current.scrollTop = scrollPos
+        }
+      }, 0)
+      return
+    }
+    
+    try {
+      if (tab === 'artists') {
+        const artistsRes = await fetch(buildUrl(baseUrl, `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
+        if (!artistsRes.ok) throw new Error(`HTTP ${artistsRes.status}`)
+        const artistsData = await artistsRes.json()
+        const artistsItems = artistsData.Items || []
+        setArtists(artistsItems)
+        setPagination(prev => ({
+          ...prev,
+          artists: {
+            items: artistsItems,
+            total: artistsData.TotalRecordCount || artistsItems.length,
+            startIndex: artistsItems.length,
+            hasMore: artistsItems.length < (artistsData.TotalRecordCount || artistsItems.length),
+            scrollPos: 0
+          }
+        }))
+      } else if (tab === 'albums') {
+        const albumsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
+        if (!albumsRes.ok) throw new Error(`HTTP ${albumsRes.status}`)
+        const albumsData = await albumsRes.json()
+        const albumsItems = albumsData.Items || []
+        console.log(`Loaded first page: ${albumsItems.length} albums`)
+        setAlbums(albumsItems)
+        setPagination(prev => ({
+          ...prev,
+          albums: {
+            items: albumsItems,
+            total: albumsData.TotalRecordCount || albumsItems.length,
+            startIndex: albumsItems.length,
+            hasMore: albumsItems.length < (albumsData.TotalRecordCount || albumsItems.length),
+            scrollPos: 0
+          }
+        }))
+      } else if (tab === 'playlists') {
+        let playlistsData = { Items: [] as any[], TotalRecordCount: 0 }
+        
+        // Use /Playlists endpoint with UserId for user playlists
+        if (safeUserId) {
+          try {
+            const playlistsRes = await fetch(buildUrl(baseUrl, `/Playlists?UserId=${safeUserId}&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
+            if (playlistsRes.ok) {
+              playlistsData = await playlistsRes.json()
+              console.log('Playlists from /Playlists endpoint:', playlistsData.TotalRecordCount, 'playlists')
+            }
+          } catch (e) {
+            console.warn('/Playlists endpoint failed, trying Items:', e)
+          }
+        }
+        
+        // Fallback to Items endpoint with Playlist type
+        if (!playlistsData.Items || playlistsData.Items.length === 0) {
+          const itemsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
+          if (itemsRes.ok) {
+            playlistsData = await itemsRes.json()
+            console.log('Playlists from /Items fallback:', playlistsData.TotalRecordCount, 'items')
+          }
+        }
+        
+        const playlistsItems = playlistsData.Items || []
+        setPlaylists(playlistsItems)
+        setPagination(prev => ({
+          ...prev,
+          playlists: {
+            items: playlistsItems,
+            total: playlistsData.TotalRecordCount || playlistsItems.length,
+            startIndex: playlistsItems.length,
+            hasMore: playlistsItems.length < (playlistsData.TotalRecordCount || playlistsItems.length),
+            scrollPos: 0
+          }
+        }))
+      }
+      
+      // Mark tab as loaded
+      setLoadedTabs(prev => new Set(prev).add(tab))
+      
+    } catch (e) {
+      console.error(`Failed to load ${tab}:`, e)
+    }
+  }
+
+  // Handle tab change - save current scroll and load new tab
+  const handleTabChange = (newTab: 'artists' | 'albums' | 'playlists'): void => {
+    // Save current scroll position before switching
+    if (contentScrollRef.current) {
+      const currentScroll = contentScrollRef.current.scrollTop
+      setPagination(prev => ({
+        ...prev,
+        [activeLibrary]: {
+          ...prev[activeLibrary],
+          scrollPos: currentScroll
+        }
+      }))
+    }
+    
+    setActiveLibrary(newTab)
+  }
+
+  // Load initial library data (lazy load tabs on demand)
   const loadLibrary = async (url: string, apiKey: string, userId: string): Promise<void> => {
     const headers = { 
       'X-MediaBrowser-Token': apiKey,
@@ -335,14 +462,15 @@ function App(): JSX.Element {
     const baseUrl = url.replace(/\/$/, '')
     const safeUserId = userId && userId.trim() !== '' ? userId.trim() : null
     
-    // Reset pagination state
+    // Reset pagination and loaded tabs
     setPagination({
-      artists: { items: [], total: 0, startIndex: 0, hasMore: true },
-      albums: { items: [], total: 0, startIndex: 0, hasMore: true },
-      playlists: { items: [], total: 0, startIndex: 0, hasMore: true }
+      artists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
+      albums: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
+      playlists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 }
     })
+    setLoadedTabs(new Set(['artists'])) // Start with artists loaded
     
-    // Load first page of artists
+    // Load first page of artists (always load first tab)
     try {
       const artistsRes = await fetch(buildUrl(baseUrl, `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
       if (!artistsRes.ok) throw new Error(`HTTP ${artistsRes.status}`)
@@ -355,7 +483,8 @@ function App(): JSX.Element {
           items: artistsItems,
           total: artistsData.TotalRecordCount || artistsItems.length,
           startIndex: artistsItems.length,
-          hasMore: artistsItems.length < (artistsData.TotalRecordCount || artistsItems.length)
+          hasMore: artistsItems.length < (artistsData.TotalRecordCount || artistsItems.length),
+          scrollPos: 0
         }
       }))
     } catch (e) {
@@ -364,70 +493,7 @@ function App(): JSX.Element {
       setArtists([])
     }
     
-    // Load first page of albums
-    try {
-      const albumsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
-      if (!albumsRes.ok) throw new Error(`HTTP ${albumsRes.status}`)
-      const albumsData = await albumsRes.json()
-      const albumsItems = albumsData.Items || []
-      console.log(`Loaded first page: ${albumsItems.length} albums`)
-      setAlbums(albumsItems)
-      setPagination(prev => ({
-        ...prev,
-        albums: {
-          items: albumsItems,
-          total: albumsData.TotalRecordCount || albumsItems.length,
-          startIndex: albumsItems.length,
-          hasMore: albumsItems.length < (albumsData.TotalRecordCount || albumsItems.length)
-        }
-      }))
-    } catch (e) {
-      console.error('Failed to load albums:', e)
-      setError('Error loading albums')
-      setAlbums([])
-    }
-    
-    // Load first page of playlists
-    try {
-      let playlistsData = { Items: [] as any[], TotalRecordCount: 0 }
-      
-      // Use /Playlists endpoint which returns user playlists directly
-      if (safeUserId) {
-        try {
-          const playlistsRes = await fetch(buildUrl(baseUrl, `/Playlists?UserId=${safeUserId}&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
-          if (playlistsRes.ok) {
-            playlistsData = await playlistsRes.json()
-            console.log('Playlists from /Playlists endpoint:', playlistsData.TotalRecordCount, 'playlists')
-          }
-        } catch (e) {
-          console.warn('/Playlists endpoint failed, trying Items:', e)
-        }
-      }
-      
-      // Fallback to Items endpoint with Playlist type
-      if (!playlistsData.Items || playlistsData.Items.length === 0) {
-        const itemsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
-        if (itemsRes.ok) {
-          playlistsData = await itemsRes.json()
-          console.log('Playlists from /Items fallback:', playlistsData.TotalRecordCount, 'items')
-        }
-      }
-      
-      const playlistsItems = playlistsData.Items || []
-      setPlaylists(playlistsItems)
-      setPagination(prev => ({
-        ...prev,
-        playlists: {
-          items: playlistsItems,
-          total: playlistsData.TotalRecordCount || playlistsItems.length,
-          startIndex: playlistsItems.length,
-          hasMore: playlistsItems.length < (playlistsData.TotalRecordCount || playlistsItems.length)
-        }
-      }))
-    } catch (e) {
-      console.error('Failed to load playlists:', e)
-      setPlaylists([])
-    }
+    // Note: Albums and playlists will be loaded on-demand when tab is switched
   }
 
   // Load more items (infinite scroll)
@@ -473,14 +539,15 @@ function App(): JSX.Element {
       
       console.log(`Loaded more ${type}: ${newItems.length} items (startIndex: ${startIndex})`)
       
-      // Update state
+      // Update state (preserve scrollPos)
       setPagination(prev => ({
         ...prev,
         [type]: {
           items: [...prev[type].items, ...newItems],
           total: data.TotalRecordCount || prev[type].total,
           startIndex: startIndex + newItems.length,
-          hasMore: (startIndex + newItems.length) < (data.TotalRecordCount || prev[type].total)
+          hasMore: (startIndex + newItems.length) < (data.TotalRecordCount || prev[type].total),
+          scrollPos: prev[type].scrollPos
         }
       }))
       
@@ -508,11 +575,11 @@ function App(): JSX.Element {
       (entries) => {
         if (entries[0].isIntersecting && !isLoadingMore) {
           // Load more for current active library
-          if (activeLibrary === 'artists' && pagination.artists.hasMore) {
+          if (activeLibrary === 'artists' && pagination.artists.hasMore && loadedTabs.has('artists')) {
             loadMore('artists')
-          } else if (activeLibrary === 'albums' && pagination.albums.hasMore) {
+          } else if (activeLibrary === 'albums' && pagination.albums.hasMore && loadedTabs.has('albums')) {
             loadMore('albums')
-          } else if (activeLibrary === 'playlists' && pagination.playlists.hasMore) {
+          } else if (activeLibrary === 'playlists' && pagination.playlists.hasMore && loadedTabs.has('playlists')) {
             loadMore('playlists')
           }
         }
@@ -523,7 +590,27 @@ function App(): JSX.Element {
     observer.observe(loadMoreRef.current)
     
     return () => observer.disconnect()
-  }, [activeLibrary, pagination, isLoadingMore, loadMore])
+  }, [activeLibrary, pagination, isLoadingMore, loadMore, loadedTabs])
+
+  // Load active tab when it changes
+  useEffect(() => {
+    if (activeSection === 'library' && jellyfinConfig && userId) {
+      loadTab(activeLibrary)
+    }
+  }, [activeLibrary, activeSection, jellyfinConfig, userId])
+
+  // Sync main state arrays with pagination when loaded tabs change
+  useEffect(() => {
+    if (loadedTabs.has('artists')) {
+      setArtists(pagination.artists.items)
+    }
+    if (loadedTabs.has('albums')) {
+      setAlbums(pagination.albums.items)
+    }
+    if (loadedTabs.has('playlists')) {
+      setPlaylists(pagination.playlists.items)
+    }
+  }, [loadedTabs, pagination.artists.items, pagination.albums.items, pagination.playlists.items])
 
   // USB detection
   useEffect(() => {
@@ -735,7 +822,7 @@ function App(): JSX.Element {
             <nav className="space-y-1">
               <button
                 data-testid="tab-artists"
-                onClick={() => { setActiveSection('library'); setActiveLibrary('artists') }}
+                onClick={() => { setActiveSection('library'); handleTabChange('artists') }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
                   activeSection === 'library' && activeLibrary === 'artists'
                     ? 'bg-blue-600 text-white'
@@ -750,7 +837,7 @@ function App(): JSX.Element {
               </button>
               <button
                 data-testid="tab-albums"
-                onClick={() => { setActiveSection('library'); setActiveLibrary('albums') }}
+                onClick={() => { setActiveSection('library'); handleTabChange('albums') }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
                   activeSection === 'library' && activeLibrary === 'albums'
                     ? 'bg-blue-600 text-white'
@@ -765,7 +852,7 @@ function App(): JSX.Element {
               </button>
               <button
                 data-testid="tab-playlists"
-                onClick={() => { setActiveSection('library'); setActiveLibrary('playlists') }}
+                onClick={() => { setActiveSection('library'); handleTabChange('playlists') }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
                   activeSection === 'library' && activeLibrary === 'playlists'
                     ? 'bg-blue-600 text-white'
@@ -814,7 +901,7 @@ function App(): JSX.Element {
         </aside>
 
         {/* Content Area */}
-        <main className="flex-1 p-6 overflow-auto">
+        <main ref={contentScrollRef} className="flex-1 p-6 overflow-auto">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold">
               {activeLibrary === 'artists' && 'Artists'}
