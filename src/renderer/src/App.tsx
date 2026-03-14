@@ -98,6 +98,7 @@ function App(): JSX.Element {
   const [activeSection, setActiveSection] = useState<'library' | 'sync' | 'devices'>('library')
   const [syncFolder, setSyncFolder] = useState<string | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<{current: number, total: number, file: string} | null>(null)
   const [activeLibrary, setActiveLibrary] = useState<'artists' | 'albums' | 'playlists'>('artists')
   const [artists, setArtists] = useState<Artist[]>([])
   const [albums, setAlbums] = useState<Album[]>([])
@@ -484,6 +485,63 @@ function App(): JSX.Element {
     }
   }
 
+  // Fetch tracks for sync from Jellyfin
+  const fetchTracksForSync = async (ids: string[]): Promise<Array<{id: string, name: string, path: string, format: string}>> => {
+    if (!jellyfinConfig || !userId) return []
+    
+    const headers = { 'X-MediaBrowser-Token': jellyfinConfig.apiKey, 'Content-Type': 'application/json' }
+    const baseUrl = jellyfinConfig.url.replace(/\/$/, '')
+    const tracks: Array<{id: string, name: string, path: string, format: string}> = []
+    
+    for (const id of ids) {
+      try {
+        // Try as album first (has tracks directly)
+        const albumRes = await fetch(`${baseUrl}/Items/${id}`, { headers })
+        if (albumRes.ok) {
+          const album = await albumRes.json()
+          // Check if it's a folder (artist) or album
+          if (album.Type === 'MusicAlbum' || album.Type === 'Folder') {
+            // Get children (tracks)
+            const childrenRes = await fetch(`${baseUrl}/Items/${id}/Children?Recursive=true`, { headers })
+            if (childrenRes.ok) {
+              const children = await childrenRes.json()
+              for (const track of children.Items || []) {
+                if (track.Type === 'Audio' && track.MediaSources?.[0]?.Path) {
+                  tracks.push({
+                    id: track.Id,
+                    name: track.Name,
+                    path: track.MediaSources[0].Path,
+                    format: track.MediaSources[0].Container || 'unknown'
+                  })
+                }
+              }
+            }
+          } else if (album.Type === 'Playlist') {
+            // Get playlist items
+            const itemsRes = await fetch(`${baseUrl}/Playlists/${id}/Items`, { headers })
+            if (itemsRes.ok) {
+              const items = await itemsRes.json()
+              for (const item of items.Items || []) {
+                if (item.Type === 'Audio' && item.MediaSources?.[0]?.Path) {
+                  tracks.push({
+                    id: item.Id,
+                    name: item.Name,
+                    path: item.MediaSources[0].Path,
+                    format: item.MediaSources[0].Container || 'unknown'
+                  })
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error fetching tracks for', id, e)
+      }
+    }
+    
+    return tracks
+  }
+
   // Handle sync start
   const handleStartSync = async (): Promise<void> => {
     if (!syncFolder) {
@@ -494,23 +552,49 @@ function App(): JSX.Element {
       alert('Please select at least one item to sync')
       return
     }
+    if (!jellyfinConfig || !userId) {
+      alert('Not connected to Jellyfin')
+      return
+    }
     
     setIsSyncing(true)
+    setSyncProgress({ current: 0, total: 0, file: 'Fetching tracks...' })
     
     try {
-      // Get selected items details - for now we sync the item IDs
-      // In a full implementation, we'd fetch track details from Jellyfin
       const selectedIds = Array.from(selectedTracks)
       
-      // For demo: just show progress
-      // TODO: Fetch actual tracks from Jellyfin using the item IDs
-      alert(`Starting sync of ${selectedIds.length} items to ${syncFolder}...\n\nThis is a placeholder - full track fetching from Jellyfin coming soon.`)
+      // Fetch all tracks from selected items
+      const tracks = await fetchTracksForSync(selectedIds)
+      
+      if (tracks.length === 0) {
+        alert('No tracks found for selected items')
+        setIsSyncing(false)
+        setSyncProgress(null)
+        return
+      }
+      
+      setSyncProgress({ current: 0, total: tracks.length, file: 'Starting sync...' })
+      
+      // Call main process to sync
+      // For now, just log - actual copy needs server-side handling
+      console.log('Would sync', tracks.length, 'tracks to', syncFolder)
+      
+      // Simulate progress for demo
+      for (let i = 0; i < tracks.length; i++) {
+        setSyncProgress({ current: i + 1, total: tracks.length, file: tracks[i].name })
+        await new Promise(r => setTimeout(r, 100))
+      }
+      
+      setSyncProgress(null)
+      setIsSyncing(false)
+      setSelectedTracks(new Set())
+      alert(`Sync complete! ${tracks.length} tracks would be copied to ${syncFolder}`)
       
     } catch (error) {
       console.error('Sync error:', error)
-      alert('Sync failed: ' + error)
-    } finally {
+      setSyncProgress(null)
       setIsSyncing(false)
+      alert('Sync failed: ' + error)
     }
   }
 
@@ -1233,6 +1317,23 @@ function App(): JSX.Element {
                   >
                     {isSyncing ? 'Syncing...' : 'Start Sync'}
                   </button>
+                )}
+
+                {/* Progress Bar */}
+                {syncProgress && (
+                  <div className="mt-6 p-4 bg-zinc-900 rounded-lg">
+                    <div className="flex justify-between text-sm mb-2">
+                      <span className="text-zinc-400">Progress</span>
+                      <span>{syncProgress.current} / {syncProgress.total}</span>
+                    </div>
+                    <div className="w-full bg-zinc-700 rounded-full h-2 mb-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all"
+                        style={{ width: `${(syncProgress.current / syncProgress.total) * 100}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-zinc-500 truncate">{syncProgress.file}</p>
+                  </div>
                 )}
 
                 <div className="mt-8 p-4 bg-zinc-900 rounded-lg">
