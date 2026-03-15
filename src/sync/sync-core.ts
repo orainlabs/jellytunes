@@ -28,6 +28,7 @@ import {
 import {
   createApiClient,
   SyncApi,
+  detectServerRootPath,
 } from './sync-api';
 
 import {
@@ -160,6 +161,14 @@ class SyncCoreImpl {
         input.itemIds,
         input.itemTypes
       );
+      
+      // Auto-detect serverRootPath from tracks if not provided in config
+      if (!this.serverRootPath && tracks.length > 0) {
+        const detectedPath = detectServerRootPath(tracks);
+        if (detectedPath) {
+          this.serverRootPath = detectedPath;
+        }
+      }
       
       errors.push(...fetchErrors);
       totalTracks = tracks.length;
@@ -319,14 +328,14 @@ class SyncCoreImpl {
   
   /**
    * Get output directory path
-   * Uses server root mapping if configured, otherwise falls back to metadata reconstruction
+   * Uses server root mapping if configured, otherwise falls back to preserving original path structure
    */
   private getOutputDir(
     track: {path: string; artists?: string[]; album?: string; year?: number},
     basePath: string,
     preserveStructure: boolean
   ): string {
-    // If server root path is configured, use original server path structure
+    // If server root path is configured (or auto-detected), use original server path structure
     if (this.serverRootPath && track.path) {
       const relativePath = getRelativePath(track.path, this.serverRootPath);
       // Extract directory part from relative path
@@ -341,8 +350,23 @@ class SyncCoreImpl {
       return basePath;
     }
     
-    // Fallback: reconstruct from metadata
-    if (!preserveStructure) {
+    // No serverRootPath: preserve original path structure from server
+    // This ensures we don't lose the folder hierarchy even without explicit mapping
+    if (track.path && preserveStructure) {
+      // Extract directory from original path
+      const pathParts = track.path.split('/');
+      if (pathParts.length > 1) {
+        // Remove filename, keep directory structure
+        pathParts.pop();
+        const dirRelative = pathParts.join('/');
+        // Combine with destination base but preserve server structure
+        return `${basePath}/${dirRelative}`;
+      }
+    }
+    
+    // Fallback: reconstruct from metadata only if preserveStructure is false
+    // or if we have no path to work with
+    if (!preserveStructure || !track.path) {
       return basePath;
     }
     
@@ -369,14 +393,14 @@ class SyncCoreImpl {
   
   /**
    * Get output filename
-   * Uses original filename from server path if configured, otherwise reconstructs from metadata
+   * Uses original filename from server path if available, otherwise reconstructs from metadata
    */
   private async getOutputFilename(
     track: { name: string; path: string; format: string; trackNumber?: number; artists?: string[]; album?: string },
     outputDir: string,
     options: ReturnType<typeof resolveSyncOptions>
   ): Promise<string> {
-    // If server root path is configured, use original filename from server path
+    // If server root path is configured (or auto-detected), use original filename from server path
     if (this.serverRootPath && track.path) {
       const extension = options.convertToMp3 ? 'mp3' : track.format.toLowerCase();
       const originalFilename = getFilenameFromPath(track.path);
@@ -390,7 +414,21 @@ class SyncCoreImpl {
       return getUniqueFilename(outputDir, filename, this.deps.fs);
     }
     
-    // Fallback: reconstruct from metadata
+    // No serverRootPath: preserve original filename from server path
+    if (track.path) {
+      const extension = options.convertToMp3 ? 'mp3' : track.format.toLowerCase();
+      const originalFilename = getFilenameFromPath(track.path);
+      
+      // Replace extension if converting to mp3
+      let filename = originalFilename;
+      if (options.convertToMp3 && !originalFilename.toLowerCase().endsWith('.mp3')) {
+        filename = originalFilename.replace(/\.[^.]+$/, `.${extension}`);
+      }
+      
+      return getUniqueFilename(outputDir, filename, this.deps.fs);
+    }
+    
+    // Fallback: reconstruct from metadata only if we have no path
     const extension = options.convertToMp3 ? 'mp3' : track.format.toLowerCase();
     const baseName = track.name.replace(/[<>:"/\\|?*]/g, '_');
     const artistName = track.artists?.[0]?.replace(/[<>:"/\\|?*]/g, '_') ?? 'Unknown Artist';

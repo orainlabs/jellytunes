@@ -333,6 +333,71 @@ class SyncApiImpl implements SyncApi {
 }
 
 /**
+ * Extract common server root path from an array of track paths
+ * 
+ * Analyzes all track paths and finds the longest common prefix that looks like
+ * a media library root (e.g., "/mediamusic/lib/lib/").
+ * 
+ * @param tracks - Array of TrackInfo with path property
+ * @returns Detected server root path, or empty string if not detectable
+ */
+export function detectServerRootPath(tracks: TrackInfo[]): string {
+  const paths = tracks
+    .map(t => t.path)
+    .filter(p => p && p.length > 0);
+  
+  if (paths.length === 0) {
+    return '';
+  }
+  
+  // Find the shortest path length to use as reference
+  const minLength = Math.min(...paths.map(p => p.length));
+  
+  if (minLength === 0) {
+    return '';
+  }
+  
+  // Find common prefix character by character
+  let commonPrefix = '';
+  for (let i = 0; i < minLength; i++) {
+    const char = paths[0][i];
+    if (paths.every(p => p[i] === char)) {
+      commonPrefix += char;
+    } else {
+      break;
+    }
+  }
+  
+  // The common prefix should end at a folder boundary (contains /)
+  // and ideally looks like a media library root (contains 'lib' or 'music')
+  if (!commonPrefix.includes('/')) {
+    // No common folder structure, try to find a reasonable root
+    // Look for patterns like /mediamusic/ or /music/
+    const firstPath = paths[0];
+    const mediaMatch = firstPath.match(/^\/[^/]+\/(lib|music|media|mediafiles|multimedia)\//i);
+    if (mediaMatch) {
+      const rootEnd = firstPath.indexOf('/', mediaMatch.index! + 1);
+      if (rootEnd > 0) {
+        return firstPath.substring(0, rootEnd + 1); // Include trailing slash
+      }
+    }
+    return '';
+  }
+  
+  // Ensure it ends with /
+  if (!commonPrefix.endsWith('/')) {
+    const lastSlash = commonPrefix.lastIndexOf('/');
+    if (lastSlash > 0) {
+      commonPrefix = commonPrefix.substring(0, lastSlash + 1);
+    } else {
+      return '';
+    }
+  }
+  
+  return commonPrefix;
+}
+
+/**
  * Create mock API client for testing
  */
 export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
