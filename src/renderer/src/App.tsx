@@ -610,23 +610,26 @@ function App(): JSX.Element {
     setShowPreview(false)
     setIsSyncing(true)
     setSyncProgress({ current: 0, total: 0, file: 'Validating...' })
-    
+
+    // Subscribe to progress events BEFORE starting sync
+    const unsubscribe = window.api.onSyncProgress((progress) => {
+      setSyncProgress({
+        current: progress.current,
+        total: progress.total,
+        file: progress.currentFile,
+      })
+    })
+
     try {
-      // Get item types from the index
       const itemTypesMap: Record<string, 'artist' | 'album' | 'playlist'> = {}
-      
-      // Use the itemTypeIndexRef to get types
       const artistIds = uniqueArtists.filter(a => selectedTracks.has(a.Id)).map(a => a.Id)
       const albumIds = uniqueAlbums.filter(a => selectedTracks.has(a.Id)).map(a => a.Id)
       const playlistIds = uniquePlaylists.filter(p => selectedTracks.has(p.Id)).map(p => p.Id)
-      
       artistIds.forEach(id => { if (id) itemTypesMap[id] = 'artist' })
       albumIds.forEach(id => { if (id) itemTypesMap[id] = 'album' })
       playlistIds.forEach(id => { if (id) itemTypesMap[id] = 'playlist' })
-      
       const selectedIds = [...artistIds, ...albumIds, ...playlistIds].filter(Boolean)
-      
-      // Call new sync module via IPC
+
       const result = await window.api.startSync2({
         serverUrl: jellyfinConfig.url,
         apiKey: jellyfinConfig.apiKey,
@@ -634,16 +637,13 @@ function App(): JSX.Element {
         itemIds: selectedIds,
         itemTypes: itemTypesMap,
         destinationPath: syncFolder,
-        options: {
-          convertToMp3,
-          bitrate,
-        }
+        options: { convertToMp3, bitrate },
       })
-      
-      
+
+      unsubscribe?.()
       setSyncProgress(null)
       setIsSyncing(false)
-      
+
       if (result.success) {
         setSelectedTracks(new Set())
         alert(`Sync complete!\n\nTracks copied: ${result.tracksCopied}\nErrors: ${result.errors.length}\n\n${result.errors.length > 0 ? 'Errors:\n' + result.errors.slice(0, 5).join('\n') : ''}`)
@@ -651,6 +651,7 @@ function App(): JSX.Element {
         alert(`Sync failed:\n\n${result.errors.join('\n')}`)
       }
     } catch (error) {
+      unsubscribe?.()
       console.error('Sync error:', error)
       setSyncProgress(null)
       setIsSyncing(false)
