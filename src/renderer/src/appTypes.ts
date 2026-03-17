@@ -1,0 +1,107 @@
+export interface UsbDevice {
+  device: string
+  displayName: string
+  size: number
+  mountpoints: Array<{ path: string }>
+  isRemovable: boolean
+  vendorName?: string
+  serialNumber?: string
+  deviceInfo?: { total: number; free: number; used: number }
+  deviceAddress?: number
+  vendorId?: number
+  productId?: number
+  productName?: string
+  manufacturerName?: string
+}
+
+export interface JellyfinConfig {
+  url: string
+  apiKey: string
+  userId?: string
+}
+
+export interface Artist {
+  Id: string
+  Name: string
+  AlbumCount: number
+}
+
+export interface Album {
+  Id: string
+  Name: string
+  ArtistName: string
+  Year: number
+  PremiereDate?: string
+}
+
+export interface Playlist {
+  Id: string
+  Name: string
+  TrackCount: number
+}
+
+export interface LibraryStats {
+  ArtistCount: number
+  AlbumCount: number
+  SongCount: number
+  PlaylistCount: number
+  ItemCount: number
+}
+
+export interface JellyfinUser {
+  Id: string
+  Name: string
+  PrimaryImageTag?: string
+  Policy?: {
+    IsAdministrator: boolean
+  }
+}
+
+export interface PaginationEntry<T> {
+  items: T[]
+  total: number
+  startIndex: number
+  hasMore: boolean
+  scrollPos: number
+}
+
+export interface PaginationState {
+  artists: PaginationEntry<Artist>
+  albums: PaginationEntry<Album>
+  playlists: PaginationEntry<Playlist>
+}
+
+export interface Track {
+  Id: string
+  Name: string
+  Artists: string[]
+  AlbumName: string
+  IndexNumber: number
+  Duration: number
+  Path?: string
+  MediaSources?: Array<{ Path: string }>
+}
+
+export type ActiveSection = 'library' | 'sync' | 'devices'
+export type LibraryTab = 'artists' | 'albums' | 'playlists'
+export type Bitrate = '128k' | '192k' | '320k'
+
+export interface SyncProgressInfo {
+  current: number
+  total: number
+  file: string
+}
+
+export interface PreviewData {
+  trackCount: number
+  totalBytes: number
+  formatBreakdown: Record<string, number>
+  alreadySyncedCount: number
+  willRemoveCount?: number
+}
+
+export interface ItemTypeIndex {
+  artists: Set<string>
+  albums: Set<string>
+  playlists: Set<string>
+}
