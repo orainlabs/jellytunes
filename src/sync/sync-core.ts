@@ -348,8 +348,13 @@ class SyncCoreImpl {
   }
   
   /**
-   * Remove synced items from destination
-   * Fetches tracks from Jellyfin to compute destination paths, then deletes files.
+   * Remove synced items from destination.
+   *
+   * For playlist items:
+   *   1. Delete the corresponding .m3u8 file.
+   *   2. Only delete audio files that are NOT referenced by any remaining .m3u8
+   *      on the device (to avoid breaking other playlists).
+   * For artist/album items: same track-reference safety check applies.
    */
   async removeItems(
     itemIds: string[],
@@ -359,10 +364,9 @@ class SyncCoreImpl {
     if (itemIds.length === 0) return { removed: 0, errors: [] };
 
     const { tracks } = await this.deps.api.getTracksForItems(itemIds, itemTypes);
-    if (tracks.length === 0) return { removed: 0, errors: [] };
 
     // Auto-detect serverRootPath if not set
-    if (!this.serverRootPath) {
+    if (!this.serverRootPath && tracks.length > 0) {
       const detected = detectServerRootPath(tracks);
       if (detected) this.serverRootPath = detected;
     }
@@ -371,23 +375,55 @@ class SyncCoreImpl {
     let removed = 0;
     const dirsToClean = new Set<string>();
 
+    // Step 1: Delete M3U8 files for playlist items being removed
+    const playlistIds = itemIds.filter(id => itemTypes.get(id) === 'playlist');
+    for (const playlistId of playlistIds) {
+      try {
+        const info = await this.deps.api.getItem(playlistId);
+        if (info?.name) {
+          const safeName = info.name.replace(/[<>:"/\\|?*]/g, '_');
+          const m3u8Path = `${destinationPath}/${safeName}.m3u8`;
+          if (await this.deps.fs.exists(m3u8Path)) {
+            await this.deps.fs.unlink(m3u8Path);
+          }
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    if (tracks.length === 0) return { removed: 0, errors: [] };
+
+    // Step 2: Collect all track paths still referenced by remaining M3U8 files.
+    // This is done AFTER deleting the playlist M3U8s above, so tracks exclusive
+    // to the removed playlists won't be protected.
+    const protectedPaths = await this.getM3u8ReferencedPaths(destinationPath);
+
+    // Step 3: Delete audio files not referenced by any remaining M3U8
     for (const track of tracks) {
       try {
         if (!track.path) continue;
         const outputDir = this.getOutputDir(track, destinationPath, true);
         const originalFilename = getFilenameFromPath(track.path);
-        // Try original filename first, then .mp3 variant (in case it was converted)
         const mp3Filename = originalFilename.replace(/\.[^.]+$/, '.mp3');
 
         let deleted = false;
         for (const filename of [originalFilename, mp3Filename]) {
           const outputPath = `${outputDir}/${filename}`;
-          if (await this.deps.fs.exists(outputPath)) {
-            await this.deps.fs.unlink(outputPath);
-            deleted = true;
-            dirsToClean.add(outputDir);
-            break;
+          if (!await this.deps.fs.exists(outputPath)) continue;
+
+          // Compute relative path for this specific file (respecting actual extension)
+          if (this.serverRootPath && track.path) {
+            const baseRelative = getRelativePath(track.path, this.serverRootPath);
+            const ext = filename.match(/\.[^.]+$/)?.[0] ?? '';
+            const relativePath = baseRelative.replace(/\.[^.]+$/, ext);
+            if (protectedPaths.has(relativePath)) break; // referenced elsewhere
+          } else if (protectedPaths.size > 0) {
+            break; // can't compute relative path, be conservative
           }
+
+          await this.deps.fs.unlink(outputPath);
+          deleted = true;
+          dirsToClean.add(outputDir);
+          break;
         }
         if (deleted) removed++;
       } catch (error) {
@@ -402,6 +438,28 @@ class SyncCoreImpl {
     }
 
     return { removed, errors };
+  }
+
+  /**
+   * Read all .m3u8 files in the destination root and return the set of
+   * relative track paths they reference (lines that don't start with #).
+   */
+  private async getM3u8ReferencedPaths(destinationPath: string): Promise<Set<string>> {
+    const referenced = new Set<string>();
+    try {
+      const entries = await this.deps.fs.readdir(destinationPath);
+      const m3u8Files = entries.filter(e => e.toLowerCase().endsWith('.m3u8'));
+      for (const m3u8File of m3u8Files) {
+        try {
+          const content = await this.deps.fs.readFile(`${destinationPath}/${m3u8File}`);
+          for (const line of content.toString('utf8').split('\n')) {
+            const trimmed = line.trim();
+            if (trimmed && !trimmed.startsWith('#')) referenced.add(trimmed);
+          }
+        } catch { /* ignore unreadable files */ }
+      }
+    } catch { /* ignore if destination doesn't exist */ }
+    return referenced;
   }
 
   /**
