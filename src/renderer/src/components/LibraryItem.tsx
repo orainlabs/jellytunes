@@ -18,11 +18,15 @@ export function LibraryItem({ item, type, isSelected, wasSynced, onToggle }: Lib
       ? <Disc className="w-6 h-6 text-zinc-500" />
       : <ListMusic className="w-6 h-6 text-zinc-500" />
 
+  const albumCount = (item as Artist).AlbumCount
+  const album = item as Album
+  const playlist = item as Playlist
+
   const subtitle = type === 'artist'
-    ? `${(item as Artist).AlbumCount} albums`
+    ? albumCount != null ? `${albumCount} album${albumCount !== 1 ? 's' : ''}` : null
     : type === 'album'
-      ? `${(item as Album).ArtistName} • ${(item as Album).Year}`
-      : `${(item as Playlist).TrackCount} songs`
+      ? [album.AlbumArtist, album.ProductionYear].filter(Boolean).join(' • ') || null
+      : playlist.ChildCount != null ? `${playlist.ChildCount} song${playlist.ChildCount !== 1 ? 's' : ''}` : null
 
   const syncBadge = wasSynced && (
     <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${willDelete ? 'bg-red-900/50 text-red-400' : 'bg-green-900/50 text-green-400'}`}>
@@ -46,6 +50,7 @@ export function LibraryItem({ item, type, isSelected, wasSynced, onToggle }: Lib
         <p className="text-sm text-zinc-500">
           {subtitle}
           {syncBadge}
+          {!subtitle && !syncBadge && null}
         </p>
       </div>
       <button className="p-2 hover:bg-zinc-700 rounded-lg">

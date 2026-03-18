@@ -29,15 +29,15 @@ export interface Artist {
 export interface Album {
   Id: string
   Name: string
-  ArtistName: string
-  Year: number
+  AlbumArtist?: string
+  ProductionYear?: number
   PremiereDate?: string
 }
 
 export interface Playlist {
   Id: string
   Name: string
-  TrackCount: number
+  ChildCount?: number
 }
 
 export interface LibraryStats {

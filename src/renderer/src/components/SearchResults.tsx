@@ -35,7 +35,7 @@ export function SearchResults({ query, isSearching, results, selectedTracks, onT
               <Disc className="w-5 h-5 text-zinc-500 flex-shrink-0" />
               <div className="flex-1">
                 <h3 className="font-medium">{album.Name}</h3>
-                <p className="text-xs text-zinc-500">Album · {album.ArtistName}</p>
+                <p className="text-xs text-zinc-500">Album{album.AlbumArtist ? ` · ${album.AlbumArtist}` : ''}</p>
               </div>
             </div>
           ))}
@@ -45,7 +45,7 @@ export function SearchResults({ query, isSearching, results, selectedTracks, onT
               <ListMusic className="w-5 h-5 text-zinc-500 flex-shrink-0" />
               <div className="flex-1">
                 <h3 className="font-medium">{pl.Name}</h3>
-                <p className="text-xs text-zinc-500">Playlist · {pl.TrackCount} songs</p>
+                <p className="text-xs text-zinc-500">Playlist{pl.ChildCount != null ? ` · ${pl.ChildCount} songs` : ''}</p>
               </div>
             </div>
           ))}
