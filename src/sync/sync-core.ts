@@ -642,11 +642,23 @@ class SyncCoreImpl {
     }
   }
 
+  private readonly SYSTEM_FILES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini', '.Spotlight-V100', '.Trashes']);
+
+  private isMusicFile(name: string): boolean {
+    // Any non-system, non-hidden file counts as content
+    return !name.startsWith('.') && !this.SYSTEM_FILES.has(name);
+  }
+
   private async cleanEmptyDir(dir: string, basePath: string): Promise<void> {
     if (dir === basePath || !dir.startsWith(basePath + '/')) return;
     try {
       const contents = await this.deps.fs.readdir(dir);
-      if (contents.length === 0) {
+      const meaningfulContents = contents.filter(f => this.isMusicFile(f));
+      if (meaningfulContents.length === 0) {
+        // Delete system/hidden files first so rmdir can succeed
+        for (const f of contents) {
+          try { await this.deps.fs.unlink(`${dir}/${f}`); } catch { /* ignore */ }
+        }
         await this.deps.fs.rmdir(dir);
         const parent = dir.substring(0, dir.lastIndexOf('/'));
         await this.cleanEmptyDir(parent, basePath);

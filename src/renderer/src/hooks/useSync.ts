@@ -90,6 +90,17 @@ export function useSync({
         })
       }
 
+      // Delete-only operation: nothing left to sync
+      if (selectedIds.length === 0) {
+        unsubscribe?.()
+        setSyncProgress(null)
+        setIsSyncing(false)
+        const updatedIds = await window.api.getSyncedItems(syncFolder)
+        setPreviouslySyncedItems(new Set(updatedIds))
+        alert(`Sync complete!\n\nRemoved: ${toDeleteIds.length} item(s)\nNothing left to sync.`)
+        return
+      }
+
       const result = await window.api.startSync2({
         serverUrl: jellyfinConfig.url,
         apiKey: jellyfinConfig.apiKey,
