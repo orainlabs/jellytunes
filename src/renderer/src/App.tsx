@@ -164,7 +164,9 @@ function App(): JSX.Element {
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100">
       <AppHeader isConnected={connection.isConnected} onDisconnect={connection.disconnect} />
 
-      <SearchBar value={searchQuery} onChange={setSearchQuery} />
+      {activeSection === 'library' && (
+        <SearchBar value={searchQuery} onChange={setSearchQuery} />
+      )}
 
       <div className="flex-1 flex overflow-hidden">
         <Sidebar
@@ -178,7 +180,6 @@ function App(): JSX.Element {
           playlists={lib.playlists}
           usbDevices={usbDevices}
           savedDestinations={savedDestinations}
-          selectedCount={totalSelectedCount}
           onLibraryTab={handleLibraryTab}
           onDestinationClick={handleDestinationClick}
           onAddFolder={handleAddFolder}
@@ -218,6 +219,9 @@ function App(): JSX.Element {
               onLoadMore={lib.loadMore}
               selectionSummary={getSelectionSummary()}
               contentScrollRef={lib.contentScrollRef}
+              activeDeviceName={deviceSelections.activeDevicePath ? getDestinationName(deviceSelections.activeDevicePath) : null}
+              isUsbDevice={deviceSelections.activeDevicePath ? isUsbDevice(deviceSelections.activeDevicePath) : false}
+              onGoToDevice={() => setActiveSection('device')}
             />
           ) : activeSection === 'device' && deviceSelections.activeDevicePath ? (
             <main className="flex-1 overflow-auto flex flex-col p-6">
@@ -264,6 +268,8 @@ function App(): JSX.Element {
         artists={lib.artists}
         albums={lib.albums}
         playlists={lib.playlists}
+        activeDeviceName={deviceSelections.activeDevicePath ? getDestinationName(deviceSelections.activeDevicePath) : null}
+        isUsbDevice={deviceSelections.activeDevicePath ? isUsbDevice(deviceSelections.activeDevicePath) : false}
       />
     </div>
   )

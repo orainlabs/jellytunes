@@ -68,6 +68,16 @@ const STATE_TEXT: Record<ItemState, string> = {
   remove: 'text-red-400',
 }
 
+function ConfirmRemove({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="flex items-center gap-2 p-2 bg-red-900/20 border border-red-800/50 rounded-lg text-sm">
+      <span className="text-red-300 flex-1">Remove <strong>{name}</strong> from destinations?</span>
+      <button onClick={onCancel} className="px-2 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded transition-colors">Cancel</button>
+      <button onClick={onConfirm} className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors">Remove</button>
+    </div>
+  )
+}
+
 export function DeviceSyncPanel({
   destinationPath,
   destinationName,
@@ -95,6 +105,7 @@ export function DeviceSyncPanel({
 }: DeviceSyncPanelProps): JSX.Element {
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null)
   const [loadingInfo, setLoadingInfo] = useState(true)
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
 
   useEffect(() => {
     setDeviceInfo(null)
@@ -143,9 +154,9 @@ export function DeviceSyncPanel({
               <p className="text-xs text-zinc-500 font-mono mt-0.5">{destinationPath}</p>
             </div>
           </div>
-          {isSaved && onRemoveDestination && (
+          {isSaved && onRemoveDestination && !confirmingRemove && (
             <button
-              onClick={onRemoveDestination}
+              onClick={() => setConfirmingRemove(true)}
               className="p-2 text-zinc-600 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors"
               title="Remove destination"
             >
@@ -153,6 +164,17 @@ export function DeviceSyncPanel({
             </button>
           )}
         </div>
+
+        {/* Confirm remove */}
+        {confirmingRemove && (
+          <div className="mb-4">
+            <ConfirmRemove
+              name={destinationName}
+              onConfirm={() => { setConfirmingRemove(false); onRemoveDestination?.() }}
+              onCancel={() => setConfirmingRemove(false)}
+            />
+          </div>
+        )}
 
         {/* Space bar */}
         {loadingInfo ? (

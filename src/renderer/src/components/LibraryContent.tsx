@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Loader2, X } from 'lucide-react'
+import { Loader2, X, HardDrive, Folder } from 'lucide-react'
 import { LibraryItem } from './LibraryItem'
 import type { LibraryTab, Artist, Album, Playlist, PaginationState } from '../appTypes'
 
@@ -23,6 +23,9 @@ interface LibraryContentProps {
   onLoadMore: (type: LibraryTab) => void
   selectionSummary: string
   contentScrollRef: React.RefObject<HTMLDivElement>
+  activeDeviceName?: string | null
+  isUsbDevice?: boolean
+  onGoToDevice?: () => void
 }
 
 export function LibraryContent({
@@ -42,6 +45,9 @@ export function LibraryContent({
   onClearError,
   selectionSummary,
   contentScrollRef,
+  activeDeviceName,
+  isUsbDevice,
+  onGoToDevice,
 }: LibraryContentProps): JSX.Element {
   const loadMoreRef = useRef<HTMLDivElement>(null)
   const [syncFilter, setSyncFilter] = useState<SyncFilter>('all')
@@ -78,6 +84,25 @@ export function LibraryContent({
           </div>
         )}
       </div>
+
+      {/* Device context banner */}
+      {activeDeviceName ? (
+        <button
+          onClick={onGoToDevice}
+          className="flex items-center gap-2 w-full px-4 py-2 bg-blue-600/10 border-b border-blue-600/20 text-sm text-blue-400 hover:bg-blue-600/15 transition-colors text-left"
+        >
+          {isUsbDevice
+            ? <HardDrive className="w-3.5 h-3.5 flex-shrink-0" />
+            : <Folder className="w-3.5 h-3.5 flex-shrink-0" />
+          }
+          <span>Selecting for <strong>{activeDeviceName}</strong></span>
+          <span className="ml-auto text-blue-500/60 text-xs">View device →</span>
+        </button>
+      ) : (
+        <div className="px-4 py-2 border-b border-zinc-800 text-xs text-zinc-600">
+          Select a device in the sidebar to start syncing
+        </div>
+      )}
 
       {/* Selection Controls */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800">

@@ -1,4 +1,4 @@
-import { Music, RefreshCw, Settings, Check, X } from 'lucide-react'
+import { Music, Check, LogOut } from 'lucide-react'
 
 interface AppHeaderProps {
   isConnected: boolean
@@ -17,17 +17,15 @@ export function AppHeader({ isConnected, onDisconnect }: AppHeaderProps): JSX.El
           </span>
         )}
       </div>
-      <div className="flex items-center gap-2">
-        <button className="p-2 hover:bg-zinc-800 rounded-lg">
-          <RefreshCw className="w-5 h-5" />
+      {isConnected && (
+        <button
+          onClick={onDisconnect}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          Disconnect
         </button>
-        <button className="p-2 hover:bg-zinc-800 rounded-lg">
-          <Settings className="w-5 h-5" />
-        </button>
-        <button onClick={onDisconnect} className="p-2 hover:bg-zinc-800 rounded-lg">
-          <X className="w-5 h-5" />
-        </button>
-      </div>
+      )}
     </header>
   )
 }

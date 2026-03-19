@@ -12,7 +12,6 @@ interface SidebarProps {
   playlists: Playlist[]
   usbDevices: UsbDevice[]
   savedDestinations: SavedDestination[]
-  selectedCount: number
   onLibraryTab: (tab: LibraryTab) => void
   onDestinationClick: (path: string) => void
   onAddFolder: () => void
@@ -30,7 +29,6 @@ export function Sidebar({
   playlists,
   usbDevices,
   savedDestinations,
-  selectedCount,
   onLibraryTab,
   onDestinationClick,
   onAddFolder,
@@ -94,12 +92,7 @@ export function Sidebar({
       {/* Devices */}
       <div className="flex-1">
         <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
-            Devices
-            {selectedCount > 0 && (
-              <span className="bg-blue-600 text-white text-xs px-1.5 py-0.5 rounded-full">{selectedCount}</span>
-            )}
-          </span>
+          Devices
           <button
             onClick={onRefreshDevices}
             className="p-0.5 text-zinc-600 hover:text-zinc-400 transition-colors"
