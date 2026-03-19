@@ -82,7 +82,7 @@ export interface Track {
   MediaSources?: Array<{ Path: string }>
 }
 
-export type ActiveSection = 'library' | 'sync' | 'devices'
+export type ActiveSection = 'library' | 'device'
 export type LibraryTab = 'artists' | 'albums' | 'playlists'
 export type Bitrate = '128k' | '192k' | '320k'
 
@@ -104,4 +104,10 @@ export interface ItemTypeIndex {
   artists: Set<string>
   albums: Set<string>
   playlists: Set<string>
+}
+
+export interface SavedDestination {
+  id: string
+  name: string
+  path: string
 }

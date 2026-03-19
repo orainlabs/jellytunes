@@ -6,9 +6,7 @@ import { SearchBar } from './components/SearchBar'
 import { Sidebar } from './components/Sidebar'
 import { LibraryContent } from './components/LibraryContent'
 import { SearchResults } from './components/SearchResults'
-import { SyncPanel } from './components/SyncPanel'
-import { DevicesPanel } from './components/DevicesPanel'
-import { SyncPreviewModal } from './components/SyncPreviewModal'
+import { DeviceSyncPanel } from './components/DeviceSyncPanel'
 import { FooterStats } from './components/FooterStats'
 import { ConnectingScreen } from './components/ConnectingScreen'
 import { LoginScreen } from './components/LoginScreen'
@@ -20,13 +18,14 @@ import { useSelection } from './hooks/useSelection'
 import { useLibrary } from './hooks/useLibrary'
 import { useSync } from './hooks/useSync'
 import { useJellyfinConnection } from './hooks/useJellyfinConnection'
-import { useRecentFolders } from './hooks/useRecentFolders'
+import { useSavedDestinations } from './hooks/useSavedDestinations'
 
 function App(): JSX.Element {
   const [activeSection, setActiveSection] = useState<ActiveSection>('library')
+  const [activeDestinationPath, setActiveDestinationPath] = useState<string | null>(null)
 
-  const devices = useDevices()
-  const { recentFolders, addRecentFolder, removeRecentFolder } = useRecentFolders()
+  const usbDevices = useDevices()
+  const { destinations: savedDestinations, addDestination, removeDestination } = useSavedDestinations()
 
   const connection = useJellyfinConnection((_url, _apiKey, _userId) => {
     // loading is triggered by useEffect below once isConnected becomes true
@@ -43,12 +42,7 @@ function App(): JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection.isConnected])
 
-  const selection = useSelection(
-    null,
-    lib.artists,
-    lib.albums,
-    lib.playlists
-  )
+  const selection = useSelection(null, lib.artists, lib.albums, lib.playlists)
 
   const sync = useSync({
     jellyfinConfig: connection.jellyfinConfig,
@@ -66,12 +60,6 @@ function App(): JSX.Element {
     connection.jellyfinConfig,
     connection.userId
   )
-
-  // Save to recent folders when destination changes
-  useEffect(() => {
-    if (sync.syncFolder) addRecentFolder(sync.syncFolder)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sync.syncFolder])
 
   // Load previously synced items when destination changes
   useEffect(() => {
@@ -99,6 +87,45 @@ function App(): JSX.Element {
     setActiveSection('library')
     lib.handleTabChange(tab)
   }
+
+  const handleDestinationClick = (path: string) => {
+    setActiveDestinationPath(path)
+    setActiveSection('device')
+    sync.handleSelectSyncFolder(path)
+  }
+
+  const handleAddFolder = async () => {
+    const folder = await window.api.selectFolder()
+    if (!folder) return
+    addDestination(folder)
+    handleDestinationClick(folder)
+  }
+
+  const handleRemoveDestination = (path: string) => {
+    const dest = savedDestinations.find(d => d.path === path)
+    if (dest) removeDestination(dest.id)
+    if (activeDestinationPath === path) {
+      setActiveDestinationPath(null)
+      setActiveSection('library')
+      sync.setSyncFolder(null)
+    }
+  }
+
+  // Resolve display name for the active destination
+  const getDestinationName = (path: string): string => {
+    const usb = usbDevices.flatMap(d => d.mountpoints.map(mp => ({ name: d.productName || d.displayName || 'USB Device', path: mp.path })))
+    const usbMatch = usb.find(d => d.path === path)
+    if (usbMatch) return usbMatch.name
+    const saved = savedDestinations.find(d => d.path === path)
+    if (saved) return saved.name
+    return path.split('/').filter(Boolean).pop() ?? path
+  }
+
+  const isUsbDevice = (path: string) =>
+    usbDevices.some(d => d.mountpoints.some(mp => mp.path === path))
+
+  const isSavedDestination = (path: string) =>
+    savedDestinations.some(d => d.path === path)
 
   const selectedArtistsCount = lib.artists.filter(a => selection.selectedTracks.has(a.Id)).length
   const selectedAlbumsCount = lib.albums.filter(a => selection.selectedTracks.has(a.Id)).length
@@ -160,16 +187,18 @@ function App(): JSX.Element {
         <Sidebar
           activeSection={activeSection}
           activeLibrary={lib.activeLibrary}
+          activeDestinationPath={activeDestinationPath}
           stats={lib.stats}
           pagination={lib.pagination}
           artists={lib.artists}
           albums={lib.albums}
           playlists={lib.playlists}
-          devices={devices}
+          usbDevices={usbDevices}
+          savedDestinations={savedDestinations}
           selectedCount={selection.selectedTracks.size}
           onLibraryTab={handleLibraryTab}
-          onSyncClick={() => setActiveSection('sync')}
-          onDevicesClick={() => setActiveSection('devices')}
+          onDestinationClick={handleDestinationClick}
+          onAddFolder={handleAddFolder}
         />
 
         <div className="flex-1 overflow-hidden flex flex-col">
@@ -206,43 +235,43 @@ function App(): JSX.Element {
               selectionSummary={getSelectionSummary()}
               contentScrollRef={lib.contentScrollRef}
             />
-          ) : activeSection === 'sync' ? (
-            <main className="flex-1 overflow-auto">
-              <SyncPanel
-                syncFolder={sync.syncFolder}
+          ) : activeSection === 'device' && activeDestinationPath ? (
+            <main className="flex-1 overflow-auto flex flex-col p-6">
+              <DeviceSyncPanel
+                destinationPath={activeDestinationPath}
+                destinationName={getDestinationName(activeDestinationPath)}
+                isUsbDevice={isUsbDevice(activeDestinationPath)}
+                isSaved={isSavedDestination(activeDestinationPath)}
                 convertToMp3={sync.convertToMp3}
                 bitrate={sync.bitrate}
                 isSyncing={sync.isSyncing}
                 isLoadingPreview={sync.isLoadingPreview}
                 syncProgress={sync.syncProgress}
-                selectionSummary={getSelectionSummary()}
-                selectedCount={selection.selectedTracks.size}
-                devices={devices}
-                recentFolders={recentFolders}
-                onSelectFolder={sync.handleSelectSyncFolder}
+                selectedTracks={selection.selectedTracks}
+                previouslySyncedItems={selection.previouslySyncedItems}
+                artists={lib.artists}
+                albums={lib.albums}
+                playlists={lib.playlists}
+                showPreview={sync.showPreview}
+                previewData={sync.previewData}
                 onToggleConvert={() => sync.setConvertToMp3(v => !v)}
                 onBitrateChange={sync.setBitrate}
                 onStartSync={sync.handleStartSync}
-                onRemoveRecentFolder={removeRecentFolder}
+                onCancelPreview={() => sync.setShowPreview(false)}
+                onConfirmSync={sync.executeSyncNow}
+                onRemoveDestination={() => handleRemoveDestination(activeDestinationPath)}
               />
             </main>
           ) : (
-            <main className="flex-1 overflow-auto">
-              <DevicesPanel devices={devices} />
+            <main className="flex-1 flex items-center justify-center text-zinc-600">
+              <div className="text-center">
+                <p className="text-lg mb-2">Select a device or folder</p>
+                <p className="text-sm">Choose from the sidebar or add a new folder</p>
+              </div>
             </main>
           )}
         </div>
       </div>
-
-      {sync.showPreview && sync.previewData && (
-        <SyncPreviewModal
-          data={sync.previewData}
-          convertToMp3={sync.convertToMp3}
-          bitrate={sync.bitrate}
-          onCancel={() => sync.setShowPreview(false)}
-          onConfirm={sync.executeSyncNow}
-        />
-      )}
 
       <FooterStats
         stats={lib.stats}
