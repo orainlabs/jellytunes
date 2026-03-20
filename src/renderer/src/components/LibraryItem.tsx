@@ -60,7 +60,7 @@ export function LibraryItem({ item, type, isSelected, wasSynced, onToggle, serve
         checked={isSelected}
         onChange={() => onToggle(item.Id)}
         onClick={e => e.stopPropagation()}
-        className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+        className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-jf-purple focus:ring-jf-purple flex-shrink-0"
       />
       <ItemThumbnail item={item} type={type} serverUrl={serverUrl} />
       <div className="flex-1 min-w-0">

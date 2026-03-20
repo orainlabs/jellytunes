@@ -14,7 +14,7 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onCancel}>
       <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Check className="w-5 h-5 text-blue-500" />
+          <Check className="w-5 h-5 text-jf-cyan" />
           Sync Preview
         </h2>
         <div className="space-y-3 mb-6">
@@ -65,7 +65,7 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-sm font-medium transition-colors"
+            className="flex-1 py-2 rounded-lg bg-jf-purple hover:bg-jf-purple-dark text-sm font-medium transition-colors"
           >
             Confirm Sync
           </button>

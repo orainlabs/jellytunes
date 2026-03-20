@@ -14,7 +14,7 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
     <div data-testid="auth-screen" className="h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
       <div className="w-full max-w-md p-8">
         <div className="flex items-center gap-3 mb-8 justify-center">
-          <Music className="w-10 h-10 text-blue-500" />
+          <Music className="w-10 h-10 text-jf-purple" />
           <h1 className="text-2xl font-bold">Jellysync</h1>
         </div>
 
@@ -38,7 +38,7 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
                   onChange={(e) => onUrlChange(e.target.value)}
                   placeholder="https://jellyfin.tudominio.com"
                   required
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-jf-purple"
                 />
               </div>
               <div>
@@ -51,7 +51,7 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
                   onChange={(e) => onApiKeyChange(e.target.value)}
                   placeholder="Your Jellyfin API key"
                   required
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-jf-purple"
                 />
               </div>
 
@@ -65,7 +65,7 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
               <button
                 data-testid="connect-button"
                 type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-medium transition-colors"
+                className="w-full bg-jf-purple hover:bg-jf-purple-dark py-2 rounded-lg font-medium transition-colors"
               >
                 Connect
               </button>

@@ -13,7 +13,7 @@ export function UserSelectorScreen({ users, serverUrl, onSelect, onCancel }: Use
     <div data-testid="user-selector-screen" className="h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
       <div className="w-full max-w-md p-8">
         <div className="flex items-center gap-3 mb-8 justify-center">
-          <Music className="w-10 h-10 text-blue-500" />
+          <Music className="w-10 h-10 text-jf-cyan" />
           <h1 className="text-2xl font-bold">Jellysync</h1>
         </div>
 

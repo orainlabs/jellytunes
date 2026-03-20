@@ -107,14 +107,14 @@ export function LibraryContent({
         {activeDeviceName && (
           <button
             onClick={onGoToDevice}
-            className="flex items-center gap-2 w-full px-4 py-2 bg-blue-600/10 border-b border-blue-600/20 text-sm text-blue-400 hover:bg-blue-600/15 transition-colors text-left"
+            className="flex items-center gap-2 w-full px-4 py-2 bg-jf-purple/10 border-b border-jf-purple/20 text-sm text-jf-purple-light hover:bg-jf-purple/15 transition-colors text-left"
           >
             {isUsbDevice
               ? <HardDrive className="w-3.5 h-3.5 flex-shrink-0" />
               : <Folder className="w-3.5 h-3.5 flex-shrink-0" />
             }
             <span>Selecting for <strong>{activeDeviceName}</strong></span>
-            <span className="ml-auto text-blue-500/60 text-xs">View device →</span>
+            <span className="ml-auto text-jf-purple/60 text-xs">View device →</span>
           </button>
         )}
 
@@ -145,7 +145,7 @@ export function LibraryContent({
               placeholder={`Search ${tabLabel}...`}
               value={searchQuery}
               onChange={e => onSearchChange(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg pl-10 pr-9 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg pl-10 pr-9 py-1.5 text-sm focus:outline-none focus:border-jf-purple"
             />
             {searchQuery && (
               <button
@@ -164,7 +164,7 @@ export function LibraryContent({
             </span>
             <div className="flex gap-3">
               {!isSearchActive && (
-                <button onClick={onSelectAll} className="text-xs text-blue-500 hover:text-blue-400">
+                <button onClick={onSelectAll} className="text-xs text-jf-purple hover:text-jf-purple-light">
                   Select all
                 </button>
               )}

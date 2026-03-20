@@ -57,13 +57,13 @@ const STATE_LABEL: Record<ItemState, string> = {
 }
 
 const STATE_COLOR: Record<ItemState, string> = {
-  new: 'bg-blue-400',
+  new: 'bg-jf-cyan',
   synced: 'bg-green-400',
   remove: 'bg-red-400',
 }
 
 const STATE_TEXT: Record<ItemState, string> = {
-  new: 'text-blue-400',
+  new: 'text-jf-cyan',
   synced: 'text-green-400',
   remove: 'text-red-400',
 }
@@ -147,7 +147,7 @@ export function DeviceSyncPanel({
         <div className="flex items-start justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-zinc-800 rounded-xl flex items-center justify-center">
-              <Icon className="w-6 h-6 text-blue-400" />
+              <Icon className="w-6 h-6 text-jf-cyan" />
             </div>
             <div>
               <h2 className="text-xl font-semibold">{destinationName}</h2>
@@ -187,7 +187,7 @@ export function DeviceSyncPanel({
             </div>
             <div className="w-full bg-zinc-700 rounded-full h-2">
               <div
-                className={`h-2 rounded-full transition-all ${usedPct! > 90 ? 'bg-red-500' : usedPct! > 70 ? 'bg-yellow-500' : 'bg-blue-500'}`}
+                className={`h-2 rounded-full transition-all ${usedPct! > 90 ? 'bg-red-500' : usedPct! > 70 ? 'bg-yellow-500' : 'bg-jf-purple'}`}
                 style={{ width: `${usedPct}%` }}
               />
             </div>
@@ -255,7 +255,7 @@ export function DeviceSyncPanel({
             </div>
             <button
               onClick={onToggleConvert}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${convertToMp3 ? 'bg-blue-600' : 'bg-zinc-600'}`}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${convertToMp3 ? 'bg-jf-purple' : 'bg-zinc-600'}`}
             >
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${convertToMp3 ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>
@@ -267,7 +267,7 @@ export function DeviceSyncPanel({
                 <button
                   key={b}
                   onClick={() => onBitrateChange(b)}
-                  className={`px-2.5 py-1 text-xs rounded-lg ${bitrate === b ? 'bg-blue-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}
+                  className={`px-2.5 py-1 text-xs rounded-lg ${bitrate === b ? 'bg-jf-purple text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}
                 >
                   {b}
                 </button>
@@ -280,7 +280,7 @@ export function DeviceSyncPanel({
         <button
           onClick={onStartSync}
           disabled={isSyncing || isLoadingPreview || syncItems.length === 0}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 disabled:text-zinc-500 py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+          className="w-full bg-jf-purple hover:bg-jf-purple-dark disabled:bg-zinc-700 disabled:text-zinc-500 py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
         >
           {isLoadingPreview ? (
             <><Loader2 className="w-4 h-4 animate-spin" /> Calculating...</>
@@ -299,7 +299,7 @@ export function DeviceSyncPanel({
             </div>
             <div className="w-full bg-zinc-700 rounded-full h-1.5 mb-2">
               <div
-                className="bg-blue-600 h-1.5 rounded-full transition-all"
+                className="bg-jf-purple h-1.5 rounded-full transition-all"
                 style={{ width: `${syncProgress.total > 0 ? (syncProgress.current / syncProgress.total) * 100 : 0}%` }}
               />
             </div>

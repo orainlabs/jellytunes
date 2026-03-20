@@ -30,7 +30,7 @@ export function FooterStats({
     <footer className="h-10 border-t border-zinc-800 flex items-center justify-between px-4 text-xs text-zinc-500">
       <span>{libraryText}</span>
       {activeDeviceName ? (
-        <span className="flex items-center gap-1.5 text-blue-400">
+        <span className="flex items-center gap-1.5 text-jf-purple-light">
           <DeviceIcon className="w-3 h-3" />
           {activeDeviceName}
         </span>
