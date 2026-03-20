@@ -56,42 +56,33 @@ export function useDeviceSelections() {
   }, [])
 
   const toggleItem = useCallback((id: string) => {
-    setActiveDevicePath(path => {
-      if (!path) return path
-      setDeviceStates(prev => {
-        const state = prev.get(path) ?? EMPTY
-        const next = new Set(state.selectedItems)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return new Map(prev).set(path, { ...state, selectedItems: next })
-      })
-      return path
+    if (!activeDevicePath) return
+    setDeviceStates(prev => {
+      const state = prev.get(activeDevicePath) ?? EMPTY
+      const next = new Set(state.selectedItems)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return new Map(prev).set(activeDevicePath, { ...state, selectedItems: next })
     })
-  }, [])
+  }, [activeDevicePath])
 
   const selectItems = useCallback((items: Array<{ Id: string }>) => {
-    setActiveDevicePath(path => {
-      if (!path) return path
-      setDeviceStates(prev => {
-        const state = prev.get(path) ?? EMPTY
-        const next = new Set(state.selectedItems)
-        items.forEach(i => next.add(i.Id))
-        return new Map(prev).set(path, { ...state, selectedItems: next })
-      })
-      return path
+    if (!activeDevicePath) return
+    setDeviceStates(prev => {
+      const state = prev.get(activeDevicePath) ?? EMPTY
+      const next = new Set(state.selectedItems)
+      items.forEach(i => next.add(i.Id))
+      return new Map(prev).set(activeDevicePath, { ...state, selectedItems: next })
     })
-  }, [])
+  }, [activeDevicePath])
 
   const clearSelection = useCallback(() => {
-    setActiveDevicePath(path => {
-      if (!path) return path
-      setDeviceStates(prev => {
-        const state = prev.get(path) ?? EMPTY
-        return new Map(prev).set(path, { ...state, selectedItems: new Set() })
-      })
-      return path
+    if (!activeDevicePath) return
+    setDeviceStates(prev => {
+      const state = prev.get(activeDevicePath) ?? EMPTY
+      return new Map(prev).set(activeDevicePath, { ...state, selectedItems: new Set() })
     })
-  }, [])
+  }, [activeDevicePath])
 
   return {
     activeDevicePath,
