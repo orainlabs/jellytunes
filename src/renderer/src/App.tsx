@@ -270,6 +270,7 @@ function App(): JSX.Element {
                 onToggleConvert={() => sync.setConvertToMp3(v => !v)}
                 onBitrateChange={sync.setBitrate}
                 onStartSync={sync.handleStartSync}
+                onCancelSync={sync.handleCancelSync}
                 onCancelPreview={() => sync.setShowPreview(false)}
                 onConfirmSync={sync.executeSyncNow}
                 onRemoveDestination={() => handleRemoveDestination(effectiveDevicePath!)}

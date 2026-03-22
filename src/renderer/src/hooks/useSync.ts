@@ -187,6 +187,14 @@ export function useSync({
     }
   }
 
+  const handleCancelSync = async (): Promise<void> => {
+    try {
+      await window.api.cancelSync()
+    } catch (error) {
+      logger.error('Cancel sync error: ' + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+
   return {
     syncFolder,
     setSyncFolder,
@@ -203,5 +211,6 @@ export function useSync({
     handleSelectSyncFolder,
     executeSyncNow,
     handleStartSync,
+    handleCancelSync,
   }
 }

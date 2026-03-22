@@ -46,6 +46,7 @@ interface DeviceSyncPanelProps {
   onToggleConvert: () => void
   onBitrateChange: (b: Bitrate) => void
   onStartSync: () => void
+  onCancelSync: () => void
   onCancelPreview: () => void
   onConfirmSync: () => void
   onRemoveDestination?: () => void
@@ -100,6 +101,7 @@ export function DeviceSyncPanel({
   onToggleConvert,
   onBitrateChange,
   onStartSync,
+  onCancelSync,
   onCancelPreview,
   onConfirmSync,
   onRemoveDestination,
@@ -308,21 +310,29 @@ export function DeviceSyncPanel({
           )}
         </div>
 
-        {/* Sync button */}
-        <button
-          data-testid="sync-button"
-          onClick={onStartSync}
-          disabled={isSyncing || isLoadingPreview || syncItems.length === 0}
-          className="w-full bg-jf-purple hover:bg-jf-purple-dark disabled:bg-zinc-700 disabled:text-zinc-500 py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
-        >
-          {isLoadingPreview ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Calculating...</>
-          ) : isSyncing ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Syncing...</>
-          ) : (
-            `Sync to ${destinationName}`
-          )}
-        </button>
+        {/* Sync / Cancel button */}
+        {isSyncing ? (
+          <button
+            data-testid="cancel-sync-button"
+            onClick={onCancelSync}
+            className="w-full bg-red-600 hover:bg-red-700 py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            <X className="w-4 h-4" /> Cancel Sync
+          </button>
+        ) : (
+          <button
+            data-testid="sync-button"
+            onClick={onStartSync}
+            disabled={isLoadingPreview || syncItems.length === 0}
+            className="w-full bg-jf-purple hover:bg-jf-purple-dark disabled:bg-zinc-700 disabled:text-zinc-500 py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            {isLoadingPreview ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Calculating...</>
+            ) : (
+              `Sync to ${destinationName}`
+            )}
+          </button>
+        )}
 
         {syncProgress && (
           <div className="mt-4 p-4 bg-jf-bg-mid rounded-xl border border-jf-border">
