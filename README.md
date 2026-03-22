@@ -1,37 +1,71 @@
-# JellyTunes
+<p align="center">
+  <img src="assets/icon.png" alt="JellyTunes" width="128" height="128" />
+</p>
 
-[![BDD Tests](https://github.com/edgarquasarz/jellytunes/actions/workflows/bdd-tests.yml/badge.svg)](https://github.com/edgarquasarz/jellytunes/actions/workflows/bdd-tests.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+<h1 align="center">JellyTunes</h1>
 
-Desktop app that syncs music libraries from a [Jellyfin](https://jellyfin.org) media server to portable devices (USB drives, SD cards). Built with Electron + React.
+<p align="center">
+  Sync your Jellyfin music library to any USB drive or SD card — with optional FLAC to MP3 conversion.
+</p>
 
-Select artists, albums or playlists from your server, pick a destination, and JellyTunes handles the rest — downloading tracks, optionally converting FLAC to MP3, and preserving the server's folder structure on the device.
+<p align="center">
+  <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
+</p>
 
-## Features
+---
 
-- Browse and select artists, albums, and playlists from your Jellyfin server
-- Selective sync — skips tracks already up to date on the device
-- FLAC → MP3 conversion via FFmpeg with configurable bitrate (128k / 192k / 320k)
-- Automatic filesystem detection on destination (FAT32, exFAT, NTFS) with filename sanitization
-- Per-device sync history and previously-synced item tracking
-- Cancellable at any point during sync
+JellyTunes is a desktop app for [Jellyfin](https://jellyfin.org) users who want to take their music offline. Browse your server's artists, albums, and playlists, pick a destination device, and hit sync. JellyTunes downloads everything, converts formats if needed, and mirrors your server's folder structure on the device.
 
-## Requirements
+## Key Features
+
+- **Browse your full library** — artists, albums, and playlists pulled directly from your Jellyfin server
+- **Selective sync** — only downloads what's new or changed; skips tracks already on the device
+- **FLAC to MP3 conversion** — built-in FFmpeg support with configurable bitrate (128k / 192k / 320k)
+- **Smart filesystem handling** — auto-detects FAT32, exFAT, and NTFS; sanitizes filenames accordingly
+- **Per-device history** — remembers what was synced to each device so you can pick up where you left off
+- **Cancel anytime** — stop a sync mid-progress without corrupting what's already been written
+
+## Installation
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/oriaflow-labs/jellytunes/releases):
+
+| Platform | File |
+|----------|------|
+| macOS | `.dmg` |
+| Windows | `.exe` installer |
+| Linux | `.AppImage` or `.deb` |
+
+Open the installer and follow the prompts. No additional setup is required — FFmpeg is bundled with the app.
+
+### Prerequisites
 
 - A [Jellyfin](https://jellyfin.org) server reachable on your network
-- Node.js ≥ 18 and [pnpm](https://pnpm.io)
-- FFmpeg (bundled via `@ffmpeg-installer/ffmpeg`, or system install)
+- A USB drive, SD card, or any mounted storage device
 
-## Quick Start
+## Screenshots
+
+> _Coming soon._
+
+---
+
+## Development
+
+Everything below is for contributors and developers who want to build JellyTunes from source.
+
+### Setup
 
 ```bash
+git clone https://github.com/oriaflow-labs/jellytunes.git
+cd jellytunes
 pnpm install
 pnpm dev
 ```
 
 This starts the Vite dev server and launches the Electron window.
 
-## Commands
+**Requirements**: Node.js 18+ and [pnpm](https://pnpm.io)
+
+### Commands
 
 ```bash
 # Development
@@ -49,7 +83,7 @@ pnpm test:bdd:dev     # BDD tests with visible UI
 pnpm package          # Build + create installers
 ```
 
-## Architecture
+### Architecture
 
 Three Electron processes plus a standalone sync engine:
 
@@ -57,6 +91,10 @@ Three Electron processes plus a standalone sync engine:
 - **Preload** (`src/preload/`) — typed IPC bridge between main and renderer
 - **Renderer** (`src/renderer/`) — React UI for library navigation, device selection, and sync progress
 - **Sync module** (`src/sync/`) — dependency-injected sync engine (API client, file ops, FFmpeg converter); fully unit-testable without hitting the network or filesystem
+
+### Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on reporting bugs, submitting changes, and code style.
 
 ## License
 
