@@ -22,7 +22,8 @@
     "test:unit:watch": "vitest",
     "test": "pnpm run test:unit",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "build-icon": "node scripts/build-icon.mjs"
+    "build-icon": "node scripts/build-icon.mjs",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
