@@ -158,8 +158,9 @@ const api = {
   reportBug: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('bug:report'),
 
   // Check for updates via GitHub Releases API (max once per 24h, no telemetry)
-  checkForUpdates: (): Promise<{ updateAvailable: boolean; latestVersion: string; releaseUrl: string }> =>
-    ipcRenderer.invoke('app:checkForUpdates'),
+  // Pass force=true to bypass the cache (e.g. manual check button)
+  checkForUpdates: (force?: boolean): Promise<{ updateAvailable: boolean; latestVersion: string; releaseUrl: string }> =>
+    ipcRenderer.invoke('app:checkForUpdates', force ?? false),
 }
 
 if (process.contextIsolated) {

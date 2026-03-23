@@ -10,6 +10,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   const [reporting, setReporting] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ latestVersion: string; releaseUrl: string } | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [upToDate, setUpToDate] = useState(false)
 
   useEffect(() => {
     window.api.getVersion().then(setVersion).catch(() => {})
@@ -30,12 +31,13 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   const handleCheckUpdate = async (): Promise<void> => {
     setCheckingUpdate(true)
     setUpdateInfo(null)
+    setUpToDate(false)
     try {
-      const result = await window.api.checkForUpdates()
+      const result = await window.api.checkForUpdates(true)
       if (result.updateAvailable) {
         setUpdateInfo({ latestVersion: result.latestVersion, releaseUrl: result.releaseUrl })
       } else {
-        setUpdateInfo(null)
+        setUpToDate(true)
       }
     } finally {
       setCheckingUpdate(false)
@@ -72,6 +74,10 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           >
             v{updateInfo.latestVersion} available — download ↗
           </a>
+        ) : upToDate ? (
+          <div className="flex items-center justify-center gap-2 w-full px-4 py-2 mb-4 text-sm rounded-lg bg-zinc-800 text-zinc-400">
+            You're up to date ✓
+          </div>
         ) : (
           <button
             onClick={handleCheckUpdate}

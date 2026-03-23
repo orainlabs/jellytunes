@@ -717,10 +717,10 @@ ipcMain.handle('sync:removeItems', async (_event, options: {
 let lastUpdateCheck = 0
 let cachedUpdateInfo: { updateAvailable: boolean; latestVersion: string; releaseUrl: string } | null = null
 
-ipcMain.handle('app:checkForUpdates', async () => {
+ipcMain.handle('app:checkForUpdates', async (_event, force = false) => {
   const now = Date.now()
   const ONE_DAY_MS = 24 * 60 * 60 * 1000
-  if (cachedUpdateInfo && now - lastUpdateCheck < ONE_DAY_MS) return cachedUpdateInfo
+  if (!force && cachedUpdateInfo && now - lastUpdateCheck < ONE_DAY_MS) return cachedUpdateInfo
   try {
     const { net } = await import('electron')
     const request = net.fetch('https://api.github.com/repos/oriaflow-labs/jellytunes/releases/latest', {

@@ -98,7 +98,7 @@ interface Api {
   logInfo: (message: string) => void
   getLogPath: () => Promise<string>
   reportBug: () => Promise<{ success: boolean; error?: string }>
-  checkForUpdates: () => Promise<{ updateAvailable: boolean; latestVersion: string; releaseUrl: string }>
+  checkForUpdates: (force?: boolean) => Promise<{ updateAvailable: boolean; latestVersion: string; releaseUrl: string }>
 }
 
 declare global {
