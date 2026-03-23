@@ -14,10 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest   # arm64 (Apple Silicon)
+          - os: macos-latest
             platform: mac
             arch: arm64
-          - os: macos-13       # x64 (Intel)
+          - os: macos-latest
             platform: mac
             arch: x64
           - os: windows-latest
@@ -43,9 +43,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          npm_config_arch: ${{ matrix.arch }}
 
       - name: Build and package
         run: pnpm run build && pnpm exec electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+        env:
+          npm_config_arch: ${{ matrix.arch }}
 
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
