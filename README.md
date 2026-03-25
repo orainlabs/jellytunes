@@ -11,8 +11,6 @@
 <p align="center">
   <a href="https://github.com/oriaflow-labs/jellytunes/releases/latest"><img src="https://img.shields.io/github/v/release/oriaflow-labs/jellytunes" alt="Latest Release" /></a>
   &nbsp;
-  <a href="https://github.com/oriaflow-labs/jellytunes/releases"><img src="https://img.shields.io/github/downloads/oriaflow-labs/jellytunes/total" alt="Total Downloads" /></a>
-  &nbsp;
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
 </p>
 
