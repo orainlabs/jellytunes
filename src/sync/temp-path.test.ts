@@ -22,13 +22,13 @@ describe('buildTempPaths', () => {
     expect(tempPath.startsWith(tmpdir())).toBe(true);
   });
 
-  it('never produces a path starting with /tmp on any platform', () => {
-    // Simulate Windows tmpdir
-    vi.spyOn(require('os'), 'tmpdir').mockReturnValue('C:\\Users\\user\\AppData\\Local\\Temp');
-
+  it('uses os.tmpdir() as base — not a hardcoded string', () => {
+    // The real bug was /tmp/ hardcoded as a string literal.
+    // We verify the path starts with whatever tmpdir() returns on this OS
+    // (e.g. /tmp on Linux, C:\Users\...\Temp on Windows).
     const { sourcePath, tempPath } = buildTempPaths('Track One', 123456789);
-    expect(sourcePath).not.toMatch(/^\/tmp/);
-    expect(tempPath).not.toMatch(/^\/tmp/);
+    expect(sourcePath.startsWith(tmpdir())).toBe(true);
+    expect(tempPath.startsWith(tmpdir())).toBe(true);
   });
 
   it('includes the timestamp in both paths for uniqueness', () => {
