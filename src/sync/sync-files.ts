@@ -249,10 +249,11 @@ export function createFFmpegConverter(): AudioConverter {
       return new Promise((resolve) => {
         const args = [
           '-i', input,
+          '-vn',         // skip video/cover-art streams
           '-ab', bitrate,
           '-ar', '44100',
           '-ac', '2',
-          '-y', // Overwrite output
+          '-y',          // overwrite output
           output,
         ];
         

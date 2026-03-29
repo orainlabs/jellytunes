@@ -764,10 +764,10 @@ class SyncCoreImpl {
     bitrate: '128k' | '192k' | '320k'
   ): Promise<void> {
     const timestamp = Date.now();
-    const { sourcePath, tempPath } = buildTempPaths(track.name, timestamp);
-    
-    // Track temp files for cleanup
-    const tempFiles: string[] = [tempPath, sourcePath];
+    const { sourcePath } = buildTempPaths(track.name, timestamp);
+
+    // Only the downloaded source needs cleanup — FFmpeg writes directly to outputPath
+    const tempFiles: string[] = [sourcePath];
     
     const cleanup = async (): Promise<void> => {
       for (const file of tempFiles) {
@@ -786,20 +786,18 @@ class SyncCoreImpl {
       // Download from Jellyfin server first
       const data = await this.deps.api.downloadItem(track.id);
       await this.deps.fs.writeFile(sourcePath, data);
-      
-      // Now convert the downloaded file
+
+      // Convert directly to the final destination — no intermediate copy needed
       const result = await this.deps.converter.convertToMp3(
         sourcePath,
-        tempPath,
+        outputPath,
         bitrate
       );
-      
+
       if (!result.success) {
         throw new Error(result.error ?? 'Conversion failed');
       }
-      
-      await this.deps.fs.copyFile(tempPath, outputPath);
-      
+
       // Clean up temp files on success
       await cleanup();
     } catch (error) {
