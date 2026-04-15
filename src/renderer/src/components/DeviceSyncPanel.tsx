@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react'
-import { HardDrive, Folder, Loader2, Trash2, Music, RefreshCw, X } from 'lucide-react'
+import { HardDrive, Folder, Loader2, Trash2, Music, RefreshCw, X, AlertCircle } from 'lucide-react'
 import type { Artist, Album, Playlist, Bitrate, SyncProgressInfo, PreviewData } from '../appTypes'
 import type { SyncedItemInfo } from '../hooks/useDeviceSelections'
 import { SyncPreviewModal } from './SyncPreviewModal'
+import { SyncProgressBar } from './SyncProgressBar'
+import { RemoveFolderModal } from './RemoveFolderModal'
+
+interface DeviceInfoCache {
+  info: DeviceInfo
+  fs: string
+  timestamp: number
+}
+const deviceInfoCache = new Map<string, DeviceInfoCache>()
+const DEVICE_INFO_CACHE_TTL_MS = 60_000
 
 interface DeviceInfo {
   total: number
@@ -16,7 +26,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1e3).toFixed(0)} KB`
 }
 
-type ItemState = 'new' | 'synced' | 'remove'
+type ItemState = 'new' | 'synced' | 'outOfSync' | 'remove'
 
 interface SyncItem {
   id: string
@@ -34,14 +44,19 @@ interface DeviceSyncPanelProps {
   bitrate: Bitrate
   isSyncing: boolean
   isLoadingPreview: boolean
+  isActivatingDevice: boolean
+  isCalculatingSize: boolean
   syncProgress: SyncProgressInfo | null
   selectedTracks: Set<string>
   syncedItemsInfo: SyncedItemInfo[]
+  outOfSyncItems: Set<string>
   artists: Artist[]
   albums: Album[]
   playlists: Playlist[]
   showPreview: boolean
   previewData: PreviewData | null
+  estimatedSizeBytes?: number
+  syncedMusicBytes?: number
   onToggleItem: (id: string) => void
   onToggleConvert: () => void
   onBitrateChange: (b: Bitrate) => void
@@ -49,40 +64,21 @@ interface DeviceSyncPanelProps {
   onCancelSync: () => void
   onCancelPreview: () => void
   onConfirmSync: () => void
-  onRemoveDestination?: () => void
-}
-
-const STATE_LABEL: Record<ItemState, string> = {
-  new: 'New',
-  synced: 'Synced',
-  remove: 'Will remove',
+  onRemoveDestination?: (deleteFiles: boolean) => void
 }
 
 const STATE_COLOR: Record<ItemState, string> = {
-  new: 'bg-jf-cyan',
-  synced: 'bg-green-400',
-  remove: 'bg-red-400',
+  new: 'bg-primary_container',
+  synced: 'bg-success',
+  outOfSync: 'bg-warning',
+  remove: 'bg-error',
 }
 
 const STATE_TEXT: Record<ItemState, string> = {
-  new: 'text-jf-cyan',
-  synced: 'text-green-400',
-  remove: 'text-red-400',
-}
-
-function ConfirmRemove({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <div className="p-3 bg-red-900/20 border border-red-800/50 rounded-lg text-sm space-y-2">
-      <p className="text-zinc-300">
-        Remove <strong>{name}</strong> from the sidebar?{' '}
-        <span className="text-zinc-500">Sync history is kept — re-add the folder any time to restore it.</span>
-      </p>
-      <div className="flex gap-2 justify-end">
-        <button onClick={onCancel} className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded transition-colors">Cancel</button>
-        <button onClick={onConfirm} className="px-3 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors">Remove</button>
-      </div>
-    </div>
-  )
+  new: 'text-primary',
+  synced: 'text-success',
+  outOfSync: 'text-warning',
+  remove: 'text-error',
 }
 
 export function DeviceSyncPanel({
@@ -94,14 +90,19 @@ export function DeviceSyncPanel({
   bitrate,
   isSyncing,
   isLoadingPreview,
+  isActivatingDevice,
+  isCalculatingSize,
   syncProgress,
   selectedTracks,
   syncedItemsInfo,
+  outOfSyncItems,
   artists,
   albums,
   playlists,
   showPreview,
   previewData,
+  estimatedSizeBytes,
+  syncedMusicBytes,
   onToggleItem,
   onToggleConvert,
   onBitrateChange,
@@ -113,18 +114,29 @@ export function DeviceSyncPanel({
 }: DeviceSyncPanelProps): JSX.Element {
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null)
   const [loadingInfo, setLoadingInfo] = useState(true)
-  const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [showRemoveModal, setShowRemoveModal] = useState(false)
   const [filesystemType, setFilesystemType] = useState<string>('unknown')
 
   useEffect(() => {
     setDeviceInfo(null)
     setLoadingInfo(true)
     setFilesystemType('unknown')
+    const cacheKey = destinationPath
+    const cached = deviceInfoCache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < DEVICE_INFO_CACHE_TTL_MS) {
+      setDeviceInfo(cached.info)
+      setFilesystemType(cached.fs)
+      setLoadingInfo(false)
+      return
+    }
     Promise.all([
       window.api.getDeviceInfo(destinationPath).catch(() => null),
       window.api.getFilesystem(destinationPath).catch(() => 'unknown'),
     ]).then(([info, fs]) => {
-      if (info?.total) setDeviceInfo(info)
+      if (info?.total) {
+        setDeviceInfo(info)
+        deviceInfoCache.set(cacheKey, { info, fs: fs ?? 'unknown', timestamp: Date.now() })
+      }
       setFilesystemType(fs ?? 'unknown')
     }).finally(() => setLoadingInfo(false))
   }, [destinationPath])
@@ -137,7 +149,12 @@ export function DeviceSyncPanel({
   // Synced/remove: iterate DB records — always available regardless of library state
   for (const item of syncedItemsInfo) {
     const selected = selectedTracks.has(item.id)
-    syncItems.push({ id: item.id, name: item.name, type: item.type, state: selected ? 'synced' : 'remove' })
+    if (outOfSyncItems.has(item.id)) {
+      // Out of sync items can be re-tagged without re-download
+      syncItems.push({ id: item.id, name: item.name, type: item.type, state: selected ? 'outOfSync' : 'remove' })
+    } else {
+      syncItems.push({ id: item.id, name: item.name, type: item.type, state: selected ? 'synced' : 'remove' })
+    }
   }
 
   // New: selected but not yet synced — only available if loaded from library
@@ -155,97 +172,145 @@ export function DeviceSyncPanel({
   const groups: [ItemState, string][] = [
     ['new', 'New'],
     ['synced', 'On device'],
+    ['outOfSync', 'Out of sync'],
     ['remove', 'Will remove'],
   ]
 
   const usedPct = deviceInfo ? Math.round((deviceInfo.used / deviceInfo.total) * 100) : null
+  const otherFiles = deviceInfo ? Math.max(0, deviceInfo.used - (syncedMusicBytes ?? 0)) : null
   const Icon = isUsbDevice ? HardDrive : Folder
   const isFat32 = filesystemType === 'fat32'
-  const isExFat = filesystemType === 'exfat'
   const fsLabel: Record<string, string> = {
     fat32: 'FAT32', exfat: 'exFAT', ntfs: 'NTFS', apfs: 'APFS', 'hfs+': 'HFS+', ext4: 'ext4',
   }
 
   return (
-    <>
-      <div data-testid="sync-panel" className="flex-1 overflow-auto p-6 max-w-2xl">
+    <div className="flex flex-col h-full w-full">
+      {/* ── Centering wrapper — max-width + centering ─ */}
+      <div className="flex flex-col flex-1 min-h-0 w-full max-w-2xl mx-auto px-6">
+      {/* ── Scrollable content ─────────────────────── */}
+      <div data-testid="sync-panel" className="flex-1 overflow-auto pt-6">
         {/* Header */}
         <div className="flex items-start justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-jf-bg-mid rounded-xl flex items-center justify-center">
-              <Icon className="w-6 h-6 text-jf-cyan" />
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 bg-surface_container_low rounded-xl flex items-center justify-center flex-shrink-0">
+              <Icon className="w-6 h-6 text-primary" />
             </div>
-            <div>
-              <h2 className="text-xl font-semibold">{destinationName}</h2>
-              <p className="text-xs text-zinc-500 font-mono mt-0.5">{destinationPath}</p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-headline-md">{destinationName}</h2>
+                {filesystemType !== 'unknown' && (
+                  <span className={`text-label-sm px-2 py-0.5 rounded-full font-semibold ${isFat32 ? 'bg-warning_container text-warning border border-warning/30' : 'bg-surface_container_low text-on_surface_variant border border-outline_variant'}`}>
+                    {fsLabel[filesystemType] ?? filesystemType.toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <p className="text-mono-sm text-on_surface_variant mt-0.5 truncate">{destinationPath}</p>
             </div>
           </div>
-          {isSaved && onRemoveDestination && !confirmingRemove && !isSyncing && (
+          {isSaved && onRemoveDestination && !isSyncing && (
             <button
-              onClick={() => setConfirmingRemove(true)}
-              className="p-2 text-zinc-600 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors"
-              title="Remove from sidebar"
+              onClick={() => setShowRemoveModal(true)}
+              className="p-2 text-on_surface_variant/60 hover:text-error hover:bg-error_container rounded-lg transition-colors"
+              title="Remove folder"
             >
               <Trash2 className="w-4 h-4" />
             </button>
           )}
         </div>
 
-        {/* Filesystem badge */}
-        {filesystemType !== 'unknown' && (
-          <div className={`flex items-center gap-2 mb-4 px-3 py-2 rounded-lg text-xs ${isFat32 ? 'bg-yellow-900/30 border border-yellow-700/40 text-yellow-300' : 'bg-jf-bg-mid border border-jf-border text-zinc-500'}`}>
-            <span className={`font-mono font-semibold ${isFat32 ? 'text-yellow-400' : ''}`}>{fsLabel[filesystemType] ?? filesystemType.toUpperCase()}</span>
-            {isFat32 && <span>· Filenames will be sanitized for FAT32 compatibility (trailing dots/spaces removed, reserved names prefixed)</span>}
-            {isExFat && <span>· exFAT — no file size limit, compatible with most devices</span>}
-          </div>
-        )}
 
-        {/* Confirm remove */}
-        {confirmingRemove && (
-          <div className="mb-4">
-            <ConfirmRemove
-              name={destinationName}
-              onConfirm={() => { setConfirmingRemove(false); onRemoveDestination?.() }}
-              onCancel={() => setConfirmingRemove(false)}
-            />
-          </div>
+        {showRemoveModal && (
+          <RemoveFolderModal
+            name={destinationName}
+            path={destinationPath}
+            onCancel={() => setShowRemoveModal(false)}
+            onConfirm={deleteFiles => {
+              setShowRemoveModal(false)
+              onRemoveDestination?.(deleteFiles)
+            }}
+          />
         )}
 
         {/* Space bar */}
-        {loadingInfo ? (
-          <div className="bg-jf-bg-mid rounded-xl p-4 border border-jf-border mb-4 h-16 animate-pulse" />
-        ) : deviceInfo ? (
-          <div data-testid="storage-bar" className="bg-jf-bg-mid rounded-xl p-4 border border-jf-border mb-4">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-zinc-400">Storage</span>
-              <span className="text-zinc-300">{formatBytes(deviceInfo.free)} free of {formatBytes(deviceInfo.total)}</span>
+        {loadingInfo || isActivatingDevice || isCalculatingSize ? (
+          <div className="bg-surface_container_low rounded-xl p-4 border border-outline_variant mb-4">
+            <div className="flex justify-between mb-2">
+              <span className="text-label-md uppercase">Storage</span>
+              <div className="h-4 bg-surface_container_highest rounded w-32 animate-pulse mt-0.5" />
             </div>
-            <div className="w-full bg-[#2a3a4d] rounded-full h-2">
+            <div className="w-full bg-surface_container_highest rounded-full h-2 animate-pulse overflow-hidden flex" />
+            <div className="h-4 bg-surface_container_highest rounded w-40 mt-1.5 animate-pulse" />
+          </div>
+        ) : deviceInfo ? (
+          <div data-testid="storage-bar" className="bg-surface_container_low rounded-xl p-4 border border-outline_variant mb-4">
+            <div className="flex justify-between text-body-md mb-2">
+              <span className="text-label-md uppercase">Storage</span>
+              <span className="text-body-sm text-on_surface" style={{ fontVariantNumeric: 'tabular-nums' }}>{formatBytes(deviceInfo.total)} total</span>
+            </div>
+            <div className="w-full bg-surface_container_highest rounded-full h-2 overflow-hidden flex">
+              {/* Used segment */}
               <div
-                className={`h-2 rounded-full transition-all ${usedPct! > 90 ? 'bg-red-500' : usedPct! > 70 ? 'bg-yellow-500' : 'bg-jf-purple'}`}
+                className="h-2 bg-secondary_container transition-all"
                 style={{ width: `${usedPct}%` }}
               />
+              {/* Projected segment — show early via estimatedSizeBytes, or late via previewData */}
+              {!isActivatingDevice && !isCalculatingSize && (previewData ?? (estimatedSizeBytes != null ? { totalBytes: estimatedSizeBytes } : null)) && (
+                <div
+                  className={`h-2 transition-all ${((previewData ?? { totalBytes: estimatedSizeBytes! }).totalBytes) > deviceInfo.free ? 'bg-error' : ((previewData ?? { totalBytes: estimatedSizeBytes! }).totalBytes) > deviceInfo.free * 0.9 ? 'bg-warning' : 'bg-tertiary_container'}`}
+                  style={{ width: `${Math.min((((previewData ?? { totalBytes: estimatedSizeBytes! }).totalBytes) / deviceInfo.total) * 100, 100 - usedPct!)}%` }}
+                />
+              )}
+              {/* Free segment */}
+              <div
+                className="h-2 bg-success transition-all"
+                style={{ width: `${Math.max(100 - usedPct! - (((previewData ?? (estimatedSizeBytes != null ? { totalBytes: estimatedSizeBytes } : null)) ? Math.min(((previewData ?? { totalBytes: estimatedSizeBytes ?? 0 }).totalBytes / deviceInfo.total) * 100, 100 - usedPct!) : 0)), 0)}%` }}
+              />
+            </div>
+            {(previewData ?? (estimatedSizeBytes != null ? { totalBytes: estimatedSizeBytes } : null)) && (previewData ?? { totalBytes: estimatedSizeBytes! }).totalBytes > deviceInfo.free && (
+              <p className="text-warning text-caption mt-1.5 flex items-center gap-1">
+                ⚠ Not enough space
+              </p>
+            )}
+            <div className="flex items-center gap-3 text-body-sm text-on_surface_variant mt-1.5" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-sm bg-secondary_container" />
+                {otherFiles != null ? formatBytes(otherFiles) : '—'} Other
+              </span>
+              {!isActivatingDevice && !isCalculatingSize && (previewData ?? (estimatedSizeBytes != null ? { totalBytes: estimatedSizeBytes } : null)) && (
+                <span className="flex items-center gap-1">
+                  <span className={`w-2 h-2 rounded-sm ${((previewData ?? { totalBytes: estimatedSizeBytes! }).totalBytes) > deviceInfo.free ? 'bg-error' : ((previewData ?? { totalBytes: estimatedSizeBytes! }).totalBytes) > deviceInfo.free * 0.9 ? 'bg-warning' : 'bg-tertiary_container'}`} />
+                  {formatBytes((previewData ?? { totalBytes: estimatedSizeBytes ?? 0 }).totalBytes)} Audio
+                </span>
+              )}
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-sm bg-success" />
+                {formatBytes(deviceInfo.free)} Free
+              </span>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <div className="bg-surface_container_low rounded-xl p-4 border border-outline_variant mb-4 min-h-[6rem]" />
+        )}
 
         {/* Sync items — grouped, each toggleable */}
-        <div className="bg-jf-bg-mid rounded-xl border border-jf-border mb-4 overflow-hidden">
+        <div className="bg-surface_container_low rounded-xl border border-outline_variant mb-4 overflow-hidden">
           {syncItems.length === 0 ? (
-            <div className="p-6 text-center text-zinc-500 text-sm">
+            <div className="p-6 text-center text-on_surface_variant text-body-md">
               <Music className="w-8 h-8 mx-auto mb-2 opacity-40" />
               <p>No items selected</p>
-              <p className="text-xs mt-1 text-zinc-600">Select artists, albums or playlists from the library</p>
+              <p className="text-caption mt-1 text-on_surface_variant/60">Select artists, albums or playlists from the library</p>
             </div>
           ) : (
-            <div className="divide-y divide-zinc-800 max-h-60 overflow-y-auto">
+            <div className="divide-y divide-outline_variant/30 max-h-60 overflow-y-auto">
               {groups.map(([state, label]) => {
                 const items = syncItems.filter(i => i.state === state)
                 if (items.length === 0) return null
                 return (
                   <div key={state} className="p-4">
-                    <p className={`text-xs font-medium uppercase tracking-wider mb-2 flex items-center gap-1.5 ${STATE_TEXT[state]}`}>
+                    <p className={`text-label-md uppercase mb-2 flex items-center gap-1.5 ${STATE_TEXT[state]}`}>
                       {state === 'new' && <RefreshCw className="w-3 h-3" />}
+                      {state === 'outOfSync' && <RefreshCw className="w-3 h-3" />}
                       {state === 'remove' && <X className="w-3 h-3" />}
                       {label} · {items.length}
                     </p>
@@ -255,22 +320,23 @@ export function DeviceSyncPanel({
                           key={item.id}
                           onClick={() => !isSyncing && onToggleItem(item.id)}
                           disabled={isSyncing}
-                          className="w-full flex items-center gap-2 text-sm py-1 px-2 rounded hover:bg-zinc-800 disabled:hover:bg-transparent disabled:cursor-default transition-colors text-left group"
+                          className="w-full flex items-center gap-2 text-body-md py-1 px-2 rounded hover:bg-surface_container_high disabled:hover:bg-transparent disabled:cursor-default transition-colors text-left group"
                         >
                           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATE_COLOR[item.state]}`} />
                           <span className={`flex-1 truncate ${item.state === 'remove' ? 'line-through opacity-50' : ''}`}>
                             {item.name}
                           </span>
-                          <span className="text-xs text-zinc-600 flex-shrink-0">{item.type}</span>
-                          <span className="text-xs text-zinc-600 opacity-0 group-hover:opacity-100 flex-shrink-0">
+                          <span className="text-label-sm text-on_surface_variant flex-shrink-0">{item.type}</span>
+                          <span className="text-label-sm text-on_surface_variant opacity-0 group-hover:opacity-100 flex-shrink-0">
                             {item.state === 'remove' ? 'undo' : 'remove'}
                           </span>
                         </button>
                       ))}
                     </div>
-                    <p className="text-xs text-zinc-600 mt-2 px-2">
+                    <p className="text-label-sm text-on_surface_variant/60 mt-2 px-2">
                       {state === 'new' && 'Click an item to remove it from this sync'}
                       {state === 'synced' && 'Click an item to remove it from device'}
+                      {state === 'outOfSync' && 'Click to remove from device (re-tag only if re-added)'}
                       {state === 'remove' && 'Click an item to keep it on device'}
                     </p>
                   </div>
@@ -281,11 +347,11 @@ export function DeviceSyncPanel({
         </div>
 
         {/* Convert to MP3 */}
-        <div className="bg-jf-bg-mid rounded-xl p-4 border border-jf-border mb-4">
+        <div className="bg-surface_container_low rounded-xl p-4 border border-outline_variant mb-4">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm font-medium">Convert to MP3</span>
-              <p className="text-xs text-zinc-500 mt-0.5">
+              <span className="text-body-md font-medium">Convert to MP3</span>
+              <p className="text-caption text-on_surface_variant mt-0.5">
                 {convertToMp3 ? `FLAC/lossless + MP3 above ${bitrate} → MP3 ${bitrate}` : 'Copy files as-is'}
               </p>
             </div>
@@ -293,20 +359,20 @@ export function DeviceSyncPanel({
               data-testid="mp3-toggle"
               onClick={onToggleConvert}
               disabled={isSyncing}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-default ${convertToMp3 ? 'bg-jf-purple' : 'bg-zinc-600'}`}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-default ${convertToMp3 ? 'bg-primary_container' : 'bg-surface_container_highest'}`}
             >
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${convertToMp3 ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>
           </div>
           {convertToMp3 && (
             <div className="flex items-center gap-2 mt-3">
-              <span className="text-xs text-zinc-400">Bitrate:</span>
+              <span className="text-label-sm text-on_surface_variant">Bitrate:</span>
               {(['128k', '192k', '320k'] as const).map(b => (
                 <button
                   key={b}
                   onClick={() => onBitrateChange(b)}
                   disabled={isSyncing}
-                  className={`px-2.5 py-1 text-xs rounded-lg disabled:cursor-default disabled:opacity-50 ${bitrate === b ? 'bg-jf-purple text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}
+                  className={`px-2.5 py-1 text-label-sm rounded-lg disabled:cursor-default disabled:opacity-50 ${bitrate === b ? 'bg-primary_container text-on_primary_container' : 'bg-surface_container_highest text-on_surface hover:bg-surface_bright'}`}
                 >
                   {b}
                 </button>
@@ -314,47 +380,59 @@ export function DeviceSyncPanel({
             </div>
           )}
         </div>
-
-        {/* Sync / Cancel button */}
-        {isSyncing ? (
-          <button
-            data-testid="cancel-sync-button"
-            onClick={onCancelSync}
-            className="w-full bg-red-600 hover:bg-red-700 py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
-          >
-            <X className="w-4 h-4" /> Cancel Sync
-          </button>
-        ) : (
-          <button
-            data-testid="sync-button"
-            onClick={onStartSync}
-            disabled={isLoadingPreview || syncItems.length === 0}
-            className="w-full bg-jf-purple hover:bg-jf-purple-dark disabled:bg-zinc-700 disabled:text-zinc-500 py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
-          >
-            {isLoadingPreview ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Calculating...</>
-            ) : (
-              `Sync to ${destinationName}`
-            )}
-          </button>
-        )}
-
-        {syncProgress && (
-          <div className="mt-4 p-4 bg-jf-bg-mid rounded-xl border border-jf-border">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-zinc-400">Progress</span>
-              <span>{syncProgress.current} / {syncProgress.total}</span>
-            </div>
-            <div data-testid="sync-progress-bar" className="w-full bg-[#2a3a4d] rounded-full h-1.5 mb-2">
-              <div
-                className="bg-jf-purple h-1.5 rounded-full transition-all"
-                style={{ width: `${syncProgress.total > 0 ? (syncProgress.current / syncProgress.total) * 100 : 0}%` }}
-              />
-            </div>
-            <p className="text-xs text-zinc-500 truncate">{syncProgress.file}</p>
-          </div>
-        )}
       </div>
+
+      {/* ── Centering wrapper close ─────────────── */}
+      </div>
+
+      {/* ── Sticky footer — full-width border, centered content ── */}
+      {!isSyncing && (
+        <div className="flex-shrink-0 border-t border-outline_variant">
+          <div className="max-w-2xl mx-auto px-6 pt-6 pb-6">
+            <button
+              data-testid="sync-button"
+              onClick={onStartSync}
+              disabled={isLoadingPreview || isActivatingDevice || syncItems.length === 0}
+              className="w-full bg-gradient-primary hover:bg-secondary_container disabled:bg-surface_container_highest disabled:text-on_surface_variant py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              {isActivatingDevice ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Calculating sync state…</>
+              ) : isLoadingPreview ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Calculating...</>
+              ) : (
+                `Sync to ${destinationName}`
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(isSyncing || syncProgress) && (
+        <div className="flex-shrink-0 border-t border-outline_variant">
+          <div className="max-w-2xl mx-auto px-6 pt-6 pb-6">
+            {syncProgress && (
+              <div className="mb-4">
+                <SyncProgressBar syncProgress={syncProgress} />
+              </div>
+            )}
+            {syncProgress?.warning && (
+              <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-xl bg-warning/20 border border-warning text-warning text-sm">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>Cover art unavailable — some tracks may be missing album artwork</span>
+              </div>
+            )}
+            {isSyncing && (
+              <button
+                data-testid="cancel-sync-button"
+                onClick={onCancelSync}
+                className="w-full bg-error hover:bg-error/80 text-on_error py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                <X className="w-4 h-4" /> Cancel Sync
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {showPreview && previewData && (
         <SyncPreviewModal
@@ -365,6 +443,6 @@ export function DeviceSyncPanel({
           onConfirm={onConfirmSync}
         />
       )}
-    </>
+    </div>
   )
 }

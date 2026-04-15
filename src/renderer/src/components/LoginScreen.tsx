@@ -12,15 +12,15 @@ interface LoginScreenProps {
 
 export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKeyChange, onSubmit }: LoginScreenProps): JSX.Element {
   return (
-    <div data-testid="auth-screen" className="h-screen flex items-center justify-center bg-jf-bg-dark text-zinc-100">
+    <div data-testid="auth-screen" className="h-screen flex items-center justify-center bg-surface text-on_surface">
       <div className="w-full max-w-md p-8">
         <div className="flex items-center gap-3 mb-8 justify-center">
           <GradientMusicIcon className="w-10 h-10" />
-          <h1 className="text-2xl font-bold">JellyTunes</h1>
+          <h1 className="text-headline-lg">JellyTunes</h1>
         </div>
 
-        <div className="bg-jf-bg-mid rounded-xl p-6 border border-jf-border">
-          <h2 className="text-lg font-semibold mb-4">Connect to Jellyfin</h2>
+        <div className="bg-surface_container_low rounded-xl p-6 border border-outline_variant">
+          <h2 className="text-headline-md mb-4">Connect to Jellyfin</h2>
 
           <form onSubmit={(e) => {
             e.preventDefault()
@@ -30,7 +30,7 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
           }}>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-zinc-400 mb-1">Server URL</label>
+                <label className="block text-body-md text-on_surface_variant mb-1">Server URL</label>
                 <input
                   data-testid="server-url-input"
                   name="url"
@@ -39,11 +39,11 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
                   onChange={(e) => onUrlChange(e.target.value)}
                   placeholder="https://jellyfin.tudominio.com"
                   required
-                  className="w-full bg-[#1e2836] border border-jf-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-jf-purple"
+                  className="w-full bg-surface_container_low border border-outline_variant rounded-lg px-4 py-2 text-body-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 />
               </div>
               <div>
-                <label className="block text-sm text-zinc-400 mb-1">API Key</label>
+                <label className="block text-body-md text-on_surface_variant mb-1">API Key</label>
                 <input
                   data-testid="api-key-input"
                   name="apiKey"
@@ -52,12 +52,12 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
                   onChange={(e) => onApiKeyChange(e.target.value)}
                   placeholder="Your Jellyfin API key"
                   required
-                  className="w-full bg-[#1e2836] border border-jf-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-jf-purple"
+                  className="w-full bg-surface_container_low border border-outline_variant rounded-lg px-4 py-2 text-body-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 />
               </div>
 
               {error && (
-                <div data-testid="error-message" className="flex items-center gap-2 text-red-400 text-sm">
+                <div data-testid="error-message" className="flex items-center gap-2 text-error text-body-md">
                   <X className="w-4 h-4" />
                   {error}
                 </div>
@@ -66,7 +66,7 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
               <button
                 data-testid="connect-button"
                 type="submit"
-                className="w-full bg-jf-purple hover:bg-jf-purple-dark py-2 rounded-lg font-medium transition-colors"
+                className="w-full bg-gradient-primary hover:bg-secondary_container py-2 rounded-lg font-medium transition-colors"
               >
                 Connect
               </button>
@@ -74,7 +74,7 @@ export function LoginScreen({ urlInput, apiKeyInput, error, onUrlChange, onApiKe
           </form>
         </div>
 
-        <p className="text-xs text-zinc-500 text-center mt-4">
+        <p className="text-caption text-on_surface_variant text-center mt-4">
           Get your API Key in Jellyfin → Dashboard → User → API Keys
         </p>
       </div>

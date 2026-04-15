@@ -10,6 +10,7 @@ interface FooterStatsProps {
   playlists: Playlist[]
   activeDeviceName?: string | null
   isUsbDevice?: boolean
+  onGoToDevice?: () => void
 }
 
 export function FooterStats({
@@ -20,6 +21,7 @@ export function FooterStats({
   playlists,
   activeDeviceName,
   isUsbDevice,
+  onGoToDevice,
 }: FooterStatsProps): JSX.Element {
   const [updateInfo, setUpdateInfo] = useState<{ latestVersion: string; releaseUrl: string } | null>(null)
 
@@ -36,26 +38,36 @@ export function FooterStats({
   const DeviceIcon = isUsbDevice ? HardDrive : Folder
 
   return (
-    <footer className="h-10 border-t border-jf-border flex items-center justify-between px-4 text-xs text-zinc-500">
+    <footer className="h-10 border-t border-outline_variant flex items-center justify-between px-4 text-label-sm text-on_surface_variant">
       <span className="flex items-center gap-3">
         {libraryText}
         {updateInfo && (
           <a
             href="#"
             onClick={e => { e.preventDefault(); window.open(updateInfo.releaseUrl) }}
-            className="text-jf-purple-light hover:text-white transition-colors"
+            className="text-primary hover:text-on_surface transition-colors"
           >
             v{updateInfo.latestVersion} available ↗
           </a>
         )}
       </span>
       {activeDeviceName ? (
-        <span className="flex items-center gap-1.5 text-jf-purple-light">
+        <button
+          onClick={onGoToDevice}
+          className="flex items-center gap-1.5 px-3 py-1.5 -my-1.5 rounded-lg text-primary hover:bg-primary_container/15 transition-colors cursor-pointer"
+          aria-label={`View device ${activeDeviceName}`}
+        >
           <DeviceIcon className="w-3 h-3" />
           {activeDeviceName}
-        </span>
+        </button>
       ) : (
-        <span className="text-zinc-600">No device selected · Choose from sidebar</span>
+        <button
+          onClick={onGoToDevice}
+          className="flex items-center gap-1.5 px-3 py-1.5 -my-1.5 rounded-lg text-on_surface_variant hover:bg-surface_container_high/50 transition-colors cursor-pointer"
+          aria-label="Select a device"
+        >
+          No device selected
+        </button>
       )}
     </footer>
   )

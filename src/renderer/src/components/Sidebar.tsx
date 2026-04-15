@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { User, Disc, ListMusic, HardDrive, Folder, Plus, RotateCcw, X } from 'lucide-react'
+import { User, Disc, ListMusic, HardDrive, Folder, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import type { ActiveSection, LibraryTab, LibraryStats, PaginationState, Artist, Album, Playlist, UsbDevice, SavedDestination } from '../appTypes'
+import { RemoveFolderModal } from './RemoveFolderModal'
 
 interface SidebarProps {
   activeSection: ActiveSection
@@ -17,7 +18,9 @@ interface SidebarProps {
   onDestinationClick: (path: string) => void
   onAddFolder: () => void
   onRefreshDevices: () => void
-  onRemoveDestination: (id: string) => void
+  onRefreshLibrary?: () => void
+  onRemoveDestination: (path: string, deleteFiles: boolean, onDone: () => void) => void
+  isRemovingDestination?: boolean
 }
 
 export function Sidebar({
@@ -35,28 +38,43 @@ export function Sidebar({
   onDestinationClick,
   onAddFolder,
   onRefreshDevices,
+  onRefreshLibrary,
   onRemoveDestination,
+  isRemovingDestination,
 }: SidebarProps): JSX.Element {
-  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [modalDest, setModalDest] = useState<SavedDestination | null>(null)
 
   const tabClass = (active: boolean) =>
-    `w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${active ? 'bg-jf-purple/20 text-jf-purple-light border border-jf-purple/40' : 'hover:bg-zinc-800 text-zinc-300 border border-transparent'}`
+    `w-full flex items-center gap-2 px-3 py-2 rounded-lg text-body-md transition-colors ${active ? 'bg-primary_container/20 text-primary border border-primary_container/40' : 'hover:bg-surface_container_high text-on_surface border border-transparent'}`
 
   const destClass = (path: string) =>
-    `w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${activeDestinationPath === path ? 'bg-jf-purple/20 text-jf-purple-light border border-jf-purple/40' : 'hover:bg-zinc-800 text-zinc-300 border border-transparent'}`
+    `w-full flex items-center gap-2 px-3 py-2 rounded-lg text-body-md transition-colors ${activeDestinationPath === path ? 'bg-primary_container/20 text-primary border border-primary_container/40' : 'hover:bg-surface_container_high text-on_surface border border-transparent'}`
 
   // USB devices that have at least one mountpoint
   const mountedUsb = usbDevices.flatMap(d =>
     d.mountpoints.map(mp => ({ name: d.productName || d.displayName || 'USB Device', path: mp.path }))
   )
 
-  const hasAnyDestination = mountedUsb.length > 0 || savedDestinations.length > 0
+  const hasDevices = mountedUsb.length > 0
+  const hasFolders = savedDestinations.length > 0
 
   return (
-    <aside className="w-64 border-r border-jf-border p-4 flex flex-col">
+    <aside className="w-64 border-r border-outline_variant p-4 flex flex-col">
       {/* Library */}
       <div className="mb-6">
-        <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">Library</h3>
+        <h3 className="text-label-md uppercase text-on_surface_variant/60 px-3 mb-1 flex items-center justify-between">
+          Library
+          {onRefreshLibrary && (
+            <button
+              data-testid="refresh-library-button"
+              onClick={onRefreshLibrary}
+              aria-label="Refresh library"
+              className="p-0.5 text-on_surface_variant hover:text-on_surface transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+          )}
+        </h3>
         <nav className="space-y-1">
           <button
             data-testid="tab-artists"
@@ -65,7 +83,7 @@ export function Sidebar({
           >
             <User className="w-4 h-4 flex-shrink-0" />
             Artists
-            <span className="ml-auto text-xs opacity-60">
+            <span className="ml-auto text-label-sm opacity-60">
               {stats ? stats.ArtistCount.toLocaleString() : pagination.artists.total > 0 ? pagination.artists.total : artists.length}
             </span>
           </button>
@@ -76,7 +94,7 @@ export function Sidebar({
           >
             <Disc className="w-4 h-4 flex-shrink-0" />
             Albums
-            <span className="ml-auto text-xs opacity-60">
+            <span className="ml-auto text-label-sm opacity-60">
               {stats ? stats.AlbumCount.toLocaleString() : pagination.albums.total > 0 ? pagination.albums.total : albums.length}
             </span>
           </button>
@@ -87,28 +105,31 @@ export function Sidebar({
           >
             <ListMusic className="w-4 h-4 flex-shrink-0" />
             Playlists
-            <span className="ml-auto text-xs opacity-60">
+            <span className="ml-auto text-label-sm opacity-60">
               {stats ? stats.PlaylistCount.toLocaleString() : pagination.playlists.total > 0 ? pagination.playlists.total : playlists.length}
             </span>
           </button>
         </nav>
       </div>
 
-      {/* Devices */}
+      {/* Devices + Folders */}
       <div className="flex-1">
-        <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 flex items-center justify-between">
+        {/* Devices section */}
+        <h3 className="text-label-md uppercase text-on_surface_variant/60 px-3 mt-3 mb-1 flex items-center justify-between">
           Devices
           <button
             data-testid="refresh-devices-button"
             onClick={onRefreshDevices}
-            className="p-0.5 text-zinc-600 hover:text-zinc-400 transition-colors"
-            title="Refresh devices"
+            aria-label="Refresh devices"
+            className="p-0.5 text-on_surface_variant hover:text-on_surface transition-colors"
           >
             <RotateCcw className="w-3 h-3" />
           </button>
         </h3>
         <nav className="space-y-1">
-          {/* USB devices */}
+          {mountedUsb.length === 0 && (
+            <p className="text-caption text-on_surface_variant/50 px-3 py-1">No devices connected</p>
+          )}
           {mountedUsb.map(({ name, path }) => (
             <button
               key={path}
@@ -121,66 +142,63 @@ export function Sidebar({
               <span className="truncate">{name}</span>
             </button>
           ))}
+        </nav>
 
-          {/* Saved folders */}
-          {savedDestinations.map(dest => (
-            <div key={dest.id} className="rounded-lg overflow-hidden">
-              {confirmingId === dest.id ? (
-                <div className="px-3 py-2 bg-red-900/20 border border-red-800/40 rounded-lg">
-                  <p className="text-xs text-zinc-300 mb-2 leading-snug">
-                    Remove <span className="font-medium text-white">{dest.name}</span>?{' '}
-                    <span className="text-zinc-500">Sync history is kept.</span>
-                  </p>
-                  <div className="flex gap-1.5">
+        {/* Divider + Folders section */}
+        {(hasDevices || hasFolders) && <div className="border-t border-outline_variant my-2" />}
+        {hasFolders && (
+          <>
+            <h3 className="text-label-md uppercase text-on_surface_variant/60 px-3 mt-3 mb-1">Folders</h3>
+            <nav className="space-y-1">
+              {savedDestinations.map(dest => (
+                <div key={dest.id} className="rounded-lg overflow-hidden">
+                  <div className="relative group/dest">
                     <button
-                      onClick={() => setConfirmingId(null)}
-                      className="flex-1 px-2 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded transition-colors"
+                      data-testid="device-item"
+                      data-device-path={dest.path}
+                      onClick={() => onDestinationClick(dest.path)}
+                      className={`${destClass(dest.path)} pr-7`}
                     >
-                      Cancel
+                      <Folder className="w-4 h-4 flex-shrink-0" />
+                      <span className="truncate">{dest.name}</span>
                     </button>
                     <button
-                      onClick={() => { setConfirmingId(null); onRemoveDestination(dest.id) }}
-                      className="flex-1 px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
+                      onClick={e => { e.stopPropagation(); setModalDest(dest) }}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/dest:opacity-100 text-on_surface_variant hover:text-error hover:bg-error_container transition-all"
+                      title="Remove folder"
                     >
-                      Remove
+                      <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
                 </div>
-              ) : (
-                <div className="relative group/dest">
-                  <button
-                    data-testid="device-item"
-                    data-device-path={dest.path}
-                    onClick={() => onDestinationClick(dest.path)}
-                    className={`${destClass(dest.path)} pr-7`}
-                  >
-                    <Folder className="w-4 h-4 flex-shrink-0" />
-                    <span className="truncate">{dest.name}</span>
-                  </button>
-                  <button
-                    onClick={e => { e.stopPropagation(); setConfirmingId(dest.id) }}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/dest:opacity-100 text-zinc-600 hover:text-red-400 hover:bg-red-900/20 transition-all"
-                    title="Remove from sidebar"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
+              ))}
+            </nav>
+          </>
+        )}
 
-          {/* Separator + Add folder */}
-          {hasAnyDestination && <div className="border-t border-jf-border my-1" />}
-          <button
-            data-testid="add-folder-button"
-            onClick={onAddFolder}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
-          >
-            <Plus className="w-4 h-4 flex-shrink-0" />
-            Add folder...
-          </button>
-        </nav>
+        {/* Add folder */}
+        <button
+          data-testid="add-folder-button"
+          onClick={onAddFolder}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-body-md text-on_surface_variant hover:text-on_surface hover:bg-surface_container_high transition-colors mt-1"
+        >
+          <Plus className="w-4 h-4 flex-shrink-0" />
+          Add folder...
+        </button>
       </div>
+
+      {/* Shared remove modal */}
+      {modalDest && (
+        <RemoveFolderModal
+          name={modalDest.name}
+          path={modalDest.path}
+          onCancel={() => setModalDest(null)}
+          onConfirm={deleteFiles => {
+            onRemoveDestination(modalDest.path, deleteFiles, () => setModalDest(null))
+          }}
+          isRemoving={isRemovingDestination}
+        />
+      )}
     </aside>
   )
 }

@@ -11,16 +11,16 @@ interface UserSelectorScreenProps {
 
 export function UserSelectorScreen({ users, serverUrl, onSelect, onCancel }: UserSelectorScreenProps): JSX.Element {
   return (
-    <div data-testid="user-selector-screen" className="h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
+    <div data-testid="user-selector-screen" className="h-screen flex items-center justify-center bg-surface text-on_surface">
       <div className="w-full max-w-md p-8">
         <div className="flex items-center gap-3 mb-8 justify-center">
           <GradientMusicIcon className="w-10 h-10" />
-          <h1 className="text-2xl font-bold">JellyTunes</h1>
+          <h1 className="text-headline-lg">JellyTunes</h1>
         </div>
 
-        <div className="bg-zinc-900 rounded-xl p-6 border border-zinc-800">
-          <h2 className="text-lg font-semibold mb-2">Select your user</h2>
-          <p className="text-sm text-zinc-400 mb-4">
+        <div className="bg-surface_container_low rounded-xl p-6 border border-outline_variant">
+          <h2 className="text-headline-md mb-2">Select your user</h2>
+          <p className="text-body-md text-on_surface_variant mb-4">
             Could not automatically identify your account. Please select which Jellyfin user you want to use for sync:
           </p>
 
@@ -32,9 +32,9 @@ export function UserSelectorScreen({ users, serverUrl, onSelect, onCancel }: Use
                 data-user-name={user.Name}
                 key={user.Id}
                 onClick={() => onSelect(user)}
-                className="w-full flex items-center gap-3 p-3 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors text-left"
+                className="w-full flex items-center gap-3 p-3 bg-surface_container_high hover:bg-surface_container_highest rounded-lg transition-colors text-left"
               >
-                <div className="w-10 h-10 bg-zinc-700 rounded-full flex items-center justify-center">
+                <div className="w-10 h-10 bg-surface_container_highest rounded-full flex items-center justify-center">
                   {user.PrimaryImageTag ? (
                     <img
                       src={`${serverUrl}/Users/${user.Id}/Images/Primary?tag=${user.PrimaryImageTag}`}
@@ -53,13 +53,13 @@ export function UserSelectorScreen({ users, serverUrl, onSelect, onCancel }: Use
                       }}
                     />
                   ) : (
-                    <User className="w-5 h-5 text-zinc-400" />
+                    <User className="w-5 h-5 text-on_surface_variant" />
                   )}
                 </div>
                 <div className="flex-1">
-                  <div className="font-medium">{user.Name}</div>
+                  <div className="text-body-md font-medium">{user.Name}</div>
                   {user.Policy?.IsAdministrator && (
-                    <span className="text-xs text-yellow-500">Administrator</span>
+                    <span className="text-label-md text-warning">Administrator</span>
                   )}
                 </div>
               </button>
@@ -68,7 +68,7 @@ export function UserSelectorScreen({ users, serverUrl, onSelect, onCancel }: Use
 
           <button
             onClick={onCancel}
-            className="w-full py-2 rounded-lg font-medium bg-zinc-800 hover:bg-zinc-700 transition-colors"
+            className="w-full py-2 rounded-lg font-medium bg-surface_container_high hover:bg-surface_container_highest transition-colors"
           >
             Cancel
           </button>
