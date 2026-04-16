@@ -218,12 +218,60 @@ export function useSync({
     const newTrackCount = registry.countNewTracks(selectedTracks, syncFolder)
     const willRemoveCount = toDeleteIds.length
 
+    // Call analyzeDiff for accurate breakdown of new/updated/removed tracks
+    // items that are already synced will be analyzed for changes
+    let newTracksCount = newTrackCount
+    let newTracksBytes = totalBytes
+    let updatedTracksCount = 0
+    let updatedTracksBytes = 0
+    let willRemoveBytes = 0
+
+    if (selectedIds.length > 0 && jellyfinConfig) {
+      try {
+        const diffResult = await window.api.analyzeDiff({
+          serverUrl: jellyfinConfig.url,
+          apiKey: jellyfinConfig.apiKey,
+          userId,
+          itemIds: selectedIds,
+          itemTypes: map,
+          destinationPath: syncFolder,
+          options: { convertToMp3, bitrate, coverArtMode: 'embed' },
+        })
+        if (diffResult.success) {
+          const { newTracks, metadataChanged } = diffResult.totals
+          updatedTracksCount = metadataChanged
+          newTracksCount = newTracks
+          // Estimate bytes proportionally using track count ratio
+          if (newTrackCount > 0 && newTracks > 0) {
+            newTracksBytes = Math.round(totalBytes * (newTracks / (newTracks + metadataChanged)))
+            updatedTracksBytes = totalBytes - newTracksBytes
+          }
+          // Remove bytes from items being deleted — use registry to compute
+          if (willRemoveCount > 0) {
+            let removeBytes = 0
+            for (const id of toDeleteIds) {
+              const trackIds = registry.getItemTrackIds(id)
+              for (const tid of trackIds) {
+                const synced = (registry as { deviceSyncedTracks?: Map<string, Map<string, { fileSize: number; itemId: string }>> }).deviceSyncedTracks?.get(syncFolder)?.get(tid)
+                if (synced) removeBytes += synced.fileSize
+              }
+            }
+            willRemoveBytes = removeBytes
+          }
+        }
+      } catch { /* ignore diff errors, use registry estimates */ }
+    }
+
     setPreviewData({
-      trackCount: newTrackCount,
-      totalBytes,
+      trackCount: newTracksCount + updatedTracksCount,
+      totalBytes: newTracksBytes + updatedTracksBytes,
       formatBreakdown: {},
-      alreadySyncedCount: selectedIds.length - newTrackCount,
+      newTracksCount,
+      newTracksBytes,
+      updatedTracksCount,
+      updatedTracksBytes,
       willRemoveCount,
+      willRemoveBytes,
     })
     setShowPreview(true)
   }

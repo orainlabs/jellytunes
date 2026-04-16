@@ -9,7 +9,15 @@ interface SyncPreviewModalProps {
   onConfirm: () => void
 }
 
+function formatGB(bytes: number): string {
+  return (bytes / 1024 / 1024 / 1024).toFixed(2)
+}
+
 export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConfirm }: SyncPreviewModalProps): JSX.Element {
+  const showNew = data.newTracksCount > 0
+  const showUpdated = data.updatedTracksCount > 0
+  const showRemove = data.willRemoveCount > 0
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onCancel}>
       <div data-testid="sync-preview-modal" className="bg-surface_container_low border border-outline_variant rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -17,27 +25,50 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
           <Check className="w-5 h-5 text-primary" />
           Sync Preview
         </h2>
+
         <div className="space-y-3 mb-6">
-          <div className="flex justify-between text-body-md">
-            <span className="text-on_surface_variant">Tracks to sync</span>
-            <span data-testid="preview-track-count" className="text-body-md font-medium">{data.trackCount.toLocaleString()}</span>
-          </div>
-          <div className="flex justify-between text-body-md">
-            <span className="text-on_surface_variant">Total size</span>
-            <span data-testid="preview-total-size" className="text-body-md font-medium">{(data.totalBytes / 1024 / 1024 / 1024).toFixed(2)} GB</span>
-          </div>
-          {data.alreadySyncedCount > 0 && (
+          {/* New tracks */}
+          {showNew && (
             <div className="flex justify-between text-body-md">
-              <span className="text-on_surface_variant">Previously synced</span>
-              <span className="text-success">{data.alreadySyncedCount} (will skip if unchanged)</span>
+              <span className="text-on_surface_variant">New tracks</span>
+              <div className="flex items-center gap-2">
+                <span data-testid="preview-new-tracks-count" className="font-medium">{data.newTracksCount.toLocaleString()}</span>
+                <span data-testid="preview-new-tracks-size" className="text-on_surface_variant">({formatGB(data.newTracksBytes)} GB)</span>
+              </div>
             </div>
           )}
-          {(data.willRemoveCount ?? 0) > 0 && (
+
+          {/* Updated tracks */}
+          {showUpdated && (
             <div className="flex justify-between text-body-md">
-              <span className="text-on_surface_variant">Will remove from device</span>
-              <span className="text-error">{data.willRemoveCount} item(s)</span>
+              <span className="text-on_surface_variant">Will update</span>
+              <div className="flex items-center gap-2">
+                <span data-testid="preview-updated-tracks-count" className="font-medium">{data.updatedTracksCount.toLocaleString()}</span>
+                <span data-testid="preview-updated-tracks-size" className="text-on_surface_variant">({formatGB(data.updatedTracksBytes)} GB)</span>
+              </div>
             </div>
           )}
+
+          {/* Will remove */}
+          {showRemove && (
+            <div className="flex justify-between text-body-md">
+              <span className="text-on_surface_variant">Will remove</span>
+              <div className="flex items-center gap-2">
+                <span data-testid="preview-will-remove-count" className="font-medium">{data.willRemoveCount.toLocaleString()}</span>
+                <span data-testid="preview-will-remove-size" className="text-on_surface_variant">({formatGB(data.willRemoveBytes)} GB)</span>
+              </div>
+            </div>
+          )}
+
+          {/* Total */}
+          {showNew && (
+            <div className="flex justify-between text-body-md border-t border-outline_variant pt-2 mt-2">
+              <span className="text-on_surface_variant">Total</span>
+              <span className="font-medium">{formatGB(data.newTracksBytes + (data.updatedTracksBytes ?? 0) + (data.willRemoveBytes ?? 0))} GB</span>
+            </div>
+          )}
+
+          {/* Formats */}
           {Object.keys(data.formatBreakdown).length > 0 && (
             <div className="text-body-md">
               <span className="text-on_surface_variant block mb-1">Formats</span>
@@ -50,6 +81,7 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
               </div>
             </div>
           )}
+
           {convertToMp3 && (
             <div className="text-caption text-on_surface_variant bg-surface_container_highest rounded p-2 space-y-1">
               <div>FLAC/lossless and other formats → MP3 {bitrate}</div>
@@ -57,6 +89,7 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
             </div>
           )}
         </div>
+
         <div className="flex gap-3">
           <button
             data-testid="cancel-preview-button"

@@ -105,8 +105,12 @@ export interface PreviewData {
   trackCount: number
   totalBytes: number
   formatBreakdown: Record<string, number>
-  alreadySyncedCount: number
-  willRemoveCount?: number
+  newTracksCount: number
+  newTracksBytes: number
+  updatedTracksCount: number
+  updatedTracksBytes: number
+  willRemoveCount: number
+  willRemoveBytes: number
 }
 
 export interface ItemTypeIndex {

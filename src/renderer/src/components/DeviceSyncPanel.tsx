@@ -177,9 +177,12 @@ export function DeviceSyncPanel({
   ]
 
   const usedPct = deviceInfo ? Math.round((deviceInfo.used / deviceInfo.total) * 100) : null
-  const audioPct = (deviceInfo && syncedMusicBytes) ? Math.min(Math.round((syncedMusicBytes / deviceInfo.total) * 100), usedPct ?? 0) : null
+  const audioBytes = estimatedSizeBytes ?? syncedMusicBytes ?? 0
   const otherFiles = deviceInfo ? Math.max(0, deviceInfo.used - (syncedMusicBytes ?? 0)) : null
-  const otherPct = usedPct != null && audioPct != null ? Math.max(0, usedPct - audioPct) : usedPct
+  const otherPct = deviceInfo ? Math.round((Math.max(0, deviceInfo.used - (syncedMusicBytes ?? 0)) / deviceInfo.total) * 100) : null
+  const audioPct = deviceInfo && audioBytes > 0 ? Math.min(Math.round((audioBytes / deviceInfo.total) * 100), Math.max(0, 100 - (otherPct ?? 0))) : null
+  const isAudioLoading = !!(isLoadingSize || isLoadingPreview)
+  const audioDisplayBytes = estimatedSizeBytes ?? syncedMusicBytes
   const Icon = isUsbDevice ? HardDrive : Folder
   const isFat32 = filesystemType === 'fat32'
   const fsLabel: Record<string, string> = {
@@ -251,18 +254,18 @@ export function DeviceSyncPanel({
               <span className="text-body-sm text-on_surface" style={{ fontVariantNumeric: 'tabular-nums' }}>{formatBytes(deviceInfo.total)} total</span>
             </div>
             <div className="w-full bg-surface_container_highest rounded-full h-2 overflow-hidden flex">
+              {/* Other used segment */}
+              <div
+                className="h-2 bg-tertiary_container transition-all"
+                style={{ width: `${otherPct ?? 0}%` }}
+              />
               {/* Audio segment */}
               {audioPct != null && audioPct > 0 && (
                 <div
-                  className="h-2 bg-primary transition-all"
+                  className="h-2 bg-secondary transition-all"
                   style={{ width: `${audioPct}%` }}
                 />
               )}
-              {/* Other used segment */}
-              <div
-                className="h-2 bg-secondary_container transition-all"
-                style={{ width: `${otherPct ?? 0}%` }}
-              />
               {/* Free segment */}
               <div
                 className="h-2 bg-success transition-all"
@@ -270,24 +273,15 @@ export function DeviceSyncPanel({
               />
             </div>
             <div className="flex items-center gap-3 text-body-sm text-on_surface_variant mt-1.5" style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {syncedMusicBytes != null && syncedMusicBytes > 0 && (
-                <span className="flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-sm bg-primary" />
-                  {formatBytes(syncedMusicBytes)} Audio
-                </span>
-              )}
-              {(isLoadingSize || isLoadingPreview || (estimatedSizeBytes != null && estimatedSizeBytes > 0)) && (() => {
-                const loading = isLoadingSize || isLoadingPreview
-                return (
-                  <span className={`flex items-center gap-1 text-primary transition-opacity duration-300 ${loading ? 'opacity-40' : 'opacity-100'}`}>
-                    <span className={`w-2 h-2 rounded-sm bg-primary_container border border-primary inline-block ${loading ? 'animate-sizeSquarePulse' : ''}`} />
-                    {estimatedSizeBytes != null && estimatedSizeBytes > 0 ? formatBytes(estimatedSizeBytes) : '—'} Selected
-                  </span>
-                )
-              })()}
               <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-sm bg-secondary_container" />
+                <span className="w-2 h-2 rounded-sm bg-tertiary_container" />
                 {otherFiles != null ? formatBytes(otherFiles) : '—'} Other
+              </span>
+              <span className="flex items-center gap-1">
+                <span className={`w-2 h-2 rounded-sm bg-secondary${isAudioLoading ? ' animate-sizeSquarePulse' : ''}`} />
+                <span className={isAudioLoading ? 'opacity-40' : ''}>
+                  {audioDisplayBytes != null ? formatBytes(audioDisplayBytes) : (isAudioLoading ? '—' : '0 B')} Audio
+                </span>
               </span>
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-sm bg-success" />

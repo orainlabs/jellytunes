@@ -192,8 +192,12 @@ describe('DeviceSyncPanel', () => {
         trackCount: 100,
         totalBytes: 5e9,
         formatBreakdown: { flac: 3e9, mp3: 2e9 },
-        alreadySyncedCount: 10,
+        newTracksCount: 90,
+        newTracksBytes: 4.5e9,
+        updatedTracksCount: 0,
+        updatedTracksBytes: 0,
         willRemoveCount: 2,
+        willRemoveBytes: 0.5e9,
       }
       await renderPanelAndSettle({ showPreview: true, previewData })
       expect(screen.getByTestId('sync-preview-modal')).toBeInTheDocument()
@@ -205,7 +209,12 @@ describe('DeviceSyncPanel', () => {
         trackCount: 100,
         totalBytes: 5e9,
         formatBreakdown: {},
-        alreadySyncedCount: 0,
+        newTracksCount: 100,
+        newTracksBytes: 5e9,
+        updatedTracksCount: 0,
+        updatedTracksBytes: 0,
+        willRemoveCount: 0,
+        willRemoveBytes: 0,
       }
       await renderPanelAndSettle({ showPreview: true, previewData, onConfirmSync })
       await userEvent.click(screen.getByTestId('confirm-sync-button'))
@@ -218,7 +227,12 @@ describe('DeviceSyncPanel', () => {
         trackCount: 100,
         totalBytes: 5e9,
         formatBreakdown: {},
-        alreadySyncedCount: 0,
+        newTracksCount: 100,
+        newTracksBytes: 5e9,
+        updatedTracksCount: 0,
+        updatedTracksBytes: 0,
+        willRemoveCount: 0,
+        willRemoveBytes: 0,
       }
       await renderPanelAndSettle({ showPreview: true, previewData, onCancelPreview })
       await userEvent.click(screen.getByTestId('cancel-preview-button'))

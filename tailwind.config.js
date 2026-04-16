@@ -9,6 +9,7 @@ export default {
         primary: '#cdbdff',
         primary_container: '#7c4dff',
         secondary_container: '#4e3b8c',
+        secondary: '#26c6da',
         tertiary_container: '#b55800',
         surface: '#12121e',
         surface_container_low: '#1a1a27',
