@@ -187,6 +187,26 @@ export function useDeviceSelections() {
           isActivatingDevice: false,
         })
       })
+      // Eagerly fetch tracks for synced items not yet in registry
+      // (handles v0.2.x→v0.3.0 upgrade: synced_tracks was empty, so these auto-selected
+      //  items need their track data fetched for size calculations and sync preview)
+      if (options) {
+        const syncedToFetch = items.filter(
+          (item: SyncedItemInfo) => registry.getItemTrackIds(item.id).length === 0
+        )
+        if (syncedToFetch.length > 0) {
+          setSizeLoadingCount(c => c + 1)
+          Promise.all(
+            syncedToFetch.map((item: SyncedItemInfo) =>
+              registry.ensureItemTracks(item.id, item.type, {
+                serverUrl: options.serverUrl,
+                apiKey: options.apiKey,
+                userId: options.userId,
+              })
+            )
+          ).then(() => bumpRegistryVersion()).finally(() => setSizeLoadingCount(c => c - 1))
+        }
+      }
       // Recompute syncedMusicBytes after activation (re-activation may have new tracks)
       scheduleSyncedMusicRecalc(path)
       // Eagerly fetch tracks for any selected item not yet in registry

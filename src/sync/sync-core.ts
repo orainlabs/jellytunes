@@ -449,9 +449,10 @@ class SyncCoreImpl {
               stats.itemsSkipped++;
               this.log.debug(`Skip (convert, exists): ${track.name}`);
               // Heal v1→v2 migration: populate synced_tracks so future analyzeDiff works correctly
+              const existingSize = (await this.deps.fs.stat(outputPath)).size
               upsertSyncedTrack(
                 input.destinationPath, itemId, track.id, outputPath,
-                null, currentHash, coverArtMode, encodedBitrate,
+                existingSize, currentHash, coverArtMode, encodedBitrate,
                 track.path ?? null, this.serverRootPath || null
               );
               return;
