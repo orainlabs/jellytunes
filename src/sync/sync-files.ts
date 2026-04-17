@@ -393,14 +393,31 @@ export function createFFmpegConverter(): AudioConverter {
       const os = require('os');
 
       return new Promise((resolve) => {
-        // Build complete args array BEFORE spawning — all inputs and flags before output
-        const args: string[] = ['-i', 'pipe:0'];
+        // Build args: inputs first, then encoding params, then metadata, then output.
+        // FFmpeg requires all -i / -map / -vn flags to appear after their input, not before.
+        const args: string[] = [];
+        let coverTempPath: string | undefined;
 
-        // Audio encoding params — omit -vn when embedding cover art so the video stream is included
+        // Input 0: audio from stdin (always present)
+        args.push('-i', 'pipe:0');
+
+        // Input 1: cover art image (only when embedding)
+        if (embedCover) {
+          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}.jpg`;
+          fs.writeFileSync(coverTempPath, embedCover);
+          args.push('-i', coverTempPath);
+        }
+
+        // Stream mapping and encoding — use -vn unless we have a video stream from cover art
         if (!embedCover) args.push('-vn');
-        args.push('-ab', bitrate, '-ar', '44100', '-ac', '2', '-y');
+        args.push('-ab', bitrate, '-ar', '44100', '-ac', '2');
 
-        // Metadata flags — must appear BEFORE the output path
+        // Map streams: audio from stdin (input 0), video from cover (input 1)
+        if (embedCover) {
+          args.push('-map', '0:a', '-map', '1:v', '-disposition:v', 'attached_pic');
+        }
+
+        // Metadata flags
         if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
         if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
         if (metadata.albumArtist) args.push('-metadata', `album_artist=${metadata.albumArtist}`);
@@ -414,15 +431,7 @@ export function createFFmpegConverter(): AudioConverter {
         if (metadata.copyright) args.push('-metadata', `copyright=${metadata.copyright}`);
         if (metadata.comment) args.push('-metadata', `comment=${metadata.comment}`);
 
-        // Handle cover art via temp file — must prepend to args before output
-        let coverTempPath: string | undefined;
-        if (embedCover) {
-          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}.jpg`;
-          fs.writeFileSync(coverTempPath, embedCover);
-          args.unshift('-i', coverTempPath, '-map', '1:a', '-map', '0:v', '-disposition:v', 'attached_pic');
-        }
-
-        args.push(output);
+        args.push('-y', output);
 
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 
