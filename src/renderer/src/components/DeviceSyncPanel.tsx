@@ -278,7 +278,9 @@ export function DeviceSyncPanel({
               <span className="flex items-center gap-1">
                 <span className={`w-2 h-2 rounded-sm bg-secondary${isAudioLoading ? ' animate-sizeSquarePulse' : ''}`} />
                 <span className={isAudioLoading ? 'opacity-40' : ''}>
-                  {audioDisplayBytes != null ? formatBytes(audioDisplayBytes) : (isAudioLoading ? '—' : '0 B')} Audio
+                  {audioDisplayBytes != null
+                    ? `${convertToMp3 ? '~' : ''}${formatBytes(audioDisplayBytes)}`
+                    : (isAudioLoading ? '—' : '0 B')} Audio{convertToMp3 && audioDisplayBytes != null ? ' (estimated)' : ''}
                 </span>
               </span>
               <span className="flex items-center gap-1">
