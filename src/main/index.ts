@@ -774,6 +774,11 @@ let lastUpdateCheck = 0
 let cachedUpdateInfo: { updateAvailable: boolean; latestVersion: string; releaseUrl: string } | null = null
 
 async function performUpdateCheck(force = false): Promise<{ updateAvailable: boolean; latestVersion: string; releaseUrl: string }> {
+  // Skip update checks in development (not packaged) to avoid contaminating stats
+  if (!app.isPackaged) {
+    log.info('Update check skipped in development mode')
+    return { updateAvailable: false, latestVersion: app.getVersion(), releaseUrl: '' }
+  }
   const now = Date.now()
   const ONE_DAY_MS = 24 * 60 * 60 * 1000
   if (!force && cachedUpdateInfo && now - lastUpdateCheck < ONE_DAY_MS) return cachedUpdateInfo
