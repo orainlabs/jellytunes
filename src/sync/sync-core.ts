@@ -85,6 +85,12 @@ function validatePathTraversal(basePath: string, relativePath: string): void {
   }
 }
 
+// ─── Sync engine constants ───────────────────────────────────────────────────
+/** Number of hex characters to keep from the metadata hash for change detection */
+const METADATA_HASH_LENGTH = 16;
+
+// ─── Sync engine helpers ─────────────────────────────────────────────────────
+
 /**
  * Compute a truncated SHA-256 hash of normalized metadata fields.
  * Used to detect metadata changes without storing full metadata.
@@ -104,7 +110,7 @@ function computeMetadataHash(meta: TrackMetadata): string {
     discNumber: meta.discNumber ?? '',
     genres: (meta.genres ?? []).sort().join(','),
   });
-  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  return createHash('sha256').update(normalized).digest('hex').slice(0, METADATA_HASH_LENGTH);
 }
 
 /**
