@@ -110,7 +110,7 @@ interface Api {
     serverUrl: string; apiKey: string; userId: string
     destinationPath: string
   }) => Promise<{ deleted: number; errors: string[] }>
-  saveSession: (data: string) => Promise<void>
+  saveSession: (data: string) => Promise<{ success: boolean; reason?: string }>
   loadSession: () => Promise<string | null>
   clearSession: () => Promise<void>
   logError: (message: string) => void

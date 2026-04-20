@@ -5,8 +5,46 @@
  * Pure functions with dependency injection for testing.
  */
 
+import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata } from './types';
 import { resolveFFmpegPath } from './ffmpeg-path';
+
+/**
+ * Sanitize a metadata string field for safe use in FFmpeg -metadata arguments.
+ * Removes control characters, trims whitespace, and enforces a maximum length.
+ * Returns empty string for falsy input.
+ */
+export function sanitizeMetadataField(value: string, maxLength = 500): string {
+  if (!value) return '';
+  // Remove control characters (0x00-0x1F and 0x7F)
+  const cleaned = value.replace(/[\x00-\x1F\x7F]/g, '');
+  return cleaned.trim().slice(0, maxLength);
+}
+
+/**
+ * Sanitize a numeric metadata field, returning empty string if it does not
+ * contain only digits (positive integers only).
+ */
+export function sanitizeNumericField(value: string): string {
+  if (!value) return '';
+  return /^\d+$/.test(value) ? value : '';
+}
+
+/** FFmpeg protocol URI regex — these must be rejected as output paths */
+const FFMPEG_PROTOCOLS = /^(pipe:|concat:|http:|https:|rtmp:|ftp:|data:|cache:|async:|crypto:|subfile:|fd:|md5:|tee:)/i;
+
+/**
+ * Assert that a path is a safe filesystem path (not a FFmpeg protocol URI or relative path).
+ * Throws if the path could be interpreted as a FFmpeg special protocol or is not absolute.
+ */
+export function assertFilesystemPath(p: string, label = 'output'): void {
+  if (FFMPEG_PROTOCOLS.test(p)) {
+    throw new Error(`Invalid ${label} path: FFmpeg protocol URIs are not allowed (got: ${p})`);
+  }
+  if (!path.isAbsolute(p)) {
+    throw new Error(`Invalid ${label} path: must be absolute (got: ${p})`);
+  }
+}
 
 /**
  * Filesystem interface (for dependency injection/testing)
@@ -311,6 +349,7 @@ export function createFFmpegConverter(): AudioConverter {
   
   return {
     convertToMp3: async (input, output, bitrate) => {
+      assertFilesystemPath(output);
       const { spawn } = require('child_process');
       
       return new Promise((resolve) => {
@@ -343,6 +382,7 @@ export function createFFmpegConverter(): AudioConverter {
     },
     
     convertStreamToMp3: async (inputStream, output, bitrate) => {
+      assertFilesystemPath(output);
       const { spawn } = require('child_process');
 
       return new Promise((resolve) => {
@@ -388,6 +428,7 @@ export function createFFmpegConverter(): AudioConverter {
     },
 
     convertStreamToMp3WithMeta: async (inputStream, output, bitrate, metadata, embedCover) => {
+      assertFilesystemPath(output);
       const { spawn } = require('child_process');
       const fs = require('fs');
       const os = require('os');
@@ -417,19 +458,22 @@ export function createFFmpegConverter(): AudioConverter {
           args.push('-map', '0:a', '-map', '1:v', '-disposition:v', 'attached_pic');
         }
 
-        // Metadata flags
-        if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
-        if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
-        if (metadata.albumArtist) args.push('-metadata', `album_artist=${metadata.albumArtist}`);
-        if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
-        if (metadata.year) args.push('-metadata', `date=${metadata.year}`);
-        if (metadata.trackNumber) args.push('-metadata', `track=${metadata.trackNumber}`);
-        if (metadata.discNumber) args.push('-metadata', `disc=${metadata.discNumber}`);
-        if (metadata.genres?.length) args.push('-metadata', `genre=${metadata.genres.join(';')}`);
-        if (metadata.composer) args.push('-metadata', `composer=${metadata.composer}`);
-        if (metadata.isrc) args.push('-metadata', `isrc=${metadata.isrc}`);
-        if (metadata.copyright) args.push('-metadata', `copyright=${metadata.copyright}`);
-        if (metadata.comment) args.push('-metadata', `comment=${metadata.comment}`);
+        // Metadata flags — all fields sanitized before passing to FFmpeg
+        if (metadata.title) args.push('-metadata', `title=${sanitizeMetadataField(metadata.title)}`);
+        if (metadata.artist) args.push('-metadata', `artist=${sanitizeMetadataField(metadata.artist)}`);
+        if (metadata.albumArtist) args.push('-metadata', `album_artist=${sanitizeMetadataField(metadata.albumArtist)}`);
+        if (metadata.album) args.push('-metadata', `album=${sanitizeMetadataField(metadata.album)}`);
+        const year = sanitizeNumericField(metadata.year ?? '');
+        if (year) args.push('-metadata', `date=${year}`);
+        const track = sanitizeNumericField(metadata.trackNumber ?? '');
+        if (track) args.push('-metadata', `track=${track}`);
+        const disc = sanitizeNumericField(metadata.discNumber ?? '');
+        if (disc) args.push('-metadata', `disc=${disc}`);
+        if (metadata.genres?.length) args.push('-metadata', `genre=${metadata.genres.map(g => sanitizeMetadataField(g)).join(';')}`);
+        if (metadata.composer) args.push('-metadata', `composer=${sanitizeMetadataField(metadata.composer)}`);
+        if (metadata.isrc) args.push('-metadata', `isrc=${sanitizeMetadataField(metadata.isrc)}`);
+        if (metadata.copyright) args.push('-metadata', `copyright=${sanitizeMetadataField(metadata.copyright)}`);
+        if (metadata.comment) args.push('-metadata', `comment=${sanitizeMetadataField(metadata.comment)}`);
 
         args.push('-y', output);
 
@@ -468,6 +512,7 @@ export function createFFmpegConverter(): AudioConverter {
     },
 
     tagFile: async (inputPath, outputPath, metadata, embedCover) => {
+      assertFilesystemPath(outputPath, 'outputPath');
       const { spawn } = require('child_process');
       const fs = require('fs');
       const os = require('os');
@@ -496,18 +541,21 @@ export function createFFmpegConverter(): AudioConverter {
         args.push('-c', 'copy', '-y');
 
         // Metadata flags — must appear AFTER all inputs but before output path
-        if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
-        if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
-        if (metadata.albumArtist) args.push('-metadata', `album_artist=${metadata.albumArtist}`);
-        if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
-        if (metadata.year) args.push('-metadata', `date=${metadata.year}`);
-        if (metadata.trackNumber) args.push('-metadata', `track=${metadata.trackNumber}`);
-        if (metadata.discNumber) args.push('-metadata', `disc=${metadata.discNumber}`);
-        if (metadata.genres?.length) args.push('-metadata', `genre=${metadata.genres.join(';')}`);
-        if (metadata.composer) args.push('-metadata', `composer=${metadata.composer}`);
-        if (metadata.isrc) args.push('-metadata', `isrc=${metadata.isrc}`);
-        if (metadata.copyright) args.push('-metadata', `copyright=${metadata.copyright}`);
-        if (metadata.comment) args.push('-metadata', `comment=${metadata.comment}`);
+        if (metadata.title) args.push('-metadata', `title=${sanitizeMetadataField(metadata.title)}`);
+        if (metadata.artist) args.push('-metadata', `artist=${sanitizeMetadataField(metadata.artist)}`);
+        if (metadata.albumArtist) args.push('-metadata', `album_artist=${sanitizeMetadataField(metadata.albumArtist)}`);
+        if (metadata.album) args.push('-metadata', `album=${sanitizeMetadataField(metadata.album)}`);
+        const year = sanitizeNumericField(metadata.year ?? '');
+        if (year) args.push('-metadata', `date=${year}`);
+        const track = sanitizeNumericField(metadata.trackNumber ?? '');
+        if (track) args.push('-metadata', `track=${track}`);
+        const disc = sanitizeNumericField(metadata.discNumber ?? '');
+        if (disc) args.push('-metadata', `disc=${disc}`);
+        if (metadata.genres?.length) args.push('-metadata', `genre=${metadata.genres.map(g => sanitizeMetadataField(g)).join(';')}`);
+        if (metadata.composer) args.push('-metadata', `composer=${sanitizeMetadataField(metadata.composer)}`);
+        if (metadata.isrc) args.push('-metadata', `isrc=${sanitizeMetadataField(metadata.isrc)}`);
+        if (metadata.copyright) args.push('-metadata', `copyright=${sanitizeMetadataField(metadata.copyright)}`);
+        if (metadata.comment) args.push('-metadata', `comment=${sanitizeMetadataField(metadata.comment)}`);
 
         args.push(tempOutputPath);
 
@@ -548,10 +596,10 @@ export function createFFmpegConverter(): AudioConverter {
     },
 
     isAvailable: async () => {
-      const { execSync } = require('child_process');
+      const { spawnSync } = require('child_process');
       try {
-        execSync(`${ffmpegPath} -version`, { stdio: 'ignore' });
-        return true;
+        const check = spawnSync(ffmpegPath, ['-version'], { stdio: 'ignore', timeout: 5000 });
+        return !check.error && check.status === 0;
       } catch {
         return false;
       }

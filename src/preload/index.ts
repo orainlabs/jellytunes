@@ -167,7 +167,7 @@ const api = {
   }): Promise<{ deleted: number; errors: string[] }> =>
     ipcRenderer.invoke('sync:clearDestination', options),
 
-  saveSession: (data: string): Promise<void> =>
+  saveSession: (data: string): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('session:save', data),
 
   loadSession: (): Promise<string | null> =>

@@ -1219,6 +1219,15 @@ describe('Server Root Path - Original Path Usage', () => {
 
       expect(result).toBe('/dest/track.mp3');
     });
+
+    it('should throw when serverPath is not under serverRootPath (path traversal)', () => {
+      // /media/lib-backup/x does not start with /media/lib/ — should be rejected
+      const serverPath = '/media/lib-backup/x';
+      const serverRoot = '/media/lib';
+      const destinationRoot = '/dest';
+
+      expect(() => buildDestinationPath(serverPath, serverRoot, destinationRoot)).toThrow();
+    });
   });
 
   describe('getRelativePath', () => {

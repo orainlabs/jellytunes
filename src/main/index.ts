@@ -94,8 +94,10 @@ function listMountedVolumesFallback(): UsbDevice[] {
       }
     } else if (platform === 'win32') {
       try {
-        const { execSync } = require('child_process')
-        const output = execSync('wmic logicaldisk get caption,size,drivetype /format:csv', { encoding: 'utf8' })
+        const { spawnSync } = require('child_process')
+        const result = spawnSync('wmic', ['logicaldisk', 'get', 'caption,size,drivetype', '/format:csv'], { encoding: 'utf8', timeout: 5000 })
+        if (result.error) throw result.error
+        const output = result.stdout
         const lines = output.split('\n').filter((line: string) => line.trim())
         for (const line of lines) {
           const parts = line.split(',')
@@ -406,21 +408,24 @@ const SESSION_FILE = () => join(app.getPath('userData'), 'session.enc')
 ipcMain.handle('session:save', (_event, plaintext: string) => {
   try {
     if (!safeStorage.isEncryptionAvailable()) {
-      // Fallback: store without encryption if OS keychain unavailable (rare edge case)
-      fs.writeFileSync(SESSION_FILE(), plaintext, 'utf8')
-      return
+      // Encryption unavailable — reject save to prevent plaintext credentials on disk
+      return { success: false, reason: 'encryption_unavailable' }
     }
     const encrypted = safeStorage.encryptString(plaintext)
     fs.writeFileSync(SESSION_FILE(), encrypted)
-  } catch (e) { log.error('Failed to save session:', e) }
+    return { success: true }
+  } catch (e) { log.error('Failed to save session:', e); return { success: false, reason: String(e) } }
 })
 
 ipcMain.handle('session:load', () => {
   try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      // Encryption unavailable — refuse to read plaintext session
+      return null
+    }
     const filePath = SESSION_FILE()
     if (!fs.existsSync(filePath)) return null
     const raw = fs.readFileSync(filePath)
-    if (!safeStorage.isEncryptionAvailable()) return raw.toString('utf8')
     return safeStorage.decryptString(raw)
   } catch (e) { log.error('Failed to load session:', e); return null }
 })
@@ -672,7 +677,16 @@ ipcMain.handle('fs:getFolderStats', async (_event, folderPath: string) => {
   if (!isValidPath(folderPath)) return { exists: false, error: 'Invalid path' }
   try { const stats = fs.statSync(folderPath); return { exists: true, isDirectory: stats.isDirectory(), size: stats.size, modified: stats.mtime.toISOString() } } catch (error) { return { exists: false, error: String(error) } }
 })
-ipcMain.handle('ffmpeg:isAvailable', async () => { try { require('child_process').execSync('ffmpeg -version', { stdio: 'ignore' }); return true } catch (e) { try { require('@ffmpeg-installer/ffmpeg'); return true } catch (e2) { return false } } })
+ipcMain.handle('ffmpeg:isAvailable', async () => {
+  try {
+    const { spawnSync } = require('child_process')
+    const check = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 5000 })
+    if (check.error || check.status !== 0) throw new Error('ffmpeg not found')
+    return true
+  } catch {
+    try { require('@ffmpeg-installer/ffmpeg'); return true } catch { return false }
+  }
+})
 
 // ─── TrackRegistry IPCs ───────────────────────────────────────────────────────
 // Get synced tracks for a device from DB (used by useTrackRegistry)

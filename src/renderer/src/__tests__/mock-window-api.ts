@@ -109,7 +109,7 @@ export interface MockWindowApi {
     userId: string
     destinationPath: string
   }) => Promise<{ deleted: number; errors: string[] }>
-  saveSession: (data: string) => Promise<void>
+  saveSession: (data: string) => Promise<{ success: boolean; reason?: string }>
   loadSession: () => Promise<string | null>
   clearSession: () => Promise<void>
   logError: (message: string) => void
@@ -144,7 +144,7 @@ export function createMockWindowApi(overrides?: Partial<MockWindowApi>): MockWin
     analyzeDiff: () => Promise.resolve({ success: true, items: [], totals: { newTracks: 0, metadataChanged: 0, removed: 0, pathChanged: 0, unchanged: 0 } }),
     removeItems: () => Promise.resolve({ removed: 0, errors: [] }),
     clearDestination: () => Promise.resolve({ deleted: 0, errors: [] }),
-    saveSession: () => Promise.resolve(),
+    saveSession: () => Promise.resolve({ success: true }),
     loadSession: () => Promise.resolve(null),
     clearSession: () => Promise.resolve(),
     logError: () => {},

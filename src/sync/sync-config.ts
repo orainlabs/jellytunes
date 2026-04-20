@@ -1,10 +1,11 @@
 /**
  * Sync Configuration Module
- * 
+ *
  * Handles configuration validation, defaults, and normalization.
  * Pure functions with no external dependencies.
  */
 
+import path from 'path';
 import type { SyncConfig, SyncOptions, ConfigValidationResult, FilesystemType } from './types';
 
 export type { FilesystemType };
@@ -368,13 +369,22 @@ export function buildDestinationPath(
   serverRootPath: string,
   destinationRoot: string
 ): string {
-  // Remove server root to get relative path
-  const relativePath = serverPath.replace(serverRootPath, '').replace(/\/+/g, '/');
-  
+  const normalizedServer = path.normalize(serverPath);
+  // Strip trailing separators so we can safely append path.sep for prefix checking
+  const normalizedRoot = path.normalize(serverRootPath).replace(/[\/\\]$/, '');
+
+  // Verify serverPath is actually under serverRootPath (not just a substring match)
+  const rootWithSep = normalizedRoot + path.sep;
+  if (!normalizedServer.startsWith(rootWithSep) && normalizedServer !== normalizedRoot) {
+    throw new Error(`Path traversal detected: ${serverPath} is not under ${serverRootPath}`);
+  }
+
+  const relativePath = path.relative(normalizedRoot, normalizedServer);
+
   if (hasTraversalSegment(relativePath)) {
     throw new Error(`Invalid path: path traversal attempt detected in "${relativePath}"`);
   }
-  
+
   // Join with destination root (normalize to remove duplicate slashes)
   return `${destinationRoot}/${relativePath}`.replace(/\/+/g, '/');
 }
