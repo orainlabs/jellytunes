@@ -4,7 +4,7 @@ Thanks for your interest in contributing! Here's how you can help.
 
 ## Reporting Bugs
 
-Open a [GitHub Issue](https://github.com/oriaflow-labs/jellytunes/issues) with:
+Open a [GitHub Issue](https://github.com/tresnola-labs/jellytunes/issues) with:
 
 - Steps to reproduce the problem
 - What you expected to happen vs. what actually happened

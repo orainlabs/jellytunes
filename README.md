@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oriaflow-labs/jellytunes/releases/latest"><img src="https://img.shields.io/github/v/release/oriaflow-labs/jellytunes" alt="Latest Release" /></a>
+  <a href="https://github.com/tresnola-labs/jellytunes/releases/latest"><img src="https://img.shields.io/github/v/release/tresnola-labs/jellytunes" alt="Latest Release" /></a>
   &nbsp;
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
 </p>
@@ -48,7 +48,7 @@ JellyTunes is a desktop app for [Jellyfin](https://jellyfin.org) users who want 
 
 ## Installation
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/oriaflow-labs/jellytunes/releases):
+Download the latest release for your platform from [GitHub Releases](https://github.com/tresnola-labs/jellytunes/releases):
 
 | Platform | File |
 |----------|------|
@@ -87,7 +87,7 @@ Everything below is for contributors and developers who want to build JellyTunes
 ### Setup
 
 ```bash
-git clone https://github.com/oriaflow-labs/jellytunes.git
+git clone https://github.com/tresnola-labs/jellytunes.git
 cd jellytunes
 pnpm install
 pnpm dev

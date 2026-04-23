@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLOUDFLARE_API = 'https://api.oriaflow.dev/jellytunes/stats';
-const GITHUB_REPO = 'oriaflow-labs/jellytunes';
+const GITHUB_REPO = 'tresnola-labs/jellytunes';
 
 // ─── Color helpers (terminal colors without external deps) ───────────────────
 

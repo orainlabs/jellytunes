@@ -46,4 +46,4 @@ git push origin "v$NEW_VERSION"
 
 echo ""
 echo "Tag v$NEW_VERSION pushed. GitHub Actions will build and publish the release."
-echo "https://github.com/oriaflow-labs/jellytunes/actions"
+echo "https://github.com/tresnola-labs/jellytunes/actions"
