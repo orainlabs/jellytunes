@@ -3,7 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
 routes = [
-  { pattern = "api.oriaflow.dev/jellytunes/*", zone_name = "oriaflow.dev" }
+  { pattern = "api.tresnola.dev/jellytunes/*",  zone_name = "tresnola.dev"  },
+  { pattern = "api.oriaflow.dev/jellytunes/*",  zone_name = "oriaflow.dev"  }
 ]
 
 [[kv_namespaces]]

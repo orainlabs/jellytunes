@@ -12,15 +12,15 @@ interface SyncSuccessModalProps {
 const CTAS = [
   {
     label: 'Star us on GitHub',
-    url: 'https://github.com/oriaflow-labs/jellytunes',
+    url: 'https://github.com/tresnola-labs/jellytunes',
   },
   {
     label: 'Report issues or suggest features',
-    url: 'https://github.com/oriaflow-labs/jellytunes/issues',
+    url: 'https://github.com/tresnola-labs/jellytunes/issues',
   },
   {
     label: 'Support development on Ko-fi ☕',
-    url: 'https://ko-fi.com/oriaflowlabs',
+    url: 'https://ko-fi.com/tresnolalabs',
   },
 ]
 

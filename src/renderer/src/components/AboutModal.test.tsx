@@ -50,6 +50,38 @@ describe('AboutModal', () => {
     })
   })
 
+  it('opens GitHub repo when clicking View on GitHub', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(<AboutModal onClose={vi.fn()} />)
+    await act(async () => { screen.getByText('View on GitHub ↗').click() })
+    expect(openSpy).toHaveBeenCalledWith('https://github.com/tresnola-labs/jellytunes')
+    openSpy.mockRestore()
+  })
+
+  it('opens Ko-fi when clicking Support on Ko-fi', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(<AboutModal onClose={vi.fn()} />)
+    await act(async () => { screen.getByText('Support on Ko-fi ☕').click() })
+    expect(openSpy).toHaveBeenCalledWith('https://ko-fi.com/tresnolalabs')
+    openSpy.mockRestore()
+  })
+
+  it('opens privacy policy URL when clicking Privacy Policy', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(<AboutModal onClose={vi.fn()} />)
+    await act(async () => { screen.getByText('Privacy Policy').click() })
+    expect(openSpy).toHaveBeenCalledWith('https://github.com/tresnola-labs/jellytunes/blob/main/PRIVACY.md')
+    openSpy.mockRestore()
+  })
+
+  it('opens contact email when clicking Contact Us', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(<AboutModal onClose={vi.fn()} />)
+    await act(async () => { screen.getByText('Contact Us').click() })
+    expect(openSpy).toHaveBeenCalledWith('mailto:hello@tresnola.dev')
+    openSpy.mockRestore()
+  })
+
   it('closes when close button is clicked', async () => {
     const onClose = vi.fn()
     render(<AboutModal onClose={onClose} />)

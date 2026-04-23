@@ -87,7 +87,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
 
           <a
             href="#"
-            onClick={e => { e.preventDefault(); window.open('mailto:hello@oriaflow.dev') }}
+            onClick={e => { e.preventDefault(); window.open('mailto:hello@tresnola.dev') }}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 transition-colors font-medium"
           >
             Contact Us
@@ -120,7 +120,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
         <div className="flex flex-row gap-4 mb-4 items-stretch">
           <a
             href="#"
-            onClick={e => { e.preventDefault(); window.open('https://github.com/oriaflow-labs/jellytunes') }}
+            onClick={e => { e.preventDefault(); window.open('https://github.com/tresnola-labs/jellytunes') }}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
           >
             View on GitHub ↗
@@ -128,7 +128,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
 
           <a
             href="#"
-            onClick={e => { e.preventDefault(); window.open('https://ko-fi.com/oriaflowlabs') }}
+            onClick={e => { e.preventDefault(); window.open('https://ko-fi.com/tresnolalabs') }}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
           >
             Support on Ko-fi ☕
@@ -154,7 +154,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
         </div>
         <p className="text-caption text-on_surface_variant/60 text-center mb-4">
           No personal data collected.{' '}
-          <a href="#" onClick={e => { e.preventDefault(); window.open('https://github.com/oriaflow-labs/jellytunes/blob/main/PRIVACY.md') }}
+          <a href="#" onClick={e => { e.preventDefault(); window.open('https://github.com/tresnola-labs/jellytunes/blob/main/PRIVACY.md') }}
              className="underline">Privacy Policy</a>
         </p>
 
