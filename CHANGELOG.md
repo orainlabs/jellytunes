@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2] — 2026-04-27
+
+### Changed
+- Rebranded to **Orain Labs** — updated all repository links, emails, and API endpoints to `orainlabs.dev`
+- Ko-fi and author references updated
+- Legacy `oriaflow.dev` routes kept active for backwards compatibility
+
 ## [0.3.1] — 2026-04-17
 
 ### Fixed
