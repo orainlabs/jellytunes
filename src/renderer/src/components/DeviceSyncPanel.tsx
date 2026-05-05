@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { HardDrive, Folder, Loader2, Trash2, Music, RefreshCw, X, AlertCircle } from 'lucide-react'
-import type { Artist, Album, Playlist, Bitrate, SyncProgressInfo, PreviewData } from '../appTypes'
+import type { Artist, Album, Playlist, Bitrate, SyncProgressInfo, PreviewData, CoverArtMode } from '../appTypes'
 import type { SyncedItemInfo } from '../hooks/useDeviceSelections'
 import { SyncPreviewModal } from './SyncPreviewModal'
 import { SyncProgressBar } from './SyncProgressBar'
@@ -51,9 +51,11 @@ interface DeviceSyncPanelProps {
   syncedMusicBytes?: number
   estimatedSizeBytes?: number | null
   isLoadingSize?: boolean
+  coverArtMode: CoverArtMode
   onToggleItem: (id: string) => void
   onToggleConvert: () => void
   onBitrateChange: (b: Bitrate) => void
+  onCoverArtModeChange: (m: CoverArtMode) => void
   onStartSync: () => void
   onCancelSync: () => void
   onCancelPreview: () => void
@@ -96,9 +98,11 @@ export function DeviceSyncPanel({
   syncedMusicBytes,
   estimatedSizeBytes,
   isLoadingSize,
+  coverArtMode,
   onToggleItem,
   onToggleConvert,
   onBitrateChange,
+  onCoverArtModeChange,
   onStartSync,
   onCancelSync,
   onCancelPreview,
@@ -392,6 +396,26 @@ export function DeviceSyncPanel({
               ))}
             </div>
           )}
+        </div>
+
+        {/* Cover Art Mode */}
+        <div className="bg-surface_container_low rounded-xl p-4 border border-outline_variant mb-4">
+          <span className="text-body-md font-medium">Cover art</span>
+          <p className="text-caption text-on_surface_variant mt-0.5">
+            {coverArtMode === 'off' ? 'No cover art' : coverArtMode === 'embed' ? 'Cover embedded in audio file' : 'Cover saved as cover.jpg in album folder'}
+          </p>
+          <div className="flex items-center gap-2 mt-3">
+            {(['off', 'embed', 'companion'] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => onCoverArtModeChange(m)}
+                disabled={isSyncing}
+                className={`px-2.5 py-1 text-label-sm rounded-lg disabled:cursor-default disabled:opacity-50 ${coverArtMode === m ? 'bg-primary_container text-on_primary_container' : 'bg-surface_container_highest text-on_surface hover:bg-surface_bright'}`}
+              >
+                {m === 'off' ? 'None' : m === 'embed' ? 'Embedded' : 'Folder image'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

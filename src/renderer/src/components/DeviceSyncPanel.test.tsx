@@ -68,6 +68,8 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     onToggleItem: vi.fn(),
     onToggleConvert: vi.fn(),
     onBitrateChange: vi.fn(),
+    coverArtMode: 'embed' as const,
+    onCoverArtModeChange: vi.fn(),
     onStartSync: vi.fn(),
     onCancelSync: vi.fn(),
     onCancelPreview: vi.fn(),

@@ -29,7 +29,7 @@ export interface MockWindowApi {
     itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
     itemNames?: Record<string, string>
     destinationPath: string
-    options?: { convertToMp3?: boolean; bitrate?: '128k' | '192k' | '320k' }
+    options?: { convertToMp3?: boolean; bitrate?: '128k' | '192k' | '320k'; coverArtMode?: 'off' | 'embed' | 'companion' }
   }) => Promise<{ success: boolean; tracksCopied: number; tracksFailed: string[]; errors: string[]; tracksSkipped?: number }>
   cancelSync: () => Promise<{ cancelled: boolean }>
   onSyncProgress: (callback: (progress: {
@@ -82,7 +82,7 @@ export interface MockWindowApi {
     itemIds: string[]
     itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
     destinationPath: string
-    options: { convertToMp3: boolean; bitrate: '128k' | '192k' | '320k'; coverArtMode: 'off' | 'embed' | 'separate' }
+    options: { convertToMp3: boolean; bitrate: '128k' | '192k' | '320k'; coverArtMode: 'off' | 'embed' | 'companion' }
   }) => Promise<{
     success: boolean
     items: Array<{

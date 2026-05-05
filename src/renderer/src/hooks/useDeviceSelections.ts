@@ -24,7 +24,7 @@ function buildActivationKey(
   options?: {
     itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
     convertToMp3: boolean; bitrate: '128k' | '192k' | '320k'
-    coverArtMode?: 'off' | 'embed' | 'separate'
+    coverArtMode?: 'off' | 'embed' | 'companion'
   }
 ): string | null {
   if (!options) return null
@@ -89,7 +89,7 @@ export function useDeviceSelections() {
     serverUrl: string; apiKey: string; userId: string
     itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
     convertToMp3: boolean; bitrate: '128k' | '192k' | '320k'
-    coverArtMode?: 'off' | 'embed' | 'separate'
+    coverArtMode?: 'off' | 'embed' | 'companion'
   }) => {
     // Store options so revalidateDevice can reuse them
     lastOptionsRef.current = options ?? null
@@ -368,9 +368,9 @@ export function useDeviceSelections() {
     invalidateCache,
     revalidateDevice,
     onLibraryRefresh,
-    updateConvertOptions: useCallback((convertToMp3: boolean, bitrate: '128k' | '192k' | '320k') => {
+    updateConvertOptions: useCallback((convertToMp3: boolean, bitrate: '128k' | '192k' | '320k', coverArtMode?: 'off' | 'embed' | 'companion') => {
       if (lastOptionsRef.current) {
-        lastOptionsRef.current = { ...lastOptionsRef.current, convertToMp3, bitrate }
+        lastOptionsRef.current = { ...lastOptionsRef.current, convertToMp3, bitrate, coverArtMode: coverArtMode ?? lastOptionsRef.current.coverArtMode ?? 'embed' }
       }
       bumpRegistryVersion()
     }, []),

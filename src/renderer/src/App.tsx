@@ -147,7 +147,7 @@ function App(): JSX.Element {
     path: string,
     forcedConvert?: boolean,
     forcedBitrate?: Bitrate,
-    forcedCover?: 'off' | 'embed' | 'separate'
+    forcedCover?: 'off' | 'embed' | 'companion'
   ) => {
     if (!connection.jellyfinConfig || !connection.userId) return
 
@@ -186,6 +186,7 @@ function App(): JSX.Element {
     if (savedDest && (savedConvert !== sync.convertToMp3 || savedBitrate !== sync.bitrate)) {
       sync.setConvertToMp3(savedConvert)
       sync.setBitrate(savedBitrate)
+      sync.setCoverArtMode(savedCover)
     }
 
     await deviceSelections.activateDevice(path, {
@@ -211,6 +212,9 @@ function App(): JSX.Element {
     if (savedConvert !== sync.convertToMp3 || savedBitrate !== sync.bitrate) {
       sync.setConvertToMp3(savedConvert)
       sync.setBitrate(savedBitrate)
+    }
+    if (savedCover !== sync.coverArtMode) {
+      sync.setCoverArtMode(savedCover)
     }
     handleDestinationClick(folder, savedConvert, savedBitrate, savedCover)
   }
@@ -378,6 +382,7 @@ function App(): JSX.Element {
                 isSaved={isSavedDestination(effectiveDevicePath)}
                 convertToMp3={sync.convertToMp3}
                 bitrate={sync.bitrate}
+                coverArtMode={sync.coverArtMode}
                 isSyncing={sync.isSyncing}
                 isActivatingDevice={deviceSelections.isActivatingDevice}
                 syncProgress={sync.syncProgress}
@@ -405,6 +410,12 @@ function App(): JSX.Element {
                   sync.setBitrate(b)
                   const destId = savedDestinations.find(d => d.path === deviceSelections.activeDevicePath)?.id
                   if (destId) saveDestPrefs(destId, { bitrate: b })
+                }}
+                onCoverArtModeChange={m => {
+                  deviceSelections.updateConvertOptions(sync.convertToMp3, sync.bitrate, m)
+                  sync.setCoverArtMode(m)
+                  const destId = savedDestinations.find(d => d.path === deviceSelections.activeDevicePath)?.id
+                  if (destId) saveDestPrefs(destId, { coverArtMode: m })
                 }}
                 onStartSync={sync.handleStartSync}
                 onCancelSync={sync.handleCancelSync}

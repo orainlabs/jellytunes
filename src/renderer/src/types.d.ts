@@ -69,6 +69,7 @@ interface Api {
     options?: {
       convertToMp3?: boolean;
       bitrate?: '128k' | '192k' | '320k';
+      coverArtMode?: 'off' | 'embed' | 'companion';
     };
   }) => Promise<{ success: boolean; tracksCopied: number; tracksSkipped: number; tracksRetagged?: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }>
   cancelSync: () => Promise<{ cancelled: boolean }>
@@ -99,7 +100,7 @@ interface Api {
     serverUrl: string; apiKey: string; userId: string
     itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
     destinationPath: string
-    options: { convertToMp3: boolean; bitrate: '128k' | '192k' | '320k'; coverArtMode: 'off' | 'embed' | 'separate' }
+    options: { convertToMp3: boolean; bitrate: '128k' | '192k' | '320k'; coverArtMode: 'off' | 'embed' | 'companion' }
   }) => Promise<{ success: boolean; items: Array<{ itemId: string; itemName: string; itemType: string; changes: Array<{ trackId: string; trackName: string; changeType: string }>; summary: { new: number; metadataChanged: number; removed: number; pathChanged: number; unchanged: number } }>; totals: { newTracks: number; metadataChanged: number; removed: number; pathChanged: number; unchanged: number }; errors?: string[] }>
   removeItems: (options: {
     serverUrl: string; apiKey: string; userId: string
