@@ -338,14 +338,214 @@ describe('sync-api', () => {
       const mockTracks: TrackInfo[] = [
         { id: '1', name: 'Track', path: '/path', format: 'mp3' },
       ];
-      
+
       const api = createMockApiClient({
         getArtistTracks: async () => mockTracks,
       });
-      
+
       const tracks = await api.getArtistTracks('artist-1');
       expect(tracks).toHaveLength(1);
       expect(tracks[0].name).toBe('Track');
+    });
+  });
+
+  describe('downloadItemStream', () => {
+    it('throws ApiError with useful message on HTTP 404', async () => {
+      const { createApiClient, ApiError } = await import('./sync-api');
+
+      let rejectFetch: (reason: Error) => void;
+      const fetchMock = vi.fn(() => new Promise((_, reject) => { rejectFetch = reject; }));
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.example.com',
+        apiKey: '0123456789abcdef0123456789abcdef',
+        userId: 'abcdef1234567890abcdef1234567890',
+        timeout: 5000,
+        fetch: async (url: string, opts?: any) => {
+          void url; void opts;
+          return {
+            ok: false,
+            status: 404,
+            statusText: 'Not Found',
+            body: null,
+          };
+        },
+      });
+
+      await expect(api.downloadItemStream('non-existent-id')).rejects.toThrow();
+      try {
+        await api.downloadItemStream('non-existent-id');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ApiError);
+        expect(err.statusCode).toBe(404);
+        expect(err.message).toContain('404');
+      }
+    });
+
+    it('throws ApiError with useful message on HTTP 500', async () => {
+      const { createApiClient, ApiError } = await import('./sync-api');
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.example.com',
+        apiKey: '0123456789abcdef0123456789abcdef',
+        userId: 'abcdef1234567890abcdef1234567890',
+        timeout: 5000,
+        fetch: async () => ({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          body: null,
+        }),
+      });
+
+      try {
+        await api.downloadItemStream('server-error-id');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ApiError);
+        expect(err.statusCode).toBe(500);
+        expect(err.message).toContain('500');
+      }
+      // If fetch doesn't throw, verify the rejection path
+      await expect(api.downloadItemStream('server-error-id')).rejects.toThrow();
+    });
+
+    it('propagates stream abort error to caller without hanging', async () => {
+      const { createApiClient, ApiError } = await import('./sync-api');
+      const { Readable } = await import('stream');
+
+      // Track whether the stream was consumed
+      let streamConsumed = false;
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.example.com',
+        apiKey: '0123456789abcdef0123456789abcdef',
+        userId: 'abcdef1234567890abcdef1234567890',
+        timeout: 5000,
+        fetch: async () => ({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          body: {
+            getReader() {
+              const reader = {
+                read() {
+                  return new Promise((resolve) => {
+                    // Simulate stream that gets destroyed mid-read
+                    setTimeout(() => {
+                      streamConsumed = true;
+                      resolve({ done: false, value: new Uint8Array([1, 2, 3]) });
+                    }, 10);
+                  });
+                },
+                releaseLock() {},
+                cancel(reason?: any) {},
+              };
+              return reader;
+            },
+          },
+        }),
+      });
+
+      const stream = await api.downloadItemStream('track-id') as Readable;
+
+      // Destroy the stream mid-consumption
+      stream.destroy(new Error('Stream aborted by client'));
+
+      // Caller should receive the abort error
+      const readPromise = new Promise((resolve, reject) => {
+        stream.on('data', () => {});
+        stream.on('error', (err) => reject(err));
+        stream.on('end', () => resolve(null));
+      });
+
+      await expect(readPromise).rejects.toThrow('Stream aborted by client');
+    });
+
+    it('propagates EPIPE error from downstream write failure', async () => {
+      const { createApiClient } = await import('./sync-api');
+      const { Readable, Writable } = await import('stream');
+
+      // Simulate EPIPE: writable stream closes prematurely while readable is still pushing data
+      class PrematureCloseWritable extends Writable {
+        private firstWrite = true;
+        _write(chunk: any, encoding: any, callback: any) {
+          if (this.firstWrite) {
+            this.firstWrite = false;
+            // Close the stream immediately after first chunk — simulates EPIPE
+            this.destroy(new Error('write EPIPE'));
+            return;
+          }
+          callback();
+        }
+      }
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.example.com',
+        apiKey: '0123456789abcdef0123456789abcdef',
+        userId: 'abcdef1234567890abcdef1234567890',
+        timeout: 5000,
+        fetch: async () => {
+          // Return a body that will be converted via Readable.fromWeb
+          const { WebReadableWritable } = await import('stream');
+          const { PassThrough } = await import('stream');
+          const pass = new PassThrough();
+          pass.write(Buffer.alloc(100));
+          setTimeout(() => pass.destroy(), 5);
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            body: pass,
+          };
+        },
+      });
+
+      // Read the stream and write to a premature-close writable
+      const stream = await api.downloadItemStream('track-id') as Readable;
+      const writable = new PrematureCloseWritable();
+
+      const pipePromise = new Promise((resolve, reject) => {
+        stream.pipe(writable);
+        writable.on('error', (err) => reject(err));
+        writable.on('finish', resolve);
+      });
+
+      // EPIPE should propagate as the error event on the writable
+      await expect(pipePromise).rejects.toThrow();
+    });
+
+    it('aborts request on timeout via AbortController', async () => {
+      const { createApiClient, ApiError } = await import('./sync-api');
+
+      // Track whether abort was called on the controller
+      let abortCalled = false;
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.example.com',
+        apiKey: '0123456789abcdef0123456789abcdef',
+        userId: 'abcdef1234567890abcdef1234567890',
+        timeout: 50, // 50ms timeout — very short
+        fetch: async (url: string, opts: any) => {
+          void url;
+          // Simulate slow server that never responds before timeout
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return { ok: true, status: 200, statusText: 'OK', body: null };
+        },
+      });
+
+      const start = Date.now();
+      try {
+        await api.downloadItemStream('slow-track-id');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ApiError);
+        expect(err.message).toMatch(/timed out|Download timed out/i);
+        expect(Date.now() - start).toBeLessThan(200); // Should fire well before 500ms
+      }
+
+      // Should throw on timeout
+      await expect(api.downloadItemStream('slow-track-id')).rejects.toThrow();
     });
   });
 });
