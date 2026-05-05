@@ -3,9 +3,10 @@ import { renderHook, act, waitFor } from '@testing-library/react'
 import { useJellyfinConnection } from './useJellyfinConnection'
 
 const mockApi = {
-  saveSession: vi.fn().mockResolvedValue(undefined),
+  saveSession: vi.fn().mockResolvedValue({ success: true }),
   loadSession: vi.fn().mockResolvedValue(null),
   clearSession: vi.fn().mockResolvedValue(undefined),
+  logError: vi.fn(),
 }
 
 const mockFetch = vi.fn()
@@ -151,6 +152,43 @@ describe('useJellyfinConnection', () => {
       expect(mockApi.clearSession).toHaveBeenCalled()
       expect(result.current.isConnected).toBe(false)
       expect(result.current.jellyfinConfig).toBe(null)
+    })
+  })
+
+  describe('saveSession failure', () => {
+    it('still connects when saveSession returns success:false', async () => {
+      mockApi.loadSession.mockResolvedValue(null)
+      mockApi.saveSession.mockResolvedValue({ success: false, reason: 'encryption_unavailable' })
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ServerName: 'Test Server' }) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ Id: 'user-1', Name: 'Test User' }) })
+
+      const onConnected = vi.fn()
+      const { result } = renderHook(() => useJellyfinConnection(onConnected))
+
+      await act(async () => {
+        await result.current.connectToJellyfin('https://jellyfin.test', 'test-key')
+      })
+
+      expect(onConnected).toHaveBeenCalledWith('https://jellyfin.test', 'test-key', 'user-1')
+      expect(mockApi.logError).toHaveBeenCalledWith('Session save failed: encryption_unavailable')
+    })
+
+    it('logs error when saveSession throws', async () => {
+      mockApi.loadSession.mockResolvedValue(null)
+      mockApi.saveSession.mockRejectedValue(new Error('IPC error'))
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ServerName: 'Test Server' }) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ Id: 'user-1', Name: 'Test User' }) })
+
+      const onConnected = vi.fn()
+      const { result } = renderHook(() => useJellyfinConnection(onConnected))
+
+      await act(async () => {
+        await result.current.connectToJellyfin('https://jellyfin.test', 'test-key')
+      })
+
+      expect(onConnected).toHaveBeenCalled()
     })
   })
 })

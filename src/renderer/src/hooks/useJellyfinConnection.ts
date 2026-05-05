@@ -22,10 +22,16 @@ interface SavedSession {
 }
 
 // Session is stored encrypted via main-process safeStorage IPC (not localStorage)
-async function saveSession(url: string, apiKey: string, userId: string): Promise<void> {
+async function saveSession(url: string, apiKey: string, userId: string): Promise<{ success: boolean }> {
   try {
-    await window.api.saveSession(JSON.stringify({ url, apiKey, userId }))
-  } catch { /* ignore */ }
+    const result = await window.api.saveSession(JSON.stringify({ url, apiKey, userId }))
+    if (!result.success) {
+      window.api.logError(`Session save failed: ${result.reason ?? 'unknown'}`)
+      return result
+    }
+    return result
+  } catch { /* ignore — connection still works without persistent session */ }
+  return { success: true }
 }
 
 async function loadSession(): Promise<SavedSession | null> {
