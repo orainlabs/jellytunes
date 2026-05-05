@@ -1,5 +1,6 @@
 import { Check, Loader2 } from 'lucide-react'
 import type { PreviewData, Bitrate } from '../appTypes'
+import { formatBytes } from '../utils/format'
 
 interface SyncPreviewModalProps {
   data: PreviewData
@@ -7,12 +8,6 @@ interface SyncPreviewModalProps {
   bitrate: Bitrate
   onCancel: () => void
   onConfirm: () => void
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
-  return `${(bytes / 1e3).toFixed(0)} KB`
 }
 
 export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConfirm }: SyncPreviewModalProps): JSX.Element {

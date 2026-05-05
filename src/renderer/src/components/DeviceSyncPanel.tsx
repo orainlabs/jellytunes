@@ -5,6 +5,7 @@ import type { SyncedItemInfo } from '../hooks/useDeviceSelections'
 import { SyncPreviewModal } from './SyncPreviewModal'
 import { SyncProgressBar } from './SyncProgressBar'
 import { RemoveFolderModal } from './RemoveFolderModal'
+import { formatBytes } from '../utils/format'
 
 interface DeviceInfoCache {
   info: DeviceInfo
@@ -18,12 +19,6 @@ interface DeviceInfo {
   total: number
   free: number
   used: number
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
-  return `${(bytes / 1e3).toFixed(0)} KB`
 }
 
 type ItemState = 'new' | 'synced' | 'outOfSync' | 'remove'
