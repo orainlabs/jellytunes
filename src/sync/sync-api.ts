@@ -319,10 +319,17 @@ class SyncApiImpl implements SyncApi {
     };
   }
 
-  async downloadItemStream(itemId: string): Promise<NodeJS.ReadableStream> {
+  /**
+   * Shared logic for downloading an item — fetches the raw HTTP response.
+   * Handles URL construction, auth headers, timeout, and error normalization.
+   */
+  private async fetchDownloadResponse(
+    itemId: string,
+    timeoutMs: number
+  ): Promise<Response> {
     const url = `${this.baseUrl}/Items/${itemId}/Download`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout * 10);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await this.fetchFn(url, {
@@ -334,64 +341,41 @@ class SyncApiImpl implements SyncApi {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new ApiError(`Download failed: ${response.status} ${response.statusText}`, response.status);
-      }
-      if (!response.body) {
-        throw new ApiError('Download failed: empty response body', 0);
-      }
-
-      // Convert Web ReadableStream → Node.js Readable (Node 16.7+, Electron 22+)
-      const { Readable } = require('stream');
-      return Readable.fromWeb(response.body);
-    } catch (error) {
-      clearTimeout(timeoutId);
-      if (error instanceof ApiError) throw error;
-      if (error instanceof Error && error.name === 'AbortError') throw new ApiError('Download timed out', 408);
-      throw new ApiError(`Network error: ${error instanceof Error ? error.message : String(error)}`, 0);
-    }
-  }
-
-  async downloadItem(itemId: string): Promise<Buffer> {
-    const url = `${this.baseUrl}/Items/${itemId}/Download`;
-    const DOWNLOAD_TIMEOUT_MULTIPLIER = 10;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout * DOWNLOAD_TIMEOUT_MULTIPLIER);
-    
-    try {
-      const response = await this.fetchFn(url, {
-        method: 'GET',
-        headers: {
-          'X-MediaBrowser-Token': this.apiKey,
-          'X-Emby-Token': this.apiKey,
-        },
-        signal: controller.signal,
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
         throw new ApiError(
           `Download failed: ${response.status} ${response.statusText}`,
           response.status
         );
       }
-      
-      const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
+
+      return response;
     } catch (error) {
       clearTimeout(timeoutId);
-      
-      if (error instanceof ApiError) {
-        throw error;
-      }
-      
+      if (error instanceof ApiError) throw error;
       if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('Download timed out');
+        throw new ApiError('Download timed out', 408);
       }
-      
-      throw new Error(`Download failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new ApiError(
+        `Network error: ${error instanceof Error ? error.message : String(error)}`,
+        0
+      );
     }
+  }
+
+  async downloadItemStream(itemId: string): Promise<NodeJS.ReadableStream> {
+    const response = await this.fetchDownloadResponse(itemId, this.timeout * 10);
+
+    if (!response.body) {
+      throw new ApiError('Download failed: empty response body', 0);
+    }
+
+    // Convert Web ReadableStream → Node.js Readable (Node 16.7+, Electron 22+)
+    const { Readable } = require('stream');
+    return Readable.fromWeb(response.body);
+  }
+
+  async downloadItem(itemId: string): Promise<Buffer> {
+    const response = await this.fetchDownloadResponse(itemId, this.timeout * 10);
+    return Buffer.from(await response.arrayBuffer());
   }
 
   async getCoverArt(itemId: string): Promise<Buffer> {
