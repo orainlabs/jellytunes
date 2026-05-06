@@ -34,8 +34,9 @@ export function sanitizeNumericField(value: string): string {
 const FFMPEG_PROTOCOLS = /^(pipe:|concat:|http:|https:|rtmp:|ftp:|data:|cache:|async:|crypto:|subfile:|fd:|md5:|tee:|file:)/i;
 
 /**
- * Assert that a path is a safe filesystem path (not a FFmpeg protocol URI or relative path).
- * Throws if the path could be interpreted as a FFmpeg special protocol or is not absolute.
+ * Assert that a path is a safe filesystem path (no FFmpeg protocols, no traversal).
+ * Throws if the path could be interpreted as a FFmpeg special protocol, is relative,
+ * or contains path traversal segments.
  */
 export function assertFilesystemPath(p: string, label = 'output'): void {
   if (!p || typeof p !== 'string') {
@@ -45,7 +46,7 @@ export function assertFilesystemPath(p: string, label = 'output'): void {
     throw new Error(`Invalid ${label} path: FFmpeg protocol URIs are not allowed (got: ${p})`);
   }
   if (!path.isAbsolute(p)) {
-    throw new Error(`Invalid ${label} path: must be absolute (got: ${p})`);
+    throw new Error(`${label} must be absolute (got: ${p})`);
   }
   // Block path traversal
   const segments = p.replace(/\/+/g, '/').split('/');
