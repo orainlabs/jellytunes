@@ -102,6 +102,28 @@ function createMockDeps(overrides?: Partial<SyncDependencies>): SyncDependencies
   };
 }
 
+/**
+ * Shared helper to construct a fully-typed Response mock.
+ * Use this instead of inline partial objects to satisfy globalThis.fetch's Response type.
+ */
+function mockFetchResponse(overrides: Partial<Response> & { ok: boolean; status: number; statusText: string }): Response {
+  return {
+    headers: new Headers(),
+    redirected: false,
+    type: 'basic',
+    url: '',
+    clone: () => ({}) as Response,
+    arrayBuffer: async () => new ArrayBuffer(0),
+    text: async () => '',
+    json: async () => { throw new Error('not json'); },
+    blob: async () => new Blob(),
+    formData: async () => new FormData(),
+    bodyUsed: false,
+    body: null,
+    ...overrides,
+  } as unknown as Response;
+}
+
 // =============================================================================
 // CONFIG TESTS
 // =============================================================================
@@ -353,22 +375,18 @@ describe('sync-api', () => {
     it('throws ApiError with useful message on HTTP 404', async () => {
       const { createApiClient, ApiError } = await import('./sync-api');
 
-      let rejectFetch: (reason: Error) => void;
-      const fetchMock = vi.fn(() => new Promise((_, reject) => { rejectFetch = reject; }));
-
       const api = createApiClient({
         baseUrl: 'https://jellyfin.example.com',
         apiKey: '0123456789abcdef0123456789abcdef',
         userId: 'abcdef1234567890abcdef1234567890',
         timeout: 5000,
-        fetch: async (url: string, opts?: any) => {
-          void url; void opts;
-          return {
+        fetch: async (_url: URL | RequestInfo, _opts?: any) => {
+          return mockFetchResponse({
             ok: false,
             status: 404,
             statusText: 'Not Found',
             body: null,
-          };
+          });
         },
       });
 
@@ -390,7 +408,7 @@ describe('sync-api', () => {
         apiKey: '0123456789abcdef0123456789abcdef',
         userId: 'abcdef1234567890abcdef1234567890',
         timeout: 5000,
-        fetch: async () => ({
+        fetch: async () => mockFetchResponse({
           ok: false,
           status: 500,
           statusText: 'Internal Server Error',
@@ -410,7 +428,7 @@ describe('sync-api', () => {
     });
 
     it('propagates stream abort error to caller without hanging', async () => {
-      const { createApiClient, ApiError } = await import('./sync-api');
+      const { createApiClient } = await import('./sync-api');
       const { Readable } = await import('stream');
 
       const api = createApiClient({
@@ -422,16 +440,16 @@ describe('sync-api', () => {
           // Create a Node.js Readable, wrap as web ReadableStream via Readable.toWeb
           // The API uses Readable.fromWeb to convert back to Node Readable
           const nodeStream = Readable.from([Buffer.from([1, 2, 3])]);
-          return {
+          return mockFetchResponse({
             ok: true,
             status: 200,
             statusText: 'OK',
-            body: Readable.toWeb(nodeStream),
-          };
+            body: Readable.toWeb(nodeStream) as ReadableStream,
+          });
         },
       });
 
-      const stream = await api.downloadItemStream('track-id') as Readable;
+      const stream = await api.downloadItemStream('track-id') as import('stream').Readable;
 
       // Destroy the stream mid-consumption
       stream.destroy(new Error('Stream aborted by client'));
@@ -439,7 +457,7 @@ describe('sync-api', () => {
       // Caller should receive the abort error
       const readPromise = new Promise((resolve, reject) => {
         stream.on('data', () => {});
-        stream.on('error', (err) => reject(err));
+        stream.on('error', (err: Error) => reject(err));
         stream.on('end', () => resolve(null));
       });
 
@@ -453,7 +471,7 @@ describe('sync-api', () => {
       // Simulate EPIPE: writable stream closes prematurely while readable is still pushing data
       class PrematureCloseWritable extends Writable {
         private firstWrite = true;
-        _write(chunk: any, encoding: any, callback: any) {
+        _write(_chunk: any, _encoding: any, callback: () => void) {
           if (this.firstWrite) {
             this.firstWrite = false;
             // Close the stream immediately after first chunk — simulates EPIPE
@@ -472,17 +490,17 @@ describe('sync-api', () => {
         fetch: async () => {
           // Create a Node.js Readable and wrap as web ReadableStream via Readable.toWeb
           const nodeStream = Readable.from([Buffer.alloc(100)]);
-          return {
+          return mockFetchResponse({
             ok: true,
             status: 200,
             statusText: 'OK',
-            body: Readable.toWeb(nodeStream),
-          };
+            body: Readable.toWeb(nodeStream) as ReadableStream,
+          });
         },
       });
 
       // Read the stream and write to a premature-close writable
-      const stream = await api.downloadItemStream('track-id') as Readable;
+      const stream = await api.downloadItemStream('track-id') as import('stream').Readable;
       const writable = new PrematureCloseWritable();
 
       const pipePromise = new Promise((resolve, reject) => {
@@ -506,8 +524,7 @@ describe('sync-api', () => {
         apiKey: '0123456789abcdef0123456789abcdef',
         userId: 'abcdef1234567890abcdef1234567890',
         timeout: 50, // timeout * 10 = 500ms until AbortController fires
-        fetch: async (_url: string, options?: { signal?: AbortSignal }) => {
-          const { Readable } = await import('stream');
+        fetch: async (_url: URL | RequestInfo, options?: RequestInit) => {
           const slowStream = new Readable({
             read() {
               // Never push — stream hangs
@@ -529,12 +546,12 @@ describe('sync-api', () => {
             });
 
             setTimeout(() => {
-              resolve({
+              resolve(mockFetchResponse({
                 ok: true,
                 status: 200,
                 statusText: 'OK',
-                body: Readable.toWeb(slowStream) as any,
-              });
+                body: Readable.toWeb(slowStream) as ReadableStream,
+              }));
             }, 600);
           });
         },
@@ -1036,47 +1053,6 @@ describe('Error Handling', () => {
   });
 
   describe('convertStreamToMp3WithMeta FFmpeg failures', () => {
-    // Helper: build a mock AudioConverter that uses real spawn but intercepts it
-    function makeSpawnInterceptor(closeCode: number | null, stderrText = '') {
-      const { spawn } = require('child_process');
-      const originalSpawn = spawn;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mockProc = new (require('events').EventEmitter)() as any;
-      mockProc.stdin = new (require('events').EventEmitter)();
-      mockProc.stderr = new (require('events').EventEmitter)();
-      mockProc.on = mockProc.on.bind(mockProc);
-      mockProc.kill = vi.fn();
-      mockProc.stdin.on = vi.fn();
-      mockProc.stderr.on = vi.fn((_event: string, cb: (chunk: Buffer) => void) => {
-        if (stderrText) cb(Buffer.from(stderrText));
-      });
-
-      let resolveClose: (code: number) => void;
-      const closePromise = new Promise<number>((res) => { resolveClose = res; });
-
-      // Schedule the close event after the promise is constructed
-      if (closeCode !== null) {
-        setTimeout(() => {
-          mockProc.stderr.emit('data', Buffer.from(stderrText));
-          mockProc.emit('close', closeCode);
-        }, 0);
-      }
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(require('child_process'), 'spawn').mockImplementation(() => {
-        // schedule close in next tick so the Promise in convertStreamToMp3WithMeta can subscribe
-        setTimeout(() => {
-          if (closeCode !== null) {
-            mockProc.stderr.emit('data', Buffer.from(stderrText));
-            mockProc.emit('close', closeCode);
-          }
-        }, 0);
-        return mockProc;
-      });
-
-      return { mockProc, closePromise };
-    }
-
     afterEach(() => {
       vi.restoreAllMocks();
     });
@@ -1150,7 +1126,7 @@ describe('Error Handling', () => {
 
       // After FFmpeg failed (exit code 1), temp cover file must have been deleted
       const tmpdir = require('os').tmpdir();
-      const calledPaths = unlinkSyncSpy.mock.calls.map(([p]: [string]) => p);
+      const calledPaths = unlinkSyncSpy.mock.calls.map((args: unknown[]) => args[0] as string);
       const coverTempFiles = calledPaths.filter((p: string) => p.startsWith(`${tmpdir}/jt-cover-`));
       expect(coverTempFiles.length).toBeGreaterThan(0);
     });
@@ -2666,7 +2642,7 @@ describe('cover art size limit — ORAIN-0232', () => {
           errors: [],
         }),
         getItem: async (id: string) => {
-          if (id === 'playlist-pop-hits') return { name: 'Pop Hits' };
+          if (id === 'playlist-pop-hits') return { id, name: 'Pop Hits', type: 'Playlist' };
           return null;
         },
       });
@@ -2713,7 +2689,7 @@ describe('cover art size limit — ORAIN-0232', () => {
           ],
           errors: [],
         }),
-        getItem: async () => ({ name: 'Solo Playlist' }),
+        getItem: async (_id: string) => ({ id: _id, name: 'Solo Playlist', type: 'Playlist' }),
       });
 
       const deps: SyncDependencies = {
@@ -2769,7 +2745,7 @@ describe('cover art size limit — ORAIN-0232', () => {
           ],
           errors: [],
         }),
-        getItem: async () => ({ name: 'Test Playlist' }),
+        getItem: async (_id: string) => ({ id: _id, name: 'Test Playlist', type: 'Playlist' }),
       });
 
       const deps: SyncDependencies = {
@@ -2813,8 +2789,8 @@ describe('cover art size limit — ORAIN-0232', () => {
           errors: [],
         }),
         getItem: async (id: string) => {
-          if (id === 'playlist-a') return { name: 'Playlist A' };
-          if (id === 'playlist-b') return { name: 'Playlist B' };
+          if (id === 'playlist-a') return { id, name: 'Playlist A', type: 'Playlist' };
+          if (id === 'playlist-b') return { id, name: 'Playlist B', type: 'Playlist' };
           return null;
         },
       });
