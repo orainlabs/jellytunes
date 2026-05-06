@@ -66,6 +66,11 @@ export type FilesystemType = 'fat32' | 'exfat' | 'ntfs' | 'apfs' | 'hfs+' | 'ext
 export type CoverArtMode = 'embed' | 'companion' | 'off';
 
 /**
+ * Lyrics sync mode
+ */
+export type LyricsMode = 'lrc' | 'embed' | 'off';
+
+/**
  * Optional sync behavior settings
  */
 export interface SyncOptions {
@@ -83,6 +88,8 @@ export interface SyncOptions {
   embedMetadata?: boolean;
   /** Cover art mode (default: 'embed') */
   coverArtMode?: CoverArtMode;
+  /** Lyrics sync mode (default: 'off') */
+  lyricsMode?: LyricsMode;
 }
 
 /**
@@ -197,6 +204,8 @@ export interface SyncResult {
   tracksMoved: number;
   /** Number of orphaned tracks removed from device */
   tracksRemoved: number;
+  /** Number of tracks that received lyrics successfully */
+  lyricsAdded: number;
   /** Track IDs that failed to sync */
   tracksFailed: string[];
   /** Detailed error messages */

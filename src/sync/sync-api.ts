@@ -86,6 +86,9 @@ export interface SyncApi {
 
   /** Get primary cover art image for an item */
   getCoverArt(itemId: string): Promise<Buffer>;
+
+  /** Fetch lyrics for a track (returns LRC string or null if unavailable) */
+  fetchLyrics(itemId: string): Promise<string | null>;
 }
 
 /**
@@ -406,6 +409,48 @@ class SyncApiImpl implements SyncApi {
     }
   }
 
+  async fetchLyrics(itemId: string): Promise<string | null> {
+    const url = `${this.baseUrl}/Audio/${itemId}/Lyrics`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const response = await this.fetchFn(url, {
+        method: 'GET',
+        headers: this.getAuthHeaders(),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 404) {
+        this.logger?.debug(`No lyrics found for item ${itemId}`);
+        return null;
+      }
+
+      if (!response.ok) {
+        throw new ApiError(`Failed to fetch lyrics: ${response.status} ${response.statusText}`, response.status);
+      }
+
+      const text = await response.text();
+      return text || null;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof ApiError) {
+        // 404 is non-fatal (track simply has no lyrics)
+        if (error.statusCode === 404) {
+          this.logger?.debug(`No lyrics found for item ${itemId}`);
+          return null;
+        }
+        throw error;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ApiError('Lyrics request timed out', 408);
+      }
+      throw new ApiError(`Failed to fetch lyrics: ${error instanceof Error ? error.message : String(error)}`, 0);
+    }
+  }
+
   /**
    * Maps a Jellyfin track item to TrackInfo.
    * Year is injected separately (resolved at album level to avoid N+1 requests).
@@ -515,6 +560,7 @@ export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
       return Readable.from(Buffer.from(''));
     },
     getCoverArt: async () => Buffer.from(''),
+    fetchLyrics: async () => null,
   };
 
   return { ...defaultMock, ...overrides };

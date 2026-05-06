@@ -21,6 +21,7 @@ export const DEFAULT_SYNC_OPTIONS: Required<SyncOptions> = {
   filesystemType: 'unknown',
   embedMetadata: true,
   coverArtMode: 'embed',
+  lyricsMode: 'off',
 };
 
 /** Windows/FAT32 reserved filenames that cannot exist on those filesystems */

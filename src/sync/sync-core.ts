@@ -22,6 +22,7 @@ import type {
   ItemDiff,
   SyncDiffResult,
   FilesystemType,
+  LyricsMode,
 } from './types';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
@@ -272,6 +273,7 @@ class SyncCoreImpl {
     const errors: string[] = [];
     const tracksFailed: string[] = [];
     let totalTracks = 0;
+    let lyricsAdded = 0;
 
     try {
       this.cancellation.reset();
@@ -305,6 +307,7 @@ class SyncCoreImpl {
         errors,
         stats
       );
+      lyricsAdded = copyResult.lyricsAdded;
 
       // Phase 4: Cleanup
       await this.runCleanupPhase(input.itemIds, input.itemTypes, input.destinationPath, options);
@@ -318,6 +321,7 @@ class SyncCoreImpl {
         tracksRetagged: copyResult.statsRetagged,
         tracksMoved: copyResult.statsMoved,
         tracksRemoved: 0,
+        lyricsAdded,
         tracksFailed,
         errors,
         totalSizeBytes: stats.bytesTransferred,
@@ -334,6 +338,7 @@ class SyncCoreImpl {
           tracksRetagged: 0,
           tracksMoved: 0,
           tracksRemoved: 0,
+          lyricsAdded: 0,
           tracksFailed: [],
           errors: ['Sync was cancelled by user'],
           totalSizeBytes: stats.bytesTransferred,
@@ -352,6 +357,7 @@ class SyncCoreImpl {
         tracksRetagged: 0,
         tracksMoved: 0,
         tracksRemoved: 0,
+        lyricsAdded: 0,
         tracksFailed: tracksFailed,
         errors: [errorMsg, ...errors],
         totalSizeBytes: stats.bytesTransferred,
@@ -400,7 +406,7 @@ class SyncCoreImpl {
     tracksFailed: string[],
     errors: string[],
     stats: ReturnType<typeof createProgressStats>
-  ): Promise<{ statsRetagged: number; statsMoved: number }> {
+  ): Promise<{ statsRetagged: number; statsMoved: number; lyricsAdded: number }> {
     this.currentPhase = 'copying';
     phaseManager.startCopying(tracks.length);
 
@@ -412,6 +418,7 @@ class SyncCoreImpl {
     let completed = 0;
     let statsRetagged = 0;
     let statsMoved = 0;
+    let lyricsAdded = 0;
 
     let allSyncedRecords: SyncedTrackRecord[] = [];
     try {
@@ -436,6 +443,7 @@ class SyncCoreImpl {
         }
         statsRetagged += result.retagged ? 1 : 0;
         statsMoved += result.moved ? 1 : 0;
+        lyricsAdded += result.lyricsAdded ?? 0;
 
         if (result.error) {
           errors.push(result.error);
@@ -448,7 +456,7 @@ class SyncCoreImpl {
     });
 
     this.cancellation.throwIfCancelled();
-    return { statsRetagged, statsMoved };
+    return { statsRetagged, statsMoved, lyricsAdded };
   }
 
   private async runCleanupPhase(
@@ -475,6 +483,7 @@ class SyncCoreImpl {
       tracksRetagged: 0,
       tracksMoved: 0,
       tracksRemoved: 0,
+      lyricsAdded: 0,
       tracksFailed: [],
       errors,
       totalSizeBytes: stats.bytesTransferred,
@@ -490,7 +499,7 @@ class SyncCoreImpl {
     targetBitrateKbps: number,
     syncedByTrackId: Map<string, SyncedTrackRecord>,
     stats: ReturnType<typeof createProgressStats>
-  ): Promise<{ retagged: boolean; moved: boolean; processed: boolean; skipped: boolean; error?: string }> {
+  ): Promise<{ retagged: boolean; moved: boolean; processed: boolean; skipped: boolean; lyricsAdded: number; error?: string }> {
     const outputDir = this.getOutputDir(
       track,
       destinationPath,
@@ -536,7 +545,7 @@ class SyncCoreImpl {
     trackMeta: TrackMetadata,
     options: ReturnType<typeof resolveSyncOptions>,
     stats: ReturnType<typeof createProgressStats>
-  ): Promise<{ retagged: boolean; moved: boolean; processed: boolean; skipped: boolean; error?: string }> {
+  ): Promise<{ retagged: boolean; moved: boolean; processed: boolean; skipped: boolean; lyricsAdded: number; error?: string }> {
     const metadataChanged = syncedRecord.metadataHash !== currentHash;
     const bitrateChanged = encodedBitrate !== null && syncedRecord.encodedBitrate !== encodedBitrate;
     const coverArtChanged = syncedRecord.coverArtMode !== coverArtMode;
@@ -549,10 +558,11 @@ class SyncCoreImpl {
           track.size ?? null, currentHash, coverArtMode, encodedBitrate,
           track.path ?? null, this.serverRootPath || null
         );
-        return { retagged: false, moved: true, processed: true, skipped: false };
+        const lyricsResult = await this.processLyrics(track, outputPath, options.lyricsMode ?? 'off');
+        return { retagged: false, moved: true, processed: true, skipped: false, lyricsAdded: lyricsResult };
       }
       // Truly unchanged — skip
-      return { retagged: false, moved: false, processed: false, skipped: true };
+      return { retagged: false, moved: false, processed: false, skipped: true, lyricsAdded: 0 };
     }
 
     if (!pathChanged && (metadataChanged || bitrateChanged || coverArtChanged)) {
@@ -568,7 +578,8 @@ class SyncCoreImpl {
           track.size ?? null, currentHash, coverArtMode, encodedBitrate,
           track.path ?? null, this.serverRootPath || null
         );
-        return { retagged: true, moved: false, processed: false, skipped: false };
+        const lyricsResult = await this.processLyrics(track, syncedRecord.destinationPath, options.lyricsMode ?? 'off');
+        return { retagged: true, moved: false, processed: false, skipped: false, lyricsAdded: lyricsResult };
       }
       this.log.warn(`Re-tag failed for ${track.name}, falling back to re-download`);
     }
@@ -606,7 +617,7 @@ class SyncCoreImpl {
     trackMeta: TrackMetadata,
     options: ReturnType<typeof resolveSyncOptions>,
     stats: ReturnType<typeof createProgressStats>
-  ): Promise<{ retagged: boolean; moved: boolean; processed: boolean; skipped: boolean; error?: string }> {
+  ): Promise<{ retagged: boolean; moved: boolean; processed: boolean; skipped: boolean; lyricsAdded: number; error?: string }> {
     try {
       // Handle existing file at output path
       if (await this.deps.fs.exists(outputPath)) {
@@ -614,11 +625,11 @@ class SyncCoreImpl {
           // Cross-format: can't compare sizes meaningfully
           const existingSize = (await this.deps.fs.stat(outputPath)).size;
           upsertSyncedTrack(destinationPath, itemId, track.id, outputPath, existingSize, currentHash, coverArtMode, encodedBitrate, track.path ?? null, this.serverRootPath || null);
-          return { retagged: false, moved: false, processed: true, skipped: true };
+          return { retagged: false, moved: false, processed: true, skipped: true, lyricsAdded: 0 };
         }
         if (track.size && (await this.deps.fs.stat(outputPath)).size === track.size) {
           upsertSyncedTrack(destinationPath, itemId, track.id, outputPath, track.size, currentHash, coverArtMode, encodedBitrate, track.path ?? null, this.serverRootPath || null);
-          return { retagged: false, moved: false, processed: true, skipped: true };
+          return { retagged: false, moved: false, processed: true, skipped: true, lyricsAdded: 0 };
         }
       }
 
@@ -637,10 +648,13 @@ class SyncCoreImpl {
 
       upsertSyncedTrack(destinationPath, itemId, track.id, outputPath, track.size ?? null, currentHash, coverArtMode, encodedBitrate, track.path ?? null, this.serverRootPath || null);
 
-      return { retagged: false, moved: false, processed: true, skipped: false };
+      // Handle lyrics (after file is written/copied)
+      const lyricsResult = await this.processLyrics(track, outputPath, options.lyricsMode ?? 'off');
+
+      return { retagged: false, moved: false, processed: true, skipped: false, lyricsAdded: lyricsResult };
     } catch (error) {
       const errorMsg = `Failed to sync "${track.name}": ${error instanceof Error ? error.message : 'Unknown error'}`;
-      return { retagged: false, moved: false, processed: false, skipped: false, error: errorMsg };
+      return { retagged: false, moved: false, processed: false, skipped: false, lyricsAdded: 0, error: errorMsg };
     }
   }
 
@@ -1391,6 +1405,47 @@ class SyncCoreImpl {
       this.log.debug(`Companion cover written: ${dir}/cover.jpg`);
     } catch (err) {
       this.log.warn(`Failed to write companion cover in ${dir}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * Process lyrics for a track based on the lyrics mode.
+   * Returns 1 if lyrics were successfully added, 0 otherwise.
+   */
+  private async processLyrics(track: TrackInfo, outputPath: string, lyricsMode: LyricsMode): Promise<number> {
+    if (lyricsMode === 'off') return 0;
+
+    try {
+      const lyrics = await this.deps.api.fetchLyrics(track.id);
+      if (!lyrics) return 0;
+
+      if (lyricsMode === 'lrc') {
+        // Write LRC sidecar file alongside the audio
+        const lrcPath = outputPath.replace(/\.[^.]+$/, '.lrc');
+        await this.deps.fs.writeFile(lrcPath, Buffer.from(lyrics, 'utf8'));
+        this.log.debug(`LRC file written: ${lrcPath}`);
+        return 1;
+      }
+
+      if (lyricsMode === 'embed') {
+        // Embed lyrics into the audio file
+        const format = track.format.toLowerCase();
+        const result = await this.deps.converter.embedLyrics?.(outputPath, outputPath, lyrics, format);
+        if (result?.success) {
+          this.log.debug(`Lyrics embedded in: ${outputPath}`);
+          return 1;
+        }
+        if (result?.error) {
+          this.log.warn(`Failed to embed lyrics in ${outputPath}: ${result.error}`);
+        }
+        return 0;
+      }
+
+      return 0;
+    } catch (error) {
+      // Non-fatal: skip lyrics for this track
+      this.log.debug(`Could not process lyrics for ${track.name}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      return 0;
     }
   }
 

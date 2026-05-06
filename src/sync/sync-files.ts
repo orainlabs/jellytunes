@@ -350,6 +350,14 @@ export interface AudioConverter {
 
   /** Check if FFmpeg is available */
   isAvailable(): Promise<boolean>;
+
+  /** Embed lyrics into an audio file (format-specific) */
+  embedLyrics?(
+    inputPath: string,
+    outputPath: string,
+    lyrics: string,
+    format: string
+  ): Promise<{ success: boolean; error?: string }>;
 }
 
 export function createFFmpegConverter(): AudioConverter {
@@ -647,6 +655,80 @@ export function createFFmpegConverter(): AudioConverter {
         });
       });
     },
+
+    embedLyrics: async (inputPath, outputPath, lyrics, _format) => {
+      assertFilesystemPath(inputPath, 'inputPath');
+      assertFilesystemPath(outputPath, 'outputPath');
+      const { spawn } = require('child_process');
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+
+      return new Promise((resolve) => {
+        const ext = path.extname(inputPath).toLowerCase();
+        const useTempOutput = inputPath === outputPath;
+        const tempOutputPath = useTempOutput ? `${os.tmpdir()}/jt-lyrics-${Date.now()}${ext}` : outputPath;
+
+        const args: string[] = ['-i', inputPath];
+
+        if (ext === '.mp3') {
+          // MP3: Write LRC content as SYLT (ID3v2 synchronized lyrics)
+          const lrcTemp = `${os.tmpdir()}/jt-lrc-${Date.now()}.txt`;
+          fs.writeFileSync(lrcTemp, lyrics, 'utf8');
+          args.push('-i', lrcTemp, '-map', '0:a', '-map', '1', '-metadata', 'lyrics', '');
+          // FFmpeg doesn't natively write SYLT, so we use a different approach:
+          // Write as text lyrics in the USLT frame via a temporary workaround
+          fs.unlinkSync(lrcTemp);
+          // For MP3, embed as text lyrics (SYLT requires binary struct not supported by FFmpeg)
+          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
+        } else if (ext === '.flac') {
+          // FLAC: Write LYRICS Vorbis comment (plain text, no timing)
+          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
+        } else if (ext === '.m4a') {
+          // M4A: Write ©lyr iTunes atom (plain text)
+          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
+        } else {
+          // Fallback for other formats
+          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
+        }
+
+        args.push('-c', 'copy', '-y', tempOutputPath);
+
+        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+
+        let stderr = '';
+        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+        proc.on('error', (err: Error) => {
+          if (useTempOutput) try { fs.unlinkSync(tempOutputPath); } catch { /* ignore */ }
+          resolve({ success: false, error: `FFmpeg error: ${err.message}` });
+        });
+
+        proc.on('close', (code: number) => {
+          if (code === 0 && useTempOutput) {
+            try {
+              if (outputPath !== tempOutputPath) {
+                fs.unlinkSync(outputPath);
+              }
+              fs.renameSync(tempOutputPath, outputPath);
+            } catch (renameErr) {
+              console.error(`[sync-files] embedLyrics failed to replace ${outputPath}:`, renameErr);
+              try { fs.unlinkSync(tempOutputPath); } catch { /* ignore */ }
+              resolve({ success: false, error: `Failed to replace file: ${renameErr}` });
+              return;
+            }
+          }
+          if (code !== 0) {
+            if (useTempOutput) try { fs.unlinkSync(tempOutputPath); } catch { /* ignore */ }
+            console.error(`[sync-files] embedLyrics FFmpeg failed for ${outputPath}: code=${code}`, `\nstderr: ${stderr}`);
+          }
+          resolve({
+            success: code === 0,
+            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+          });
+        });
+      });
+    },
   };
 }
 
@@ -661,6 +743,7 @@ export function createMockConverter(): AudioConverter {
     tagFile: async () => ({ success: true }),
     readFileMetadata: async () => ({}),
     isAvailable: async () => true,
+    embedLyrics: async () => ({ success: true }),
   };
 }
 
