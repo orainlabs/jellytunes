@@ -672,26 +672,8 @@ export function createFFmpegConverter(): AudioConverter {
 
         const args: string[] = ['-i', inputPath];
 
-        if (ext === '.mp3') {
-          // MP3: Write LRC content as SYLT (ID3v2 synchronized lyrics)
-          const lrcTemp = `${os.tmpdir()}/jt-lrc-${Date.now()}.txt`;
-          fs.writeFileSync(lrcTemp, lyrics, 'utf8');
-          args.push('-i', lrcTemp, '-map', '0:a', '-map', '1', '-metadata', 'lyrics', '');
-          // FFmpeg doesn't natively write SYLT, so we use a different approach:
-          // Write as text lyrics in the USLT frame via a temporary workaround
-          fs.unlinkSync(lrcTemp);
-          // For MP3, embed as text lyrics (SYLT requires binary struct not supported by FFmpeg)
-          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
-        } else if (ext === '.flac') {
-          // FLAC: Write LYRICS Vorbis comment (plain text, no timing)
-          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
-        } else if (ext === '.m4a') {
-          // M4A: Write ©lyr iTunes atom (plain text)
-          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
-        } else {
-          // Fallback for other formats
-          args.push('-metadata', `lyrics=${lyrics.replace(/[\x00-\x1F\x7F]/g, '')}`);
-        }
+        // All formats: embed lyrics as text via metadata
+        args.push('-metadata', `lyrics=${sanitizeMetadataField(lyrics, 5000)}`);
 
         args.push('-c', 'copy', '-y', tempOutputPath);
 

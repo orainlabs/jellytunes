@@ -140,6 +140,75 @@ describe('embedLyrics FFmpeg integration', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe('FFmpeg not found');
   });
+
+  it('embedLyrics for MP3 does NOT use a temp file that gets deleted before FFmpeg runs', async () => {
+    // This test verifies the fix for the bug where MP3 branch:
+    // 1. Creates a temp file
+    // 2. Passes temp file path to FFmpeg args
+    // 3. Deletes temp file BEFORE FFmpeg spawns
+    // Result: FFmpeg fails with "No such file"
+    const { createFFmpegConverter } = await import('./sync-files');
+    const converter = createFFmpegConverter();
+
+    // Track files that are unlinked BEFORE spawn is called
+    const unlinkedFiles: string[] = [];
+    const fs = require('fs');
+    const originalUnlinkSync = fs.unlinkSync;
+    fs.unlinkSync = function(path: string) {
+      unlinkedFiles.push(path);
+      return originalUnlinkSync(path);
+    };
+
+    // Mock spawn to capture args but not actually run FFmpeg
+    const childProcess = require('child_process');
+    const spawnArgs: string[][] = [];
+    const originalSpawn = childProcess.spawn;
+    childProcess.spawn = function(_cmd: string, args: string[], _opts: any) {
+      spawnArgs.push(args);
+      // Return a mock proc that simulates successful FFmpeg exit
+      const mockProc = {
+        on: function(event: string, cb: Function) {
+          if (event === 'close') {
+            // Simulate async FFmpeg success after args are captured
+            setTimeout(() => cb(0), 0);
+          }
+          if (event === 'error') {
+            setTimeout(() => cb(new Error('mock')), 0);
+          }
+          return mockProc;
+        },
+        emit: () => mockProc,
+        removeAllListeners: () => mockProc,
+        kill: () => {},
+        stderr: { on: () => {} },
+      };
+      return mockProc;
+    } as typeof childProcess.spawn;
+
+    try {
+      await converter.embedLyrics('/input.mp3', '/output.mp3', '[00:00]Test lyrics', 'mp3');
+
+      // Find the args passed to the FFmpeg call
+      const ffmpegCall = spawnArgs.find(args => args.includes('-i') && args.includes('/input.mp3'));
+      expect(ffmpegCall).toBeDefined();
+
+      // The bug: ffmpegCall would include '-i', '<tempfile>.txt' that gets deleted
+      // After fix: MP3 should NOT have a second -i flag with a temp file
+      const tempFileArgs = ffmpegCall!.filter(arg => arg.includes('jt-lrc-'));
+      expect(tempFileArgs).toHaveLength(0);
+
+      // Also verify that NO temp file was unlinked before we got here
+      // (if bug exists, unlinkedFiles would contain a jt-lrc- file)
+      const deletedTempFiles = unlinkedFiles.filter(f => f.includes('jt-lrc-'));
+      expect(deletedTempFiles).toHaveLength(0);
+    } finally {
+      // Restore
+      fs.unlinkSync = originalUnlinkSync;
+      if (originalSpawn) {
+        childProcess.spawn = originalSpawn;
+      }
+    }
+  });
 });
 
 describe('lyrics sync config', () => {
