@@ -695,7 +695,6 @@ export function createFFmpegConverter(): AudioConverter {
               }
               fs.renameSync(tempOutputPath, outputPath);
             } catch (renameErr) {
-              console.error(`[sync-files] embedLyrics failed to replace ${outputPath}:`, renameErr);
               try { fs.unlinkSync(tempOutputPath); } catch { /* ignore */ }
               resolve({ success: false, error: `Failed to replace file: ${renameErr}` });
               return;
@@ -703,7 +702,6 @@ export function createFFmpegConverter(): AudioConverter {
           }
           if (code !== 0) {
             if (useTempOutput) try { fs.unlinkSync(tempOutputPath); } catch { /* ignore */ }
-            console.error(`[sync-files] embedLyrics FFmpeg failed for ${outputPath}: code=${code}`, `\nstderr: ${stderr}`);
           }
           resolve({
             success: code === 0,
