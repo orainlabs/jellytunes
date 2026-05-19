@@ -172,6 +172,56 @@ describe('DeviceSyncPanel', () => {
     });
   });
 
+  describe('cover art mode', () => {
+    it('shows cover art section', async () => {
+      await renderPanelAndSettle()
+      expect(screen.getByText('Cover art')).toBeInTheDocument()
+    })
+
+    it('shows three cover art mode buttons: None, Embedded, Folder image', async () => {
+      await renderPanelAndSettle()
+      expect(screen.getByRole('button', { name: 'None' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Embedded' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Folder image' })).toBeInTheDocument()
+    })
+
+    it('calls onCoverArtModeChange with "off" when None is clicked', async () => {
+      const onCoverArtModeChange = vi.fn()
+      await renderPanelAndSettle({ coverArtMode: 'embed', onCoverArtModeChange })
+      await userEvent.click(screen.getByRole('button', { name: 'None' }))
+      expect(onCoverArtModeChange).toHaveBeenCalledWith('off')
+    })
+
+    it('calls onCoverArtModeChange with "embed" when Embedded is clicked', async () => {
+      const onCoverArtModeChange = vi.fn()
+      await renderPanelAndSettle({ coverArtMode: 'off', onCoverArtModeChange })
+      await userEvent.click(screen.getByRole('button', { name: 'Embedded' }))
+      expect(onCoverArtModeChange).toHaveBeenCalledWith('embed')
+    })
+
+    it('calls onCoverArtModeChange with "companion" when Folder image is clicked', async () => {
+      const onCoverArtModeChange = vi.fn()
+      await renderPanelAndSettle({ coverArtMode: 'embed', onCoverArtModeChange })
+      await userEvent.click(screen.getByRole('button', { name: 'Folder image' }))
+      expect(onCoverArtModeChange).toHaveBeenCalledWith('companion')
+    })
+
+    it('shows description for "off" mode', async () => {
+      await renderPanelAndSettle({ coverArtMode: 'off' })
+      expect(screen.getByText('No cover art')).toBeInTheDocument()
+    })
+
+    it('shows description for "embed" mode', async () => {
+      await renderPanelAndSettle({ coverArtMode: 'embed' })
+      expect(screen.getByText('Cover embedded in audio file')).toBeInTheDocument()
+    })
+
+    it('shows description for "companion" mode', async () => {
+      await renderPanelAndSettle({ coverArtMode: 'companion' })
+      expect(screen.getByText('Cover saved as cover.jpg in album folder')).toBeInTheDocument()
+    })
+  })
+
   describe('sync button', () => {
     it('is disabled when no items selected', async () => {
       await renderPanelAndSettle({ selectedTracks: new Set() });
