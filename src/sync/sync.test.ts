@@ -728,6 +728,7 @@ describe('sync-core', () => {
         convertStreamToMp3WithMeta: vi.fn().mockResolvedValue({ success: true }),
         tagFile: async () => ({ success: true }),
         readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
       };
 
       const core = createTestSyncCore(validConfig, { ...deps, converter });
@@ -955,6 +956,7 @@ describe('Error Handling', () => {
         convertStreamToMp3WithMeta: async () => ({ success: false, error: 'FFmpeg not installed' }),
         tagFile: async () => ({ success: true }),
         readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
       },
     });
 
@@ -1692,6 +1694,7 @@ describe('Server Root Path - Original Path Usage', () => {
           return { success: true };
         },
         readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
       };
 
       const deps: SyncDependencies = {
@@ -1746,6 +1749,7 @@ describe('Server Root Path - Original Path Usage', () => {
           return { success: true };
         },
         readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
       };
 
       const deps: SyncDependencies = {
@@ -1803,6 +1807,7 @@ describe('Server Root Path - Original Path Usage', () => {
           return { success: true };
         },
         readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
       };
 
       const deps: SyncDependencies = {

@@ -353,7 +353,7 @@ export interface AudioConverter {
   isAvailable(): Promise<boolean>;
 
   /** Embed lyrics into an audio file (format-specific) */
-  embedLyrics?(
+  embedLyrics(
     inputPath: string,
     outputPath: string,
     lyrics: string,
