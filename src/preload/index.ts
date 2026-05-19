@@ -95,7 +95,7 @@ const api = {
       coverArtMode?: 'off' | 'embed' | 'companion';
       lyricsMode?: 'off' | 'embed' | 'lrc';
     };
-  }): Promise<{ success: boolean; tracksCopied: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }> =>
+  }): Promise<{ success: boolean; tracksCopied: number; tracksSkipped?: number; tracksRetagged?: number; lyricsAdded?: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }> =>
     ipcRenderer.invoke('sync:start2', options),
   
   cancelSync: (): Promise<{ cancelled: boolean }> =>

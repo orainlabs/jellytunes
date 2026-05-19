@@ -42,7 +42,7 @@ export function useSync({
   const [showPreview, setShowPreview] = useState(false)
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
   const [syncSuccessData, setSyncSuccessData] = useState<{
-    tracksCopied: number; tracksSkipped: number; tracksRetagged: number; removed: number; errors: string[]
+    tracksCopied: number; tracksSkipped: number; tracksRetagged: number; lyricsAdded: number; removed: number; errors: string[]
   } | null>(null)
 
   const handleSelectSyncFolder = async (path?: string): Promise<void> => {
@@ -161,13 +161,14 @@ export function useSync({
           tracksCopied: result.tracksCopied,
           tracksSkipped: result.tracksSkipped ?? 0,
           tracksRetagged: result.tracksRetagged ?? 0,
+          lyricsAdded: result.lyricsAdded ?? 0,
           removed: toDeleteIds.length,
           errors: result.errors,
         })
         // Re-run analyzeDiff in background to update out-of-sync indicators
         revalidateDevice()
       } else {
-        setSyncSuccessData({ tracksCopied: 0, tracksSkipped: 0, tracksRetagged: 0, removed: 0, errors: result.errors })
+        setSyncSuccessData({ tracksCopied: 0, tracksSkipped: 0, tracksRetagged: 0, lyricsAdded: 0, removed: 0, errors: result.errors })
       }
     } catch (error) {
       unsubscribe?.()

@@ -10,6 +10,14 @@ Open a [GitHub Issue](https://github.com/orainlabs/jellytunes/issues) with:
 - What you expected to happen vs. what actually happened
 - Your OS, Electron version, and Jellyfin server version
 
+## Pre-commit Hooks
+
+The project uses Husky to run a pre-commit hook that blocks commits when TypeScript has type errors. Before committing:
+
+```bash
+pnpm typecheck  # Verify no type errors exist
+```
+
 ## Submitting Changes
 
 1. Fork the repo and create a branch from `main`

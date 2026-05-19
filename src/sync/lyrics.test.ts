@@ -190,7 +190,7 @@ describe('embedLyrics FFmpeg integration', () => {
     // cast through any since AudioConverter marks embedLyrics as optional but the real impl has it
     const embedFn = converter.embedLyrics as any;
     try {
-      await embedFn('/input.mp3', '/output.mp3', '[00:00]Test lyrics', 'mp3');
+      await embedFn('/input.mp3', '/output.mp3', '[00:00]Test lyrics');
 
       // Find the args passed to the FFmpeg call
       const ffmpegCall = spawnArgs.find(args => args.includes('-i') && args.includes('/input.mp3'));

@@ -26,6 +26,8 @@ export default defineConfig({
       '@': resolve(__dirname, 'src/renderer/src'),
       '@main': resolve(__dirname, 'src/main'),
       '@preload': resolve(__dirname, 'src/preload'),
+      '@ffmpeg-installer/ffmpeg': resolve(__dirname, 'src/sync/__mocks__/ffmpeg-installer.ts'),
+      electron: resolve(__dirname, 'src/sync/__mocks__/electron.ts'),
     },
   },
 })

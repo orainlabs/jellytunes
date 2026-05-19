@@ -28,6 +28,7 @@ const defaultProps = {
   tracksCopied: 100,
   tracksSkipped: 20,
   tracksRetagged: 3,
+  lyricsAdded: 2,
   removed: 5,
   errors: [] as string[],
   onClose: vi.fn(),

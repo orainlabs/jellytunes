@@ -643,6 +643,7 @@ ipcMain.handle('sync:start2', async (_event, options) => {
       tracksCopied: result.tracksCopied,
       tracksSkipped: result.tracksSkipped,
       tracksRetagged: result.tracksRetagged,
+      lyricsAdded: result.lyricsAdded,
       tracksFailed: result.tracksFailed,
       errors: result.errors,
       totalSizeBytes: result.totalSizeBytes,

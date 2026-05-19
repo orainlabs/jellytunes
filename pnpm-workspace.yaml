@@ -1,6 +1,14 @@
 packages:
   - .
 
+allowBuilds:
+  '@ffmpeg-installer/darwin-x64': set this to true or false
+  better-sqlite3: set this to true or false
+  electron: set this to true or false
+  esbuild: set this to true or false
+  sharp: set this to true or false
+  usb-detection: set this to true or false
+
 ignoredBuiltDependencies:
   - drivelist
 

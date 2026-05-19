@@ -29,7 +29,8 @@
     "test": "pnpm run test:unit",
     "postinstall": "electron-builder install-app-deps",
     "build-icon": "node scripts/build-icon.mjs",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "prepare": "husky"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
@@ -63,6 +64,7 @@
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "husky": "^9.1.7",
     "jsdom": "^28.1.0",
     "playwright": "^1.40.1",
     "postcss": "^8.4.49",

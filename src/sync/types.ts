@@ -71,6 +71,13 @@ export type CoverArtMode = 'embed' | 'companion' | 'off';
 export type LyricsMode = 'lrc' | 'embed' | 'off';
 
 /**
+ * Runtime values for LyricsMode — used to validate and test against the type alias.
+ * If the LyricsMode type changes, this array will produce a type error.
+ */
+export const LyricsModes = ['lrc', 'embed', 'off'] as const;
+export type LyricsModeValue = typeof LyricsModes[number];
+
+/**
  * Optional sync behavior settings
  */
 export interface SyncOptions {

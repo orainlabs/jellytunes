@@ -4,6 +4,7 @@ interface SyncSuccessModalProps {
   tracksCopied: number
   tracksSkipped: number
   tracksRetagged: number
+  lyricsAdded: number
   removed: number
   errors: string[]
   onClose: () => void
@@ -28,6 +29,7 @@ export function SyncSuccessModal({
   tracksCopied,
   tracksSkipped,
   tracksRetagged,
+  lyricsAdded,
   removed,
   errors,
   onClose,
@@ -59,6 +61,7 @@ export function SyncSuccessModal({
           <div className="text-body-md text-on_surface_variant space-y-1 mb-5">
             {tracksCopied > 0 && <p>Copied: <span className="text-on_surface">{tracksCopied} tracks</span></p>}
             {tracksRetagged > 0 && <p>Re-tagged (metadata updated): <span className="text-on_surface">{tracksRetagged} tracks</span></p>}
+            {lyricsAdded > 0 && <p>Lyrics embedded: <span className="text-on_surface">{lyricsAdded} tracks</span></p>}
             {tracksSkipped > 0 && <p>Skipped (up-to-date): <span className="text-on_surface">{tracksSkipped}</span></p>}
             {removed > 0 && <p>Removed: <span className="text-on_surface">{removed} items</span></p>}
             {errors.length > 0 && <p>Errors: <span className="text-error">{errors.length}</span></p>}

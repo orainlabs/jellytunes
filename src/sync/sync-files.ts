@@ -657,7 +657,7 @@ export function createFFmpegConverter(): AudioConverter {
       });
     },
 
-    embedLyrics: async (inputPath, outputPath, lyrics, _format) => {
+    embedLyrics: async (inputPath, outputPath, lyrics) => {
       assertFilesystemPath(inputPath, 'inputPath');
       assertFilesystemPath(outputPath, 'outputPath');
       const { spawn } = require('child_process');
@@ -672,8 +672,24 @@ export function createFFmpegConverter(): AudioConverter {
 
         const args: string[] = ['-i', inputPath];
 
-        // All formats: embed lyrics as text via metadata
-        args.push('-metadata', `lyrics=${sanitizeMetadataField(lyrics, 5000)}`);
+        // Format-specific metadata tag for lyrics:
+        // - MP3: Use SYLT (synchronized lyrics) for timestamp support, fallback to USLT
+        // - FLAC: LYRICS (Vorbis Comment)
+        // - M4A/AAC: ©lyr
+        const safeLyrics = sanitizeMetadataField(lyrics, 5000);
+        if (ext === '.mp3') {
+          // FFmpeg embeds SYLT via -metadata:sync lyrics=... for timestamp support
+          args.push('-metadata:sync', `lyrics=${safeLyrics}`);
+        } else if (ext === '.flac') {
+          // FLAC uses LYRICS Vorbis Comment tag
+          args.push('-metadata', `lyrics=${safeLyrics}`);
+        } else if (ext === '.m4a' || ext === '.aac') {
+          // M4A/AAC use ©lyr (copyright symbol + lyr)
+          args.push('-metadata', `©lyr=${safeLyrics}`);
+        } else {
+          // Generic fallback for other formats
+          args.push('-metadata', `lyrics=${safeLyrics}`);
+        }
 
         args.push('-c', 'copy', '-y', tempOutputPath);
 

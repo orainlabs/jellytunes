@@ -72,7 +72,7 @@ interface Api {
       coverArtMode?: 'off' | 'embed' | 'companion';
       lyricsMode?: 'off' | 'embed' | 'lrc';
     };
-  }) => Promise<{ success: boolean; tracksCopied: number; tracksSkipped: number; tracksRetagged?: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }>
+  }) => Promise<{ success: boolean; tracksCopied: number; tracksSkipped: number; tracksRetagged?: number; lyricsAdded?: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }>
   cancelSync: () => Promise<{ cancelled: boolean }>
   onSyncProgress: (callback: (progress: SyncProgress) => void) => (() => void) | undefined
   isFfmpegAvailable: () => Promise<boolean>
