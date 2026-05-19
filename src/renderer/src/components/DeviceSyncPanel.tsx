@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { HardDrive, Folder, Loader2, Trash2, Music, RefreshCw, X, AlertCircle } from 'lucide-react'
-import type { Artist, Album, Playlist, Bitrate, SyncProgressInfo, PreviewData, CoverArtMode } from '../appTypes'
+import type { Artist, Album, Playlist, Bitrate, SyncProgressInfo, PreviewData, CoverArtMode, LyricsMode } from '../appTypes'
 import type { SyncedItemInfo } from '../hooks/useDeviceSelections'
 import { SyncPreviewModal } from './SyncPreviewModal'
 import { SyncProgressBar } from './SyncProgressBar'
@@ -52,6 +52,8 @@ interface DeviceSyncPanelProps {
   estimatedSizeBytes?: number | null
   isLoadingSize?: boolean
   coverArtMode: CoverArtMode
+  lyricsMode: LyricsMode
+  hasFlacOrM4a: boolean
   onToggleItem: (id: string) => void
   onToggleConvert: () => void
   onBitrateChange: (b: Bitrate) => void
@@ -99,6 +101,8 @@ export function DeviceSyncPanel({
   estimatedSizeBytes,
   isLoadingSize,
   coverArtMode,
+  lyricsMode,
+  hasFlacOrM4a,
   onToggleItem,
   onToggleConvert,
   onBitrateChange,
@@ -417,6 +421,14 @@ export function DeviceSyncPanel({
             ))}
           </div>
         </div>
+
+        {/* Lyrics Mode Warning */}
+        {lyricsMode === 'embed' && hasFlacOrM4a && (
+          <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-xl bg-warning/20 border border-warning text-warning text-sm">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>FLAC/M4A no soportan letras sincronizadas — se embeben como texto plano sin timestamps.</span>
+          </div>
+        )}
       </div>
 
       {/* ── Centering wrapper close ─────────────── */}

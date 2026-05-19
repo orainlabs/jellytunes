@@ -70,6 +70,7 @@ interface Api {
       convertToMp3?: boolean;
       bitrate?: '128k' | '192k' | '320k';
       coverArtMode?: 'off' | 'embed' | 'companion';
+      lyricsMode?: 'off' | 'embed' | 'lrc';
     };
   }) => Promise<{ success: boolean; tracksCopied: number; tracksSkipped: number; tracksRetagged?: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }>
   cancelSync: () => Promise<{ cancelled: boolean }>

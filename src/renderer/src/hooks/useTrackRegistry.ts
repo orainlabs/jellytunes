@@ -290,6 +290,25 @@ export function createTrackRegistry() {
     return state.itemTracks.get(itemId) ?? []
   }
 
+  /**
+   * Check if any selected item has at least one FLAC or M4A track.
+   * Returns true when lyricsMode='embed' would embed plain text (no timestamps).
+   */
+  const hasFlacOrM4a = (selectedItemIds: Set<string>): boolean => {
+    const lossyOrLossless = new Set(['flac', 'm4a', 'alac'])
+    for (const itemId of selectedItemIds) {
+      const trackIds = state.itemTracks.get(itemId)
+      if (!trackIds) continue
+      for (const trackId of trackIds) {
+        const info = state.trackMap.get(trackId)
+        if (info?.format && lossyOrLossless.has(info.format.toLowerCase())) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
   return {
     loadDeviceSyncedTracks,
     ensureItemTracks,
@@ -302,6 +321,7 @@ export function createTrackRegistry() {
     invalidateDevice,
     isDeviceLoading,
     getItemTrackIds,
+    hasFlacOrM4a,
   }
 }
 

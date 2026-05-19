@@ -89,6 +89,7 @@ export type ActiveSection = 'library' | 'device'
 export type LibraryTab = 'artists' | 'albums' | 'playlists'
 export type Bitrate = '128k' | '192k' | '320k'
 export type CoverArtMode = 'off' | 'embed' | 'companion'
+export type LyricsMode = 'off' | 'embed' | 'lrc'
 
 export interface SyncProgressInfo {
   current: number

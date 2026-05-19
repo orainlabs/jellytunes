@@ -75,6 +75,8 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     onCancelPreview: vi.fn(),
     onConfirmSync: vi.fn(),
     onRemoveDestination: vi.fn(),
+    lyricsMode: 'off' as const,
+    hasFlacOrM4a: false,
     ...overrides,
   }
   return render(<DeviceSyncPanel {...props} />)
@@ -244,6 +246,42 @@ describe('DeviceSyncPanel', () => {
       await renderPanelAndSettle({ showPreview: true, previewData, onCancelPreview })
       await userEvent.click(screen.getByTestId('cancel-preview-button'))
       expect(onCancelPreview).toHaveBeenCalled()
+    })
+  })
+
+  describe('lyrics warning', () => {
+    const LYRICS_WARNING = /FLAC\/M4A no soportan letras sincronizadas/i
+
+    it('shows FLAC/M4A warning when lyricsMode is embed and has flac tracks', async () => {
+      await renderPanelAndSettle({
+        lyricsMode: 'embed',
+        hasFlacOrM4a: true,
+      })
+      expect(screen.getByText(LYRICS_WARNING)).toBeInTheDocument()
+    })
+
+    it('does not show warning when lyricsMode is embed but no FLAC/M4A tracks', async () => {
+      await renderPanelAndSettle({
+        lyricsMode: 'embed',
+        hasFlacOrM4a: false,
+      })
+      expect(screen.queryByText(LYRICS_WARNING)).not.toBeInTheDocument()
+    })
+
+    it('does not show warning when lyricsMode is lrc even with FLAC/M4A tracks', async () => {
+      await renderPanelAndSettle({
+        lyricsMode: 'lrc',
+        hasFlacOrM4a: true,
+      })
+      expect(screen.queryByText(LYRICS_WARNING)).not.toBeInTheDocument()
+    })
+
+    it('does not show warning when lyricsMode is off even with FLAC/M4A tracks', async () => {
+      await renderPanelAndSettle({
+        lyricsMode: 'off',
+        hasFlacOrM4a: true,
+      })
+      expect(screen.queryByText(LYRICS_WARNING)).not.toBeInTheDocument()
     })
   })
 

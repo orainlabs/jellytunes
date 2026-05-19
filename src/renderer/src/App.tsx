@@ -18,6 +18,7 @@ import { useLibrary } from './hooks/useLibrary'
 import { useSync } from './hooks/useSync'
 import { useJellyfinConnection } from './hooks/useJellyfinConnection'
 import { useSavedDestinations } from './hooks/useSavedDestinations'
+import { getTrackRegistry } from './hooks/useTrackRegistry'
 
 function App(): JSX.Element {
   const [activeSection, setActiveSection] = useState<ActiveSection>('library')
@@ -40,6 +41,11 @@ function App(): JSX.Element {
   }, [connection.isConnected])
 
   const deviceSelections = useDeviceSelections()
+  const registry = useMemo(() => getTrackRegistry(), [])
+  const hasFlacOrM4a = useMemo(
+    () => registry.hasFlacOrM4a(deviceSelections.selectedTracks),
+    [registry, deviceSelections.selectedTracks]
+  )
 
   const { searchQuery, setSearchQuery, searchResults, isSearching, searchError } = useSearch(
     connection.jellyfinConfig,
@@ -383,6 +389,8 @@ function App(): JSX.Element {
                 convertToMp3={sync.convertToMp3}
                 bitrate={sync.bitrate}
                 coverArtMode={sync.coverArtMode}
+                lyricsMode={sync.lyricsMode}
+                hasFlacOrM4a={hasFlacOrM4a}
                 isSyncing={sync.isSyncing}
                 isActivatingDevice={deviceSelections.isActivatingDevice}
                 syncProgress={sync.syncProgress}

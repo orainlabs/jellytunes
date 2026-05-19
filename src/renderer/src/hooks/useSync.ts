@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { JellyfinConfig, Artist, Album, Playlist, Bitrate, SyncProgressInfo, PreviewData, CoverArtMode } from '../appTypes'
+import type { JellyfinConfig, Artist, Album, Playlist, Bitrate, SyncProgressInfo, PreviewData, CoverArtMode, LyricsMode } from '../appTypes'
 import type { SyncedItemInfo } from './useDeviceSelections'
 import { getTrackRegistry } from './useTrackRegistry'
 import { logger } from '../utils/logger'
@@ -36,6 +36,7 @@ export function useSync({
   const [convertToMp3, setConvertToMp3] = useState(false)
   const [bitrate, setBitrate] = useState<Bitrate>('192k')
   const [coverArtMode, setCoverArtMode] = useState<CoverArtMode>('embed')
+  const [lyricsMode, setLyricsMode] = useState<LyricsMode>('off')
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncProgress, setSyncProgress] = useState<SyncProgressInfo | null>(null)
   const [showPreview, setShowPreview] = useState(false)
@@ -146,7 +147,7 @@ export function useSync({
         itemTypes: map,
         itemNames: names,
         destinationPath: syncFolder,
-        options: { convertToMp3, bitrate, coverArtMode },
+        options: { convertToMp3, bitrate, coverArtMode, lyricsMode },
       })
 
       unsubscribe?.()
@@ -252,6 +253,8 @@ export function useSync({
     setBitrate,
     coverArtMode,
     setCoverArtMode,
+    lyricsMode,
+    setLyricsMode,
     isSyncing,
     syncProgress,
     showPreview,

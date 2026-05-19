@@ -93,6 +93,7 @@ const api = {
       convertToMp3?: boolean;
       bitrate?: '128k' | '192k' | '320k';
       coverArtMode?: 'off' | 'embed' | 'companion';
+      lyricsMode?: 'off' | 'embed' | 'lrc';
     };
   }): Promise<{ success: boolean; tracksCopied: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }> =>
     ipcRenderer.invoke('sync:start2', options),
