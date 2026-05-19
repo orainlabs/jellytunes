@@ -257,11 +257,9 @@ describe('processLyrics behavior', () => {
   // Test processLyrics directly by calling it via the public sync() with controlled mocks
 
   function createTestDeps(overrides?: Partial<SyncDependencies>) {
-    const mockFs = createMockFileSystem() as any;
-    mockFs.getItemSize = async () => 100;
     return {
       api: createMockApiClient(),
-      fs: mockFs,
+      fs: createMockFileSystem() as FileSystem,
       converter: createMockConverter(),
       ...overrides,
     };
