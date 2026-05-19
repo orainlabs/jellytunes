@@ -7,7 +7,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { createApiClient, ApiError, createMockApiClient } from './sync-api';
 import { createMockConverter, createMockFileSystem } from './sync-files';
 import { createTestSyncCore, type SyncDependencies } from './sync-core';
-import type { SyncConfig, TrackInfo, ItemType } from './types';
+import type { SyncConfig, TrackInfo, ItemType, LyricsMode } from './types';
+import { LyricsModes } from './types';
 
 const VALID_API_CONFIG = {
   baseUrl: 'https://jellyfin.example.com',
@@ -124,7 +125,8 @@ describe('embedLyrics FFmpeg integration', () => {
   it('embedLyrics is present on FFmpeg converter', async () => {
     const { createFFmpegConverter } = await import('./sync-files');
     const converter = createFFmpegConverter();
-    expect(typeof converter.embedLyrics).toBe('function');
+    const embedFn = converter.embedLyrics;
+      expect(typeof embedFn).toBe('function');
   });
 
   it('mock converter supports embedLyrics', async () => {
@@ -185,8 +187,10 @@ describe('embedLyrics FFmpeg integration', () => {
       return mockProc;
     } as typeof childProcess.spawn;
 
+    // cast through any since AudioConverter marks embedLyrics as optional but the real impl has it
+    const embedFn = converter.embedLyrics as any;
     try {
-      await converter.embedLyrics('/input.mp3', '/output.mp3', '[00:00]Test lyrics', 'mp3');
+      await embedFn('/input.mp3', '/output.mp3', '[00:00]Test lyrics', 'mp3');
 
       // Find the args passed to the FFmpeg call
       const ffmpegCall = spawnArgs.find(args => args.includes('-i') && args.includes('/input.mp3'));
@@ -224,10 +228,9 @@ describe('lyrics sync config', () => {
   });
 
   it('LyricsMode type accepts lrc embed off', async () => {
-    // LyricsMode is a string literal union type, not a runtime value
-    // Verify the type accepts all three modes via type-level test
-    type LyricsMode = 'lrc' | 'embed' | 'off';
-    const modes: LyricsMode[] = ['lrc', 'embed', 'off'];
+    // LyricsMode is a string literal union type imported from types.ts
+    // LyricsModes provides runtime values that stay in sync with the type
+    const modes: LyricsMode[] = [...LyricsModes];
     expect(modes).toContain('lrc');
     expect(modes).toContain('embed');
     expect(modes).toContain('off');
