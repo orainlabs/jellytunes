@@ -66,12 +66,12 @@ export function LibraryItem({
 
   const subtitle =
     type === 'artist'
-      ? albumCount != null
+      ? albumCount !== null
         ? `${albumCount} album${albumCount !== 1 ? 's' : ''}`
         : null
       : type === 'album'
         ? [album.AlbumArtist, album.ProductionYear].filter(Boolean).join(' · ') || null
-        : playlist.ChildCount != null
+        : playlist.ChildCount !== null
           ? `${playlist.ChildCount} track${playlist.ChildCount !== 1 ? 's' : ''}`
           : null;
 

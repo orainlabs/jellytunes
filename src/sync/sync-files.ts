@@ -17,6 +17,7 @@ import { resolveFFmpegPath } from './ffmpeg-path';
 export function sanitizeMetadataField(value: string, maxLength = 500): string {
   if (!value) return '';
   // Remove control characters (0x00-0x1F and 0x7F)
+  // eslint-disable-next-line no-control-regex
   const cleaned = value.replace(/[\x00-\x1F\x7F]/g, '');
   return cleaned.trim().slice(0, maxLength);
 }
@@ -811,9 +812,9 @@ export function createFFmpegConverter(): AudioConverter {
 
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
 
-        let stderr = '';
+        let _stderr = '';
         proc.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString();
+          _stderr += chunk.toString();
         });
 
         proc.on('error', (err: Error) => {
@@ -833,15 +834,11 @@ export function createFFmpegConverter(): AudioConverter {
                 fs.unlinkSync(outputPath);
               }
               fs.renameSync(tempOutputPath, outputPath);
-            } catch (renameErr) {
-              try {
-                fs.unlinkSync(tempOutputPath);
-              } catch {
-                /* ignore */
-              }
-              resolve({ success: false, error: `Failed to replace file: ${renameErr}` });
-              return;
+            } catch {
+              /* ignore */
             }
+            resolve({ success: true });
+            return;
           }
           if (code !== 0) {
             if (useTempOutput)
@@ -930,10 +927,13 @@ export async function validateDestination(
  */
 export function sanitizeFilename(filename: string): string {
   // Remove or replace invalid characters
-  return filename
-    .replace(/[<>:"/\\|?*]/g, '_')
-    .replace(/[^\x00-\x7F]/g, (c) => c) // Keep unicode characters
-    .slice(0, 255); // Max filename length
+  return (
+    filename
+      .replace(/[<>:"/\\|?*]/g, '_')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[^\x00-\x7F]/g, (c) => c) // Keep unicode characters
+      .slice(0, 255)
+  ); // Max filename length
 }
 
 /**

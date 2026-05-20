@@ -139,7 +139,7 @@ export function DeviceSyncPanel({
       setLoadingInfo(false);
       return;
     }
-    Promise.all([
+    void Promise.all([
       window.api.getDeviceInfo(destinationPath).catch(() => null),
       window.api.getFilesystem(destinationPath).catch(() => 'unknown'),
     ])
@@ -209,7 +209,7 @@ export function DeviceSyncPanel({
     deviceInfo && audioBytes > 0 ? Math.round((audioBytes / deviceInfo.total) * 100) : null;
   // Always show at least 1% so the bar is visible even when synced content is tiny
   const audioPct = rawAudioPct !== null ? Math.max(rawAudioPct, 1) : null;
-  const isOverCapacity = deviceInfo != null && (otherPct ?? 0) + (rawAudioPct ?? 0) > 100;
+  const isOverCapacity = deviceInfo !== null && (otherPct ?? 0) + (rawAudioPct ?? 0) > 100;
   // free segment width is clamped to 0 when projected usage exceeds capacity
   const freeBarPct = Math.max(0, 100 - (otherPct ?? 0) - (rawAudioPct ?? 0));
   // projected free bytes after sync replaces the current synced audio
@@ -316,7 +316,7 @@ export function DeviceSyncPanel({
                   style={{ width: `${otherPct ?? 0}%` }}
                 />
                 {/* Audio segment — brand purple, most important; capped visually but overflow detected via isOverCapacity */}
-                {audioPct != null && audioPct > 0 && (
+                {audioPct !== null && audioPct > 0 && (
                   <div
                     className="h-2 bg-primary_container transition-all"
                     style={{ width: `${Math.min(audioPct, 100 - (otherPct ?? 0))}%` }}
@@ -334,19 +334,20 @@ export function DeviceSyncPanel({
               >
                 <span className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-sm bg-secondary_container" />
-                  {otherFiles != null ? formatBytes(otherFiles) : '—'} Other
+                  {otherFiles !== null ? formatBytes(otherFiles) : '—'} Other
                 </span>
                 <span className="flex items-center gap-1">
                   <span
                     className={`w-2 h-2 rounded-sm bg-primary_container${isAudioLoading ? ' animate-sizeSquarePulse' : ''}`}
                   />
                   <span className={isAudioLoading ? 'opacity-40' : ''}>
-                    {audioDisplayBytes != null
-                      ? `${convertToMp3 ? '~' : ''}${formatBytes(audioDisplayBytes)}`
+                    {typeof audioDisplayBytes === 'number'
+                      ? `${convertToMp3 ? '~' : ''}${formatBytes(audioDisplayBytes as number)}`
                       : isAudioLoading
                         ? '—'
                         : '0 B'}{' '}
-                    Audio{convertToMp3 && audioDisplayBytes != null ? ' (estimated)' : ''}
+                    Audio
+                    {convertToMp3 && typeof audioDisplayBytes === 'number' ? ' (estimated)' : ''}
                   </span>
                 </span>
                 <span className="flex items-center gap-1">
@@ -355,7 +356,7 @@ export function DeviceSyncPanel({
                     <span className="text-error">Over capacity</span>
                   ) : (
                     <>
-                      {projectedFreeBytes != null
+                      {projectedFreeBytes !== null
                         ? formatBytes(projectedFreeBytes)
                         : formatBytes(deviceInfo.free)}{' '}
                       Free

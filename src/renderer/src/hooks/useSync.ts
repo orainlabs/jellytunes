@@ -214,7 +214,7 @@ export function useSync({
           errors: result.errors,
         });
         // Re-run analyzeDiff in background to update out-of-sync indicators
-        revalidateDevice();
+        void revalidateDevice();
       } else {
         setSyncSuccessData({
           tracksCopied: 0,
@@ -252,7 +252,7 @@ export function useSync({
 
     // Delete-only: skip preview and go straight to sync
     if (selectedTracks.size === 0) {
-      executeSyncNow();
+      void executeSyncNow();
       return;
     }
 

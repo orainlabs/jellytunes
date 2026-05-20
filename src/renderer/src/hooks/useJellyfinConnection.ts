@@ -91,7 +91,7 @@ export function useJellyfinConnection(
 
   // Auto-connect on mount if an encrypted session is saved
   useEffect(() => {
-    loadSession().then((session) => {
+    void loadSession().then((session) => {
       if (!session) {
         setState((prev) => ({ ...prev, isConnecting: false }));
         return;
@@ -103,14 +103,14 @@ export function useJellyfinConnection(
 
       if (userId) {
         // Fast path: we have userId, just validate server is reachable
-        fetch(`${normalized}/System/Info/Public`, { signal: AbortSignal.timeout(5000) })
+        void fetch(`${normalized}/System/Info/Public`, { signal: AbortSignal.timeout(5000) })
           .then((r) =>
             r.ok
               ? connectWithUser(normalized, apiKey, userId)
               : Promise.reject(new Error(`Server returned ${r.status}`)),
           )
           .catch(() => {
-            clearSession();
+            void clearSession();
             setState((prev) => ({
               ...prev,
               isConnecting: false,
@@ -119,7 +119,7 @@ export function useJellyfinConnection(
           });
       } else {
         // Legacy session without userId — try /Users/Me
-        connectToJellyfin(normalized, apiKey);
+        void connectToJellyfin(normalized, apiKey);
       }
     });
   }, []); // intentional: run once on mount
@@ -202,7 +202,7 @@ export function useJellyfinConnection(
   };
 
   const disconnect = (): void => {
-    clearSession(); // fire-and-forget async clear
+    void clearSession(); // fire-and-forget async clear
     setState((prev) => ({
       ...prev,
       isConnected: false,

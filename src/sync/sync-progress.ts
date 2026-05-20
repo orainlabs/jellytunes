@@ -49,7 +49,7 @@ export function createProgressEmitter(): ProgressEmitter {
       for (const callback of subscribers) {
         try {
           callback(progress);
-        } catch (error) {
+        } catch (_error) {
           // Swallow callback errors silently — log is not available in this module
         }
       }

@@ -44,7 +44,6 @@ async function tryLoadUsbDetection(): Promise<boolean> {
     // usb-detection is a CJS module (module.exports = detector).
     // In Electron's main process, dynamic import() wraps it as { default: detector },
     // so startMonitoring lives on .default. In test mocks it lives directly on mod.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const detection: UsbDetection = (
       typeof mod.startMonitoring === 'function' ? mod : (mod as any).default
     ) as UsbDetection;
@@ -236,7 +235,7 @@ function startFallbackPollingWatcher(
 
   // JELLY-0009 Issue #2 fix: start interval INSIDE .then() of seed
   // so the first tick has previousPaths already set (no spurious attach).
-  listUsbDevices().then((devices) => {
+  void listUsbDevices().then((devices) => {
     previousPaths = new Set(devices.flatMap((d) => d.mountpoints.map((mp) => mp.path)));
     fallbackIntervalId = setInterval(async () => {
       try {

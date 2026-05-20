@@ -88,7 +88,7 @@ function listMountedVolumesFallback(): UsbDevice[] {
                 vendorName: 'External',
               });
             }
-          } catch (e) {
+          } catch (_e) {
             /* ignore */
           }
         }
@@ -112,11 +112,11 @@ function listMountedVolumesFallback(): UsbDevice[] {
                     isRemovable: true,
                   });
                 }
-              } catch (e) {
+              } catch (_e) {
                 /* ignore */
               }
             }
-          } catch (e) {
+          } catch (_e) {
             /* ignore */
           }
         }
@@ -153,12 +153,12 @@ function listMountedVolumesFallback(): UsbDevice[] {
             }
           }
         }
-      } catch (e) {
-        log.error('Windows drive detection error:', e);
+      } catch (err) {
+        log.error('Windows drive detection error:', err);
       }
     }
-  } catch (error) {
-    log.error('Fallback volume detection error:', error);
+  } catch (err2) {
+    log.error('Fallback volume detection error:', err2);
   }
   log.info(`Fallback: Found ${devices.length} volumes`);
   return devices;
@@ -265,8 +265,8 @@ async function detectFilesystem(devicePath: string): Promise<string> {
         if (t === 'ntfs') return 'ntfs';
       }
     }
-  } catch (e) {
-    log.warn('Filesystem detection error:', e);
+  } catch (err) {
+    log.warn('Filesystem detection error:', err);
   }
   return 'unknown';
 }
@@ -275,7 +275,7 @@ function getTrackSize(filePath: string): number {
   try {
     const stats = fs.statSync(filePath);
     return stats.size;
-  } catch (error) {
+  } catch (_error) {
     return 0;
   }
 }
@@ -523,7 +523,7 @@ function createWindow(): void {
     if (mainWindow) await startDeviceWatcher(mainWindow, listUsbDevices);
   });
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    void shell.openExternal(details.url);
     return { action: 'deny' };
   });
   const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
@@ -564,8 +564,8 @@ ipcMain.handle('session:load', () => {
     if (!fs.existsSync(filePath)) return null;
     const raw = fs.readFileSync(filePath);
     return safeStorage.decryptString(raw);
-  } catch (e) {
-    log.error('Failed to load session:', e);
+  } catch (err) {
+    log.error('Failed to load session:', err);
     return null;
   }
 });
@@ -574,8 +574,8 @@ ipcMain.handle('session:clear', () => {
   try {
     const filePath = SESSION_FILE();
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch (e) {
-    log.error('Failed to clear session:', e);
+  } catch (err) {
+    log.error('Failed to clear session:', err);
   }
 });
 
@@ -665,9 +665,9 @@ ipcMain.handle('bug:report', async () => {
 
     await shell.openExternal(url);
     return { success: true };
-  } catch (e) {
-    log.error('bug:report error:', e);
-    return { success: false, error: String(e) };
+  } catch (err) {
+    log.error('bug:report error:', err);
+    return { success: false, error: String(err) };
   }
 });
 
@@ -702,7 +702,7 @@ ipcMain.handle('device:getFilesystem', async (_event, devicePath: string) => {
   }
   try {
     return await detectFilesystem(devicePath);
-  } catch (e) {
+  } catch (_e) {
     return 'unknown';
   }
 });

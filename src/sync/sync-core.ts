@@ -428,7 +428,7 @@ class SyncCoreImpl {
     let allSyncedRecords: SyncedTrackRecord[] = [];
     try {
       allSyncedRecords = await Promise.resolve(getSyncedTracksForDevice(destinationPath));
-    } catch (e) {
+    } catch (_e) {
       this.log.warn('Failed to load synced records, treating all tracks as new');
     }
     const syncedByTrackId = new Map<string, SyncedTrackRecord>();

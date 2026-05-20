@@ -141,7 +141,7 @@ export function useDeviceSelections() {
       });
 
       // Load device synced tracks from DB (for size calculations)
-      registry.loadDeviceSyncedTracks(path).then(() => {
+      void registry.loadDeviceSyncedTracks(path).then(() => {
         scheduleSyncedMusicRecalc(path);
       });
 
@@ -247,7 +247,7 @@ export function useDeviceSelections() {
           );
           if (syncedToFetch.length > 0) {
             setSizeLoadingCount((c) => c + 1);
-            Promise.all(
+            void Promise.all(
               syncedToFetch.map((item: SyncedItemInfo) =>
                 registry.ensureItemTracks(item.id, item.type, {
                   serverUrl: options.serverUrl,
@@ -271,7 +271,7 @@ export function useDeviceSelections() {
           );
           sizeLoadingIncremented = false; // prevent finally from also decrementing
           if (stillToFetch.length > 0) {
-            Promise.all(
+            void Promise.all(
               stillToFetch.map((id) =>
                 registry.ensureItemTracks(id, options!.itemTypes[id], {
                   serverUrl: options!.serverUrl,
@@ -398,7 +398,7 @@ export function useDeviceSelections() {
           );
         if (fetches.length > 0) {
           setSizeLoadingCount((c) => c + 1);
-          Promise.all(fetches)
+          void Promise.all(fetches)
             .then(() => bumpRegistryVersion())
             .finally(() => setSizeLoadingCount((c) => c - 1));
         }

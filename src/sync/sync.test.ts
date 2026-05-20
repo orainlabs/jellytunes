@@ -1445,7 +1445,6 @@ describe('Integration: Real API Tests', () => {
 
     // This would need a real item ID from the server
     // Skip if no test albums exist
-    // eslint-disable-next-line no-console
     console.warn('Integration test: Size estimation requires a real item ID');
   });
 });

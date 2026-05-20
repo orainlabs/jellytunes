@@ -39,12 +39,12 @@ function App(): JSX.Element {
 
   useEffect(() => {
     if (connection.isConnected && connection.jellyfinConfig && connection.userId) {
-      lib.loadLibrary(
+      void lib.loadLibrary(
         connection.jellyfinConfig.url,
         connection.jellyfinConfig.apiKey,
         connection.userId,
       );
-      lib.loadStats(
+      void lib.loadStats(
         connection.jellyfinConfig.url,
         connection.jellyfinConfig.apiKey,
         connection.userId,
@@ -156,7 +156,7 @@ function App(): JSX.Element {
 
   useEffect(() => {
     if (activeSection === 'library' && connection.jellyfinConfig && connection.userId) {
-      lib.loadTab(lib.activeLibrary);
+      void lib.loadTab(lib.activeLibrary);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lib.activeLibrary, activeSection, connection.jellyfinConfig, connection.userId]);
@@ -261,7 +261,7 @@ function App(): JSX.Element {
     if (savedCover !== sync.coverArtMode) {
       sync.setCoverArtMode(savedCover);
     }
-    handleDestinationClick(folder, savedConvert, savedBitrate, savedCover);
+    void handleDestinationClick(folder, savedConvert, savedBitrate, savedCover);
   };
 
   const handleRemoveDestination = async (
@@ -293,7 +293,7 @@ function App(): JSX.Element {
     const usbMatch = usbDevices
       .flatMap((d) =>
         d.mountpoints.map((mp) => ({
-          name: d.productName || d.displayName || 'USB Device',
+          name: d.productName ?? d.displayName ?? 'USB Device',
           path: mp.path,
         })),
       )

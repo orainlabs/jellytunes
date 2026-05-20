@@ -277,7 +277,7 @@ if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI);
     contextBridge.exposeInMainWorld('api', api);
-  } catch (error) {
+  } catch (_error) {
     // contextBridge setup failed — nothing we can do here, app will not function
   }
 } else {

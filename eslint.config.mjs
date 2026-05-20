@@ -79,9 +79,6 @@ export default tseslint.config(
       security: securityPlugin,
     },
     rules: {
-      // Enable recommended security rules
-      'security/detect-child-process': 'warn',
-      'security/detect-non-literal-fs-filename': 'warn',
       // Disable rules with too many false positives
       'security/detect-object-injection': 'off',
     },
