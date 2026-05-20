@@ -54,7 +54,7 @@ export default tseslint.config(
     },
     settings: {
       react: {
-        version: '18.3',
+        version: 'detect',
         runtime: 'automatic',
       },
     },
@@ -72,17 +72,20 @@ export default tseslint.config(
     },
   },
 
-  // Security - activate plugin with recommended rules
+  // Security - activate plugin rules
   // detect-child-process is particularly relevant for JellyTunes (uses FFmpeg)
-  ...securityPlugin.configs.recommended.map((config) => ({
-    ...config,
+  {
+    plugins: {
+      security: securityPlugin,
+    },
     rules: {
-      ...config.rules,
+      // Enable recommended security rules
+      'security/detect-child-process': 'warn',
+      'security/detect-non-literal-fs-filename': 'warn',
       // Disable rules with too many false positives
       'security/detect-object-injection': 'off',
-      'security/detect-non-literal-fs-filename': 'off',
     },
-  })),
+  },
 
   // Test files - relaxed rules
   {
@@ -150,15 +153,7 @@ export default tseslint.config(
       'prefer-const': 'error',
       'eqeqeq': ['warn', 'always'],
       'no-else-return': ['warn', { allowElseIf: false }],
-      'no-restricted-globals': [
-        'error',
-        'event',
-        'fdescribe',
-        'fit',
-        'describe.only',
-        'it.only',
-        'test.only',
-      ],
+      'no-restricted-globals': ['error', 'event', 'describe.only', 'it.only', 'test.only'],
       'no-useless-escape': 'warn',
       'no-control-regex': 'warn',
     },

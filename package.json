@@ -54,6 +54,7 @@
     "@cucumber/pretty-formatter": "^1.0.1",
     "@electron/rebuild": "^4.0.3",
     "@eslint/js": "^9.19.0",
+    "lint-staged": "^15.4.3",
     "@playwright/test": "^1.40.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

@@ -24,14 +24,14 @@ fi
 
 echo "Formatting passed!"
 
-# Run lint check
-echo "Running ESLint..."
-pnpm run lint
+# Run lint-staged on staged files (only lints files that are staged)
+echo "Running lint-staged on staged files..."
+pnpm exec lint-staged
 
-# If lint fails, abort commit
+# If lint-staged fails, abort commit
 if [ $? -ne 0 ]; then
-  echo "ESLint failed. Please fix the errors before committing."
+  echo "lint-staged failed. Please fix the errors before committing."
   exit 1
 fi
 
-echo "Linting passed!"
+echo "Linting of staged files passed!"
