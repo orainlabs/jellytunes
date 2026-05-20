@@ -1,7 +1,18 @@
 #!/usr/bin/env sh
-# Automatically lint and format on commit
+# Automatically typecheck, lint and format on commit
 
-# Run format check first
+# Run TypeScript type check first
+echo "Running TypeScript typecheck..."
+pnpm run typecheck
+
+if [ $? -ne 0 ]; then
+  echo "TypeScript typecheck failed. Please fix the errors before committing."
+  exit 1
+fi
+
+echo "Typecheck passed!"
+
+# Run format check
 echo "Checking formatting with Prettier..."
 pnpm run format:check
 
