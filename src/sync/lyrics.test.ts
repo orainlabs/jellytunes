@@ -259,7 +259,7 @@ describe('processLyrics behavior', () => {
   function createTestDeps(overrides?: Partial<SyncDependencies>) {
     return {
       api: createMockApiClient(),
-      fs: createMockFileSystem() as FileSystem,
+      fs: createMockFileSystem(),
       converter: createMockConverter(),
       ...overrides,
     };

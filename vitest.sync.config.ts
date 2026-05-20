@@ -1,5 +1,5 @@
-import { defineConfig } from 'vitest/config'
-import { resolve } from 'path'
+import { defineConfig } from 'vitest/config';
+import { resolve } from 'path';
 
 export default defineConfig({
   test: {
@@ -20,4 +20,4 @@ export default defineConfig({
       '@preload': resolve(__dirname, 'src/preload'),
     },
   },
-})
+});
