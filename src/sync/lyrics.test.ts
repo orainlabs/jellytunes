@@ -293,9 +293,7 @@ describe('processLyrics for unchanged files — ORAIN-0313', () => {
   }
 
   it('processes lyrics for unchanged file when lyricsMode is lrc', async () => {
-    const { upsertSyncedTrack, getSyncedTracksForDevice, getSyncedTracksForItem } = await import(
-      '../main/database'
-    );
+    const { upsertSyncedTrack } = await import('../main/database');
 
     const mockApi = createMockApiClient();
     const fetchLyricsSpy = vi.fn().mockResolvedValue('[00:00]Test lyrics');
@@ -351,9 +349,7 @@ describe('processLyrics for unchanged files — ORAIN-0313', () => {
   });
 
   it('processes lyrics for unchanged file when lyricsMode is embed', async () => {
-    const { upsertSyncedTrack, getSyncedTracksForDevice, getSyncedTracksForItem } = await import(
-      '../main/database'
-    );
+    const { upsertSyncedTrack } = await import('../main/database');
 
     const mockApi = createMockApiClient();
     const fetchLyricsSpy = vi.fn().mockResolvedValue('[00:00]Embedded lyrics');
