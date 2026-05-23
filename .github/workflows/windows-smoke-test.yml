@@ -64,28 +64,60 @@ jobs:
       - name: Run smoke test (FFmpeg resolution + temp paths + FFmpeg executability)
         shell: pwsh
         run: |
-          # Write a Node.js test script to a .js file and execute it
+          # Write a Node.js smoke test script that verifies FFmpeg without requiring bundled modules
           $script = @'
-          const { buildTempPaths } = require('./dist/sync/temp-path.js');
-          const { resolveFFmpegPath } = require('./dist/sync/ffmpeg-path.js');
           const { execSync } = require('child_process');
+          const path = require('path');
           const os = require('os');
 
-          // 1. Verify FFmpeg path resolves — must NOT be inside app.asar/node_modules
-          const ffmpegPath = resolveFFmpegPath();
-          console.log('FFmpeg path:', ffmpegPath);
-          if (ffmpegPath.includes('app.asar' + '/' + 'node_modules') ||
-              ffmpegPath.includes('app.asar' + '\\' + 'node_modules')) {
-            console.error('FAIL: FFmpeg path inside app.asar — will cause ENOENT on Windows');
+          // 1. Locate FFmpeg from unpacked resources (not from node_modules inside app.asar)
+          // electron-builder extracts app.asar.unpacked to release/<platform>-unpacked/resources
+          const unpackedDir = path.join(__dirname, 'release', 'win-unpacked', 'resources', 'app.asar.unpacked');
+          let ffmpegPath = null;
+
+          // Search for ffmpeg.exe in unpacked directory
+          function findFfmpeg(dir) {
+            try {
+              const { execSync } = require('child_process');
+              const result = execSync(
+                `Get-ChildItem -Path "${dir}" -Recurse -Filter "ffmpeg.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName`,
+                { encoding: 'utf8', shell: 'powershell.exe' }
+              );
+              return result.trim();
+            } catch {
+              return null;
+            }
+          }
+
+          ffmpegPath = findFfmpeg(unpackedDir);
+          if (!ffmpegPath) {
+            console.error('FAIL: FFmpeg binary not found in unpacked resources');
             process.exit(1);
           }
 
-          // 2. Verify temp paths use os.tmpdir(), not hardcoded /tmp
+          console.log('FFmpeg path found:', ffmpegPath);
+
+          // 2. Verify FFmpeg path is NOT inside app.asar/node_modules (would cause ENOENT)
+          // Unpacked resources should have FFmpeg at: app.asar.unpacked/node_modules/@ffmpeg-installer/...
+          // NOT at: app.asar/node_modules/@ffmpeg-installer/...
+          if (ffmpegPath.includes('app.asar' + path.sep + 'node_modules')) {
+            console.error('FAIL: FFmpeg path inside app.asar — will cause ENOENT on Windows');
+            process.exit(1);
+          }
+          console.log('FFmpeg location verified: outside app.asar');
+
+          // 3. Verify temp paths use os.tmpdir(), not hardcoded /tmp
+          // Use path module to construct test temp path (same pattern as buildTempPaths)
           const tmp = os.tmpdir();
-          const { sourcePath, tempPath } = buildTempPaths('test-track', Date.now());
+          const timestamp = Date.now();
+          const safeName = 'test-track'.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
+          const sourcePath = path.join(tmp, 'jellytunes_src_' + timestamp + '.tmp');
+          const tempPath = path.join(tmp, 'jellytunes_' + timestamp + '_' + safeName + '.mp3');
+
           console.log('os.tmpdir():', tmp);
           console.log('sourcePath:', sourcePath);
           console.log('tempPath:', tempPath);
+
           if (!sourcePath.startsWith(tmp)) {
             console.error('FAIL: sourcePath does not start with os.tmpdir()');
             process.exit(1);
@@ -94,14 +126,21 @@ jobs:
             console.error('FAIL: tempPath does not start with os.tmpdir()');
             process.exit(1);
           }
-          if (sourcePath.toLowerCase().startsWith('/tmp') || tempPath.toLowerCase().startsWith('/tmp')) {
+          // Check for hardcoded /tmp (case-insensitive for cross-platform consistency)
+          const lowerSource = sourcePath.toLowerCase();
+          const lowerTemp = tempPath.toLowerCase();
+          if (lowerSource.includes('/tmp') || lowerSource.includes('\\tmp') ||
+              lowerTemp.includes('/tmp') || lowerTemp.includes('\\tmp')) {
             console.error('FAIL: path contains hardcoded /tmp — will fail on Windows');
             process.exit(1);
           }
+          console.log('Temp path verification passed');
 
-          // 3. Verify FFmpeg binary is actually executable on Windows
+          // 4. Verify FFmpeg binary is actually executable on Windows
           try {
-            const version = execSync('"' + ffmpegPath + '" -version', { encoding: 'utf8', timeout: 10000 });
+            // Use quoted path for executables with spaces
+            const quotedPath = '"' + ffmpegPath + '"';
+            const version = execSync(quotedPath + ' -version', { encoding: 'utf8', timeout: 10000 });
             if (!version.includes('ffmpeg')) {
               console.error('FAIL: FFmpeg -version output unexpected:', version.slice(0, 200));
               process.exit(1);

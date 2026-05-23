@@ -383,14 +383,18 @@ export function buildDestinationPath(
     throw new Error(`Path traversal detected: ${serverPath} is not under ${serverRootPath}`);
   }
 
-  const relativePath = path.relative(normalizedRoot, normalizedServer);
+  // Use path.posix.relative to ensure POSIX-style separators (always /) regardless of platform
+  const relativePath = path.posix.relative(
+    normalizedRoot.replace(/\\/g, '/'),
+    normalizedServer.replace(/\\/g, '/'),
+  );
 
   if (hasTraversalSegment(relativePath)) {
     throw new Error(`Invalid path: path traversal attempt detected in "${relativePath}"`);
   }
 
-  // Join with destination root (normalize to remove duplicate slashes)
-  return `${destinationRoot}/${relativePath}`.replace(/\/+/g, '/');
+  // Join with destination root — normalize slashes to POSIX (/) for cross-platform consistency
+  return `${destinationRoot}/${relativePath}`.replace(/\\/g, '/').replace(/\/+/g, '/');
 }
 
 /**
