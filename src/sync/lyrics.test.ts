@@ -640,6 +640,59 @@ describe('removeItems cleans up LRC sidecars', () => {
     expect(result.removed).toBeGreaterThan(0);
     // Verify orphaned LRC was removed
     expect(mockFs.__getFile('/music/Artist/Album/orphan.lrc')).toBeUndefined();
+    // Verify legitimate LRC (with corresponding audio) is also removed when audio is deleted
+    // (since removeItems deletes both the audio and its companion .lrc sidecar)
+    expect(mockFs.__getFile('/music/Artist/Album/track.lrc')).toBeUndefined();
+  });
+
+  it('AC-7b: legitimate .lrc files survive when audio files remain', async () => {
+    // This verifies cleanOrphanedLrcFiles does NOT delete .lrc files that have
+    // corresponding audio files (track.mp3 exists → track.lrc survives)
+    const mockApi = createMockApiClient();
+    mockApi.getTracksForItems = vi.fn().mockResolvedValue({
+      tracks: [
+        {
+          id: 'track-1',
+          name: 'Track',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/Artist/Album/track.mp3',
+          format: 'mp3',
+          size: 100,
+        },
+      ],
+      errors: [],
+    });
+    mockApi.getItem = vi
+      .fn()
+      .mockResolvedValue({ id: 'album-1', name: 'Album', type: 'MusicAlbum' });
+    mockApi.getAlbumTracks = vi.fn().mockResolvedValue([]);
+
+    const mockFs = createMockFileSystem() as any;
+    // Simulate existing audio and its companion LRC
+    mockFs.__setFile('/music/Artist/Album/track.mp3', Buffer.from('audio'));
+    mockFs.__setFile('/music/Artist/Album/track.lrc', Buffer.from('[00:00]lyrics'));
+    // Simulate orphaned LRC file (no corresponding audio)
+    mockFs.__setFile('/music/Artist/Album/orphan.lrc', Buffer.from('[00:00]orphan lyrics'));
+    // Mock readdir - no M3U8 files
+    mockFs.readdir = async (path: string) => {
+      if (path === '/music') return []; // No M3U8 files
+      if (path === '/music/Artist/Album') {
+        return ['track.mp3', 'track.lrc', 'orphan.lrc'];
+      }
+      return [];
+    };
+
+    const deps = createTestDeps({ api: mockApi, fs: mockFs });
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    // Call cleanOrphanedLrcFiles directly on the directory
+    await core.cleanOrphanedLrcFiles('/music/Artist/Album');
+
+    // Verify track.lrc survives (has corresponding audio file)
+    expect(mockFs.__getFile('/music/Artist/Album/track.lrc')).toBeDefined();
+    // Verify orphaned LRC was removed (no corresponding audio file)
+    expect(mockFs.__getFile('/music/Artist/Album/orphan.lrc')).toBeUndefined();
   });
 });
 

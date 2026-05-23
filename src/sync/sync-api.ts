@@ -577,7 +577,9 @@ export function parseLyricsResponse(responseText: string): string {
   try {
     const parsed = JSON.parse(responseText);
     if (Array.isArray(parsed.Lyrics)) {
-      return parsed.Lyrics.map((line: { Start?: number; Text?: string }) => {
+      return parsed.Lyrics
+        .filter((line): line is { Start?: number; Text?: string } => line != null && typeof line === 'object')
+        .map((line) => {
         const seconds = (line.Start ?? 0) / 10_000_000;
         const minutes = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
