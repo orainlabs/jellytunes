@@ -143,6 +143,7 @@ describe('Artist and AlbumArtist metadata', () => {
       const metadata: TrackMetadata = callArgs[3];
 
       // albumArtist should be undefined when not provided by Jellyfin
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Must use || to coerce empty string to undefined
       expect(metadata.albumArtist || undefined).toBeUndefined();
     });
 
@@ -217,6 +218,7 @@ describe('Artist and AlbumArtist metadata', () => {
       const metadata: TrackMetadata = callArgs[2];
 
       // Empty string is falsy - should not be present in metadata
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Must use || to coerce empty string to undefined
       expect(metadata.albumArtist || undefined).toBeUndefined();
     });
   });
