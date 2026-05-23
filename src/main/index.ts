@@ -303,6 +303,7 @@ function detectAudioFormat(filePath: string): string {
 import * as path from 'path';
 
 let isSyncCancelled = false;
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let activeSyncCore: import('../sync').SyncCore | null = null;
 
 // Helper to extract server root from a file path
@@ -806,7 +807,7 @@ ipcMain.handle('sync:start2', async (_event, options) => {
         mainWindow?.webContents.send('sync:progress', {
           current: progress.current,
           total: progress.total,
-          currentFile: progress.currentTrack || '',
+          currentFile: progress.currentTrack ?? '',
           status,
           phase: progress.phase,
           bytesProcessed: progress.bytesProcessed,
@@ -1157,11 +1158,11 @@ ipcMain.handle('prefs:set', (_event, partial: { analyticsEnabled?: boolean }) =>
   setPreferences(partial);
 });
 
-ipcMain.handle('app:checkForUpdates', (_event, force = false) => performUpdateCheck(force));
+ipcMain.handle('app:checkForUpdates', (_event, force = false) => void performUpdateCheck(force));
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   log.info('App ready');
-  initDatabase();
+  void initDatabase();
   electronApp.setAppUserModelId('com.jellytunes.app');
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window);

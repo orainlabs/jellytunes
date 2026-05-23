@@ -5,7 +5,7 @@ export function useDevices(): { devices: UsbDevice[]; refresh: () => void } {
   const [devices, setDevices] = useState<UsbDevice[]>([]);
 
   const refresh = useCallback(() => {
-    window.api?.listUsbDevices().then(setDevices);
+    void window.api?.listUsbDevices().then(setDevices);
   }, []);
 
   useEffect(() => {

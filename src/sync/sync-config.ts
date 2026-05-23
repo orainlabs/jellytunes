@@ -250,7 +250,7 @@ export function needsConversion(format: string, options: Required<SyncOptions>):
   if (!options.convertToMp3) return false;
 
   const normalizedFormat = format.toLowerCase();
-  return CONVERTIBLE_FORMATS.includes(normalizedFormat as any);
+  return CONVERTIBLE_FORMATS.includes(normalizedFormat as (typeof CONVERTIBLE_FORMATS)[number]);
 }
 
 /**
@@ -270,7 +270,7 @@ export function buildSyncFilename(
   track: { name: string; path: string; format: string; trackNumber?: number },
   options: Required<SyncOptions>,
 ): string {
-  const baseName = track.path.split('/').pop() || track.name;
+  const baseName = track.path.split('/').pop() ?? track.name;
   const extension = getOutputExtension(track.format, options);
 
   // If track has number and preserve structure, format accordingly
@@ -347,7 +347,7 @@ export function createSyncConfig(input: {
     serverUrl: normalizeServerUrl(input.serverUrl),
     apiKey: input.apiKey.trim(),
     userId: input.userId.trim(),
-    serverRootPath: input.serverRootPath?.trim() || undefined,
+    serverRootPath: input.serverRootPath?.trim() ?? undefined,
   };
 
   const validation = validateSyncConfig(config);
@@ -375,7 +375,7 @@ export function buildDestinationPath(
 ): string {
   const normalizedServer = path.normalize(serverPath);
   // Strip trailing separators so we can safely append path.sep for prefix checking
-  const normalizedRoot = path.normalize(serverRootPath).replace(/[\/\\]$/, '');
+  const normalizedRoot = path.normalize(serverRootPath).replace(/[\\/]$/, '');
 
   // Normalize to POSIX for cross-platform comparison (Windows backslash → forward slash)
   // Collapse multiple backslashes to single forward slash to avoid double-slash issues

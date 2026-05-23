@@ -9,11 +9,6 @@
  * glob so the binary is actually extracted to app.asar.unpacked at build time.
  */
 
-/** Path separators on any platform */
-const ASAR_SEGMENT = 'app.asar' + '/';
-const ASAR_WIN_SEGMENT = 'app.asar' + '\\';
-const UNPACKED_SUFFIX = 'app.asar.unpacked';
-
 export function rewriteAsarPath(p: string): string {
   // Already points at unpacked location — nothing to do.
   if (p.includes(UNPACKED_SUFFIX)) return p;
@@ -26,6 +21,11 @@ export function rewriteAsarPath(p: string): string {
   }
   return p;
 }
+
+/** Path separators on any platform */
+const ASAR_SEGMENT = 'app.asar' + '/';
+const ASAR_WIN_SEGMENT = 'app.asar' + '\\';
+const UNPACKED_SUFFIX = 'app.asar.unpacked';
 
 const SYSTEM_FFMPEG_CANDIDATES = [
   '/usr/local/bin/ffmpeg',

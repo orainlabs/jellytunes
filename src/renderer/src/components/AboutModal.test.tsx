@@ -17,14 +17,14 @@ beforeEach(() => {
     logInfo: vi.fn(),
     getLogPath: vi.fn().mockResolvedValue('/mock/log'),
   };
-  // @ts-ignore
+  // @ts-ignore mock
   window.api = mockApi;
 });
 
 describe('AboutModal', () => {
   it('loads analytics preference on mount', async () => {
     render(<AboutModal onClose={vi.fn()} />);
-    // @ts-ignore
+    // @ts-ignore mock
     await waitFor(() => {
       expect(window.api.getPreferences).toHaveBeenCalled();
     });

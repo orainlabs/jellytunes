@@ -312,7 +312,7 @@ export function useDeviceSelections() {
         return new Map(prev).set(path, { ...state, syncedItems, syncedItemsInfo: items });
       });
       // Force-reload device tracks from DB since sync changed them
-      registry.loadDeviceSyncedTracks(path, true).then(() => {
+      void registry.loadDeviceSyncedTracks(path, true).then(() => {
         scheduleSyncedMusicRecalc(path);
       });
     },
@@ -360,7 +360,7 @@ export function useDeviceSelections() {
       // Fetch tracks for this item if needed (for size calculation)
       if (lastOpts && itemType) {
         setSizeLoadingCount((c) => c + 1);
-        registry
+        void registry
           .ensureItemTracks(id, itemType, {
             serverUrl: lastOpts.serverUrl,
             apiKey: lastOpts.apiKey,

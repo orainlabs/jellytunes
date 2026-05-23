@@ -333,8 +333,6 @@ export type TrackRegistry = ReturnType<typeof createTrackRegistry>;
 let registryInstance: TrackRegistry | null = null;
 
 export function getTrackRegistry(): TrackRegistry {
-  if (!registryInstance) {
-    registryInstance = createTrackRegistry();
-  }
+  registryInstance ??= createTrackRegistry();
   return registryInstance;
 }

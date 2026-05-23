@@ -281,8 +281,8 @@ if (process.contextIsolated) {
     // contextBridge setup failed — nothing we can do here, app will not function
   }
 } else {
-  // @ts-ignore
+  // @ts-ignore Context bridging required when contextIsolation is disabled
   window.electron = electronAPI;
-  // @ts-ignore
+  // @ts-ignore Context bridging required when contextIsolation is disabled
   window.api = api;
 }

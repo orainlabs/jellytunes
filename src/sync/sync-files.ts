@@ -5,6 +5,8 @@
  * Pure functions with dependency injection for testing.
  */
 
+/* eslint-disable no-control-regex -- Control characters are intentionally removed during metadata sanitization */
+
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata } from './types';
 import { resolveFFmpegPath } from './ffmpeg-path';
@@ -829,9 +831,8 @@ export function createFFmpegConverter(): AudioConverter {
 
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
 
-        let stderr = '';
-        proc.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString();
+        proc.stderr.on('data', (_chunk: Buffer) => {
+          // FFmpeg stderr output is discarded
         });
 
         proc.on('error', (err: Error) => {
@@ -964,7 +965,7 @@ export async function getUniqueFilename(
   filename: string,
   fs: FileSystem,
 ): Promise<string> {
-  const ext = filename.match(/\.[^.]+$/)?.[0] || '';
+  const ext = filename.match(/\.[^.]+$/)?.[0] ?? '';
   const baseName = filename.replace(/\.[^.]+$/, '');
 
   let finalName = filename;

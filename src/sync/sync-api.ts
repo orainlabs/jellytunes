@@ -481,7 +481,7 @@ class SyncApiImpl implements SyncApi {
     albumName?: string,
   ): TrackInfo {
     const source = item.MediaSources?.[0];
-    const resolvedAlbum = item.Album || item.AlbumName || albumName;
+    const resolvedAlbum = item.Album ?? item.AlbumName ?? albumName;
 
     this.logger?.debug(
       `trackItemToInfo track="${item.Name}" → item.Album="${item.Album ?? '(empty)'}" item.AlbumName="${item.AlbumName ?? '(empty)'}" albumName="${albumName ?? '(empty)'}" resolved="${resolvedAlbum}"`,

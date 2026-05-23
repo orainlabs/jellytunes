@@ -65,7 +65,7 @@ export function Sidebar({
   // USB devices that have at least one mountpoint
   const mountedUsb = usbDevices.flatMap((d) =>
     d.mountpoints.map((mp) => ({
-      name: d.productName || d.displayName || 'USB Device',
+      name: d.productName ?? d.displayName ?? 'USB Device',
       path: mp.path,
     })),
   );
