@@ -829,10 +829,11 @@ export function createFFmpegConverter(): AudioConverter {
 
         args.push('-c', 'copy', '-y', tempOutputPath);
 
+        let stderrOutput = '';
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
 
-        proc.stderr.on('data', (_chunk: Buffer) => {
-          // FFmpeg stderr output is discarded
+        proc.stderr.on('data', (chunk: Buffer) => {
+          stderrOutput += chunk.toString();
         });
 
         proc.on('error', (err: Error) => {
@@ -870,7 +871,7 @@ export function createFFmpegConverter(): AudioConverter {
               }
             resolve({
               success: false,
-              error: code !== 0 ? `FFmpeg exited with code ${code}: ${stderr}` : undefined,
+              error: code !== 0 ? `FFmpeg exited with code ${code}: ${stderrOutput}` : undefined,
             });
           }
         });
