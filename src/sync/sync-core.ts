@@ -1001,6 +1001,12 @@ class SyncCoreImpl {
             break; // can't compute relative path, be conservative
           }
 
+          // AC-6: Delete the corresponding .lrc sidecar
+          const lrcPath = outputPath.replace(/\.[^.]+$/, '.lrc');
+          if (await this.deps.fs.exists(lrcPath)) {
+            await this.deps.fs.unlink(lrcPath);
+          }
+
           await this.deps.fs.unlink(outputPath);
           deleted = true;
           dirsToClean.add(outputDir);
@@ -1012,6 +1018,12 @@ class SyncCoreImpl {
           `Failed to remove "${track.name}": ${error instanceof Error ? error.message : 'Unknown error'}`,
         );
       }
+    }
+
+    // AC-7: Detect and remove orphaned .lrc files in affected directories
+    // (files without corresponding audio files)
+    for (const dir of dirsToClean) {
+      await this.cleanOrphanedLrcFiles(dir);
     }
 
     // Clean up empty directories (deepest first)
@@ -1615,6 +1627,40 @@ class SyncCoreImpl {
   }
 
   /**
+   * Detect and remove orphaned .lrc files in a directory.
+   * An orphaned LRC has no corresponding audio file (same base name, different extension).
+   */
+  private async cleanOrphanedLrcFiles(dir: string): Promise<void> {
+    try {
+      const entries = await this.deps.fs.readdir(dir);
+      const lrcFiles = entries.filter((e) => e.toLowerCase().endsWith('.lrc'));
+
+      for (const lrcFile of lrcFiles) {
+        const baseName = lrcFile.replace(/\.lrc$/i, '');
+        const audioExtensions = ALL_AUDIO_EXTENSIONS;
+
+        // Check if any audio file with the same base name exists
+        const hasAudio = audioExtensions.some(
+          (ext) =>
+            entries.includes(`${baseName}${ext}`) ||
+            entries.includes(`${baseName}${ext.toUpperCase()}`),
+        );
+
+        if (!hasAudio) {
+          try {
+            await this.deps.fs.unlink(`${dir}/${lrcFile}`);
+            this.log.debug(`Removed orphaned LRC: ${dir}/${lrcFile}`);
+          } catch {
+            /* non-fatal */
+          }
+        }
+      }
+    } catch {
+      /* ignore errors during cleanup */
+    }
+  }
+
+  /**
    * Build TrackMetadata from a TrackInfo — only fields with values are set,
    * so FFmpeg only writes non-empty fields (doesn't clear existing tags).
    */
@@ -1725,11 +1771,13 @@ class SyncCoreImpl {
 
       if (lyricsMode === 'embed') {
         // Embed lyrics into the audio file
+        // For embed mode, strip LRC timestamps — plain text works with more players
+        const plainTextLyrics = lyrics.replace(/^\[\d{2}:\d{2}\.\d{2}\]/gm, '').trim();
         const format = track.format.toLowerCase();
         const result = await this.deps.converter.embedLyrics?.(
           outputPath,
           outputPath,
-          lyrics,
+          plainTextLyrics,
           format,
         );
         if (result?.success) {

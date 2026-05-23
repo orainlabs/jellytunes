@@ -43,6 +43,16 @@ const validConfig: SyncConfig = {
   userId: 'abcdef1234567890abcdef1234567890',
 };
 
+// Helper to create test dependencies (reused across tests)
+function createTestDeps(overrides?: Partial<SyncDependencies>) {
+  return {
+    api: createMockApiClient(),
+    fs: createMockFileSystem(),
+    converter: createMockConverter(),
+    ...overrides,
+  };
+}
+
 function makeMockResponse(
   overrides: Partial<Response> & { ok: boolean; status: number; statusText: string },
 ): Response {
@@ -357,6 +367,282 @@ describe('embedLyrics FFmpeg integration', () => {
   });
 });
 
+describe('JSON to LRC text conversion', () => {
+  it('AC-1: parses JSON with Lyrics array and converts to LRC text', async () => {
+    const { parseLyricsResponse } = await import('./sync-api');
+
+    const jsonResponse = JSON.stringify({
+      Lyrics: [
+        { Start: 0, Text: 'Hello world' },
+        { Start: 50000000, Text: 'Second line' },
+        { Start: 120000000, Text: 'Third line' },
+      ],
+    });
+
+    const result = parseLyricsResponse(jsonResponse);
+    expect(result).toBe('[00:00.00]Hello world\n[00:05.00]Second line\n[00:12.00]Third line');
+  });
+
+  it('AC-1: uses original text as fallback when JSON parse fails', async () => {
+    const { parseLyricsResponse } = await import('./sync-api');
+
+    const plainLrc = '[00:00.00]Original lyrics\n[00:05.00]More lyrics';
+    const result = parseLyricsResponse(plainLrc);
+    expect(result).toBe(plainLrc);
+  });
+
+  it('AC-2: returns plain text LRC unchanged (pre-10.9 fallback)', async () => {
+    const { parseLyricsResponse } = await import('./sync-api');
+
+    const plainLrc = '[00:12.34]Line one\n[00:56.78]Line two';
+    const result = parseLyricsResponse(plainLrc);
+    expect(result).toBe(plainLrc);
+  });
+
+  it('AC-3: LRC format has two decimal places for seconds', async () => {
+    const { parseLyricsResponse } = await import('./sync-api');
+
+    const jsonResponse = JSON.stringify({
+      Lyrics: [
+        { Start: 123456789, Text: 'Test' }, // ~12.3 seconds
+      ],
+    });
+
+    const result = parseLyricsResponse(jsonResponse);
+    expect(result).toMatch(/^\[00:12\.\d{2}\]Test$/);
+  });
+
+  it('AC-3: lines are separated by newline', async () => {
+    const { parseLyricsResponse } = await import('./sync-api');
+
+    const jsonResponse = JSON.stringify({
+      Lyrics: [
+        { Start: 0, Text: 'Line 1' },
+        { Start: 10000000, Text: 'Line 2' },
+        { Start: 20000000, Text: 'Line 3' },
+      ],
+    });
+
+    const result = parseLyricsResponse(jsonResponse);
+    expect(result).toBe('[00:00.00]Line 1\n[00:01.00]Line 2\n[00:02.00]Line 3');
+  });
+
+  it('AC-4: LRC file written to disk contains plain text LRC, never JSON', async () => {
+    const mockApi = createMockApiClient();
+    // parseLyricsResponse converts JSON to LRC text, so mock fetchLyrics to return the parsed text
+    const jsonResponse = JSON.stringify({
+      Lyrics: [{ Start: 0, Text: 'Test lyrics' }],
+    });
+    // Import and use the real parseLyricsResponse to simulate what fetchLyrics does
+    const { parseLyricsResponse } = await import('./sync-api');
+    const parsedLyrics = parseLyricsResponse(jsonResponse);
+    mockApi.fetchLyrics = vi.fn().mockResolvedValue(parsedLyrics);
+
+    const tracks: TrackInfo[] = [
+      {
+        id: 'track-1',
+        name: 'Track',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/lib/lib/Artist/Album/track.mp3',
+        format: 'mp3',
+        size: 100,
+      },
+    ];
+    mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
+    mockApi.downloadItemStream = async () => {
+      const { Readable } = require('stream');
+      return Readable.from(Buffer.from('fake audio'));
+    };
+    mockApi.getItem = vi
+      .fn()
+      .mockResolvedValue({ id: 'album-1', name: 'Album', type: 'MusicAlbum' });
+    mockApi.getAlbumTracks = vi.fn().mockResolvedValue([]);
+
+    const mockFs = createMockFileSystem() as any;
+    const deps = createTestDeps({ api: mockApi, fs: mockFs });
+    const core = createTestSyncCore(validConfig, deps);
+
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/usb',
+      options: { lyricsMode: 'lrc' },
+    });
+
+    // Verify LRC file contains plain text, not JSON
+    // getOutputDir falls back to metadata-based path: /usb/lib/Artist/Album (no serverRootPath)
+    const lrcContent = mockFs.__getFile('/usb/lib/Artist/Album/track.lrc');
+    expect(lrcContent).toBeDefined();
+    expect(lrcContent!.toString('utf8')).not.toContain('{"Lyrics"');
+    expect(lrcContent!.toString('utf8')).toContain('[00:00.00]Test lyrics');
+  });
+
+  it('AC-5: embed mode passes plain text (no timestamps) to FFmpeg', async () => {
+    const mockApi = createMockApiClient();
+    const jsonResponse = JSON.stringify({
+      Lyrics: [
+        { Start: 0, Text: 'Embedded line 1' },
+        { Start: 50000000, Text: 'Embedded line 2' },
+      ],
+    });
+    // parseLyricsResponse converts JSON to LRC text (simulating real fetchLyrics behavior)
+    const { parseLyricsResponse } = await import('./sync-api');
+    const parsedLyrics = parseLyricsResponse(jsonResponse);
+    mockApi.fetchLyrics = vi.fn().mockResolvedValue(parsedLyrics);
+
+    const tracks: TrackInfo[] = [
+      {
+        id: 'track-1',
+        name: 'Track',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/lib/lib/Artist/Album/track.mp3',
+        format: 'mp3',
+        size: 100,
+      },
+    ];
+    mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
+    mockApi.downloadItemStream = async () => {
+      const { Readable } = require('stream');
+      return Readable.from(Buffer.from('fake audio'));
+    };
+    mockApi.getItem = vi
+      .fn()
+      .mockResolvedValue({ id: 'album-1', name: 'Album', type: 'MusicAlbum' });
+    mockApi.getAlbumTracks = vi.fn().mockResolvedValue([]);
+
+    const mockConverter = createMockConverter();
+    const embedLyricsSpy = vi.fn().mockResolvedValue({ success: true });
+    mockConverter.embedLyrics = embedLyricsSpy;
+
+    const deps = createTestDeps({ api: mockApi, converter: mockConverter });
+    const core = createTestSyncCore(validConfig, deps);
+
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/usb',
+      options: { lyricsMode: 'embed', embedMetadata: true },
+    });
+
+    // Verify embedLyrics was called with plain text (no JSON, no timestamps)
+    expect(embedLyricsSpy).toHaveBeenCalled();
+    const [, , lyricsArg] = embedLyricsSpy.mock.calls[0];
+    expect(lyricsArg).not.toContain('{');
+    expect(lyricsArg).not.toContain('[00:');
+    expect(lyricsArg).toContain('Embedded line 1');
+  });
+});
+
+describe('removeItems cleans up LRC sidecars', () => {
+  // Stable config WITH serverRootPath so path computation works in tests
+  const configWithServerRoot: SyncConfig = {
+    serverUrl: 'https://jellyfin.example.com',
+    apiKey: '0123456789abcdef0123456789abcdef',
+    userId: 'abcdef1234567890abcdef1234567890',
+    serverRootPath: '/music/',
+  };
+
+  it('AC-6: deletes .lrc sidecar when removing audio file', async () => {
+    const mockApi = createMockApiClient();
+    mockApi.getTracksForItems = vi.fn().mockResolvedValue({
+      tracks: [
+        {
+          id: 'track-1',
+          name: 'Track',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/Artist/Album/track.mp3',
+          format: 'mp3',
+          size: 100,
+        },
+      ],
+      errors: [],
+    });
+    mockApi.getItem = vi
+      .fn()
+      .mockResolvedValue({ id: 'album-1', name: 'Album', type: 'MusicAlbum' });
+    mockApi.getAlbumTracks = vi.fn().mockResolvedValue([]);
+
+    // Set up mock filesystem with files that need to be deleted
+    const mockFs = createMockFileSystem() as any;
+    mockFs.__setFile('/music/Artist/Album/track.mp3', Buffer.from('audio'));
+    mockFs.__setFile('/music/Artist/Album/track.lrc', Buffer.from('[00:00]lyrics'));
+    // Mock readdir to return no M3U8 files (empty set for protectedPaths)
+    mockFs.readdir = async (path: string) => {
+      if (path === '/music') return []; // No M3U8 files
+      return [];
+    };
+
+    const deps = createTestDeps({ api: mockApi, fs: mockFs });
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    const result = await core.removeItems(
+      ['album-1'],
+      new Map([['album-1', 'album' as ItemType]]),
+      '/music',
+    );
+
+    // Verify track was removed
+    expect(result.removed).toBeGreaterThan(0);
+    // Verify LRC sidecar was deleted
+    expect(mockFs.__getFile('/music/Artist/Album/track.lrc')).toBeUndefined();
+    expect(mockFs.__getFile('/music/Artist/Album/track.mp3')).toBeUndefined();
+  });
+
+  it('AC-7: detects and removes orphaned .lrc files after removing audio', async () => {
+    const mockApi = createMockApiClient();
+    mockApi.getTracksForItems = vi.fn().mockResolvedValue({
+      tracks: [
+        {
+          id: 'track-1',
+          name: 'Track',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/Artist/Album/track.mp3',
+          format: 'mp3',
+          size: 100,
+        },
+      ],
+      errors: [],
+    });
+    mockApi.getItem = vi
+      .fn()
+      .mockResolvedValue({ id: 'album-1', name: 'Album', type: 'MusicAlbum' });
+    mockApi.getAlbumTracks = vi.fn().mockResolvedValue([]);
+
+    const mockFs = createMockFileSystem() as any;
+    // Simulate existing audio and LRC files
+    mockFs.__setFile('/music/Artist/Album/track.mp3', Buffer.from('audio'));
+    mockFs.__setFile('/music/Artist/Album/track.lrc', Buffer.from('[00:00]lyrics'));
+    // Simulate orphaned LRC file (no corresponding audio)
+    mockFs.__setFile('/music/Artist/Album/orphan.lrc', Buffer.from('[00:00]orphan lyrics'));
+    // Mock readdir - no M3U8 files
+    mockFs.readdir = async (path: string) => {
+      if (path === '/music') return []; // No M3U8 files
+      if (path === '/music/Artist/Album') {
+        return ['track.mp3', 'track.lrc', 'orphan.lrc'];
+      }
+      return [];
+    };
+
+    const deps = createTestDeps({ api: mockApi, fs: mockFs });
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    const result = await core.removeItems(
+      ['album-1'],
+      new Map([['album-1', 'album' as ItemType]]),
+      '/music',
+    );
+
+    // Verify track was removed
+    expect(result.removed).toBeGreaterThan(0);
+    // Verify orphaned LRC was removed
+    expect(mockFs.__getFile('/music/Artist/Album/orphan.lrc')).toBeUndefined();
+  });
+});
+
 describe('lyrics sync config', () => {
   it('DEFAULT_SYNC_OPTIONS includes lyricsMode off', async () => {
     const { DEFAULT_SYNC_OPTIONS } = await import('./sync-config');
@@ -511,15 +797,6 @@ describe('processLyrics for unchanged files — ORAIN-0313', () => {
 
 describe('processLyrics behavior', () => {
   // Test processLyrics directly by calling it via the public sync() with controlled mocks
-
-  function createTestDeps(overrides?: Partial<SyncDependencies>) {
-    return {
-      api: createMockApiClient(),
-      fs: createMockFileSystem(),
-      converter: createMockConverter(),
-      ...overrides,
-    };
-  }
 
   it('skips when lyricsMode is off', async () => {
     const mockApi = createMockApiClient();

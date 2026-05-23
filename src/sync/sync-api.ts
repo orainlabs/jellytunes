@@ -450,7 +450,7 @@ class SyncApiImpl implements SyncApi {
       }
 
       const text = await response.text();
-      return text || null;
+      return text ? parseLyricsResponse(text) : null;
     } catch (error) {
       clearTimeout(timeoutId);
       if (error instanceof ApiError) {
@@ -563,6 +563,45 @@ export function detectServerRootPath(tracks: TrackInfo[]): string {
   }
 
   return commonRoot;
+}
+
+/**
+ * Parse lyrics response from Jellyfin.
+ * Handles Jellyfin >= 10.9 returning JSON with Lyrics array (ticks format)
+ * and Jellyfin < 10.9 returning plain text LRC.
+ *
+ * @param responseText - Raw response text from /Audio/{id}/Lyrics endpoint
+ * @returns Parsed lyrics as plain text LRC format, or original text if not JSON
+ */
+export function parseLyricsResponse(responseText: string): string {
+  try {
+    const parsed = JSON.parse(responseText);
+    if (Array.isArray(parsed.Lyrics)) {
+      return parsed.Lyrics.map((line: { Start?: number; Text?: string }) => {
+        const seconds = (line.Start ?? 0) / 10_000_000;
+        const minutes = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        const hundredths = Math.floor((seconds % 1) * 100);
+        const timestamp = `[${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}]`;
+        return `${timestamp}${line.Text ?? ''}`;
+      }).join('\n');
+    }
+  } catch {
+    // Not JSON — return as-is (plain LRC text or fallback)
+  }
+  return responseText;
+}
+
+/**
+ * Convert parsed lyrics to plain text for embedding (no timestamps).
+ * Used for embed mode where FFmpeg metadata doesn't support synchronized lyrics.
+ */
+export function lyricsToPlainText(parsedLyrics: string): string {
+  // Extract Text fields from LRC format, removing timestamps
+  return parsedLyrics
+    .split('\n')
+    .map((line) => line.replace(/^\[\d{2}:\d{2}\.\d{2}\]/, ''))
+    .join('\n');
 }
 
 /**
