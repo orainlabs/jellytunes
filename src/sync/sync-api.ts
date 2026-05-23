@@ -577,16 +577,20 @@ export function parseLyricsResponse(responseText: string): string {
   try {
     const parsed = JSON.parse(responseText);
     if (Array.isArray(parsed.Lyrics)) {
-      return parsed.Lyrics
-        .filter((line): line is { Start?: number; Text?: string } => line != null && typeof line === 'object')
-        .map((line) => {
-        const seconds = (line.Start ?? 0) / 10_000_000;
-        const minutes = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        const hundredths = Math.floor((seconds % 1) * 100);
-        const timestamp = `[${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}]`;
-        return `${timestamp}${line.Text ?? ''}`;
-      }).join('\n');
+      return (parsed.Lyrics as unknown[])
+        .filter(
+          (line): line is { Start?: number; Text?: string } =>
+            line != null && typeof line === 'object',
+        )
+        .map((line: { Start?: number; Text?: string }) => {
+          const seconds = (line.Start ?? 0) / 10_000_000;
+          const minutes = Math.floor(seconds / 60);
+          const secs = Math.floor(seconds % 60);
+          const hundredths = Math.floor((seconds % 1) * 100);
+          const timestamp = `[${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}]`;
+          return `${timestamp}${line.Text ?? ''}`;
+        })
+        .join('\n');
     }
   } catch {
     // Not JSON — return as-is (plain LRC text or fallback)

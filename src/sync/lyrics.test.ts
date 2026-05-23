@@ -684,7 +684,7 @@ describe('removeItems cleans up LRC sidecars', () => {
     };
 
     const deps = createTestDeps({ api: mockApi, fs: mockFs });
-    const core = createTestSyncCore(configWithServerRoot, deps);
+    const core = createTestSyncCore(configWithServerRoot, deps) as any;
 
     // Call cleanOrphanedLrcFiles directly on the directory
     await core.cleanOrphanedLrcFiles('/music/Artist/Album');
