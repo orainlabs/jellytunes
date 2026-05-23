@@ -544,8 +544,7 @@ export function DeviceSyncPanel({
             <button
               data-testid="sync-button"
               onClick={onStartSync}
-              // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- undefined prop is falsy in JSX attributes
-              disabled={isActivatingDevice || isLoadingSize || syncItems.length === 0}
+              disabled={isActivatingDevice || isLoadingSize || !syncItems.length} // eslint-disable-line @typescript-eslint/prefer-nullish-coalescing -- || is correct here: disable on any truthy condition (activating, loading, or empty)
               className="w-full bg-gradient-primary hover:bg-secondary_container disabled:bg-surface_container_highest disabled:text-on_surface_variant py-3 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
             >
               {isActivatingDevice || isLoadingSize ? (

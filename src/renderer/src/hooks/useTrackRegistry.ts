@@ -333,6 +333,9 @@ export type TrackRegistry = ReturnType<typeof createTrackRegistry>;
 let registryInstance: TrackRegistry | null = null;
 
 export function getTrackRegistry(): TrackRegistry {
-  registryInstance ??= createTrackRegistry();
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- singleton pattern: null check is explicit
+  if (registryInstance === null) {
+    registryInstance = createTrackRegistry();
+  }
   return registryInstance;
 }
