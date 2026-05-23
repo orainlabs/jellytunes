@@ -82,3 +82,24 @@ describe('buildDestinationPath — validatePathTraversal coverage', () => {
   // are an edge case in buildDestinationPath but are caught by the startsWith check since
   // path.normalize() truncates at null bytes, producing unexpected paths.
 });
+
+describe('buildDestinationPath — Windows path coverage', () => {
+  const DEST = 'E:/music';
+
+  it('accepts Windows-style server paths with backslashes', () => {
+    // Regression: path.normalize() on Windows converts forward slashes to backslashes,
+    // which could produce mixed separators and break the path traversal check.
+    const serverPath = 'E:\\\\music\\\\Artist\\\\Album\\\\track.mp3';
+    const serverRoot = 'E:\\\\music';
+    expect(() => buildDestinationPath(serverPath, serverRoot, DEST)).not.toThrow();
+  });
+
+  it('normalizes output to POSIX forward slashes regardless of input style', () => {
+    const serverPath = 'E:\\\\music\\\\Artist\\\\Album\\\\track.mp3';
+    const serverRoot = 'E:\\\\music';
+    const result = buildDestinationPath(serverPath, serverRoot, DEST);
+    // Result should use forward slashes for cross-platform consistency
+    expect(result).toContain('/');
+    expect(result).not.toContain('\\\\');
+  });
+});

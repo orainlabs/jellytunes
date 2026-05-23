@@ -377,17 +377,19 @@ export function buildDestinationPath(
   // Strip trailing separators so we can safely append path.sep for prefix checking
   const normalizedRoot = path.normalize(serverRootPath).replace(/[\/\\]$/, '');
 
+  // Normalize to POSIX for cross-platform comparison (Windows backslash → forward slash)
+  // Collapse multiple backslashes to single forward slash to avoid double-slash issues
+  const serverPosix = normalizedServer.replace(/\\+/g, '/');
+  const rootPosix = normalizedRoot.replace(/\\+/g, '/');
+
   // Verify serverPath is actually under serverRootPath (not just a substring match)
-  const rootWithSep = normalizedRoot + path.sep;
-  if (!normalizedServer.startsWith(rootWithSep) && normalizedServer !== normalizedRoot) {
+  const rootWithSep = rootPosix + '/';
+  if (!serverPosix.startsWith(rootWithSep) && serverPosix !== rootPosix) {
     throw new Error(`Path traversal detected: ${serverPath} is not under ${serverRootPath}`);
   }
 
   // Use path.posix.relative to ensure POSIX-style separators (always /) regardless of platform
-  const relativePath = path.posix.relative(
-    normalizedRoot.replace(/\\/g, '/'),
-    normalizedServer.replace(/\\/g, '/'),
-  );
+  const relativePath = path.posix.relative(rootPosix, serverPosix);
 
   if (hasTraversalSegment(relativePath)) {
     throw new Error(`Invalid path: path traversal attempt detected in "${relativePath}"`);

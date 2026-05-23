@@ -75,18 +75,32 @@ jobs:
           const unpackedDir = path.join(__dirname, 'release', 'win-unpacked', 'resources', 'app.asar.unpacked');
           let ffmpegPath = null;
 
-          // Search for ffmpeg.exe in unpacked directory
+          // Search for ffmpeg.exe in unpacked directory using Node.js fs module
+          // (avoids shell injection risk from PowerShell interpolation)
           function findFfmpeg(dir) {
-            try {
-              const { execSync } = require('child_process');
-              const result = execSync(
-                `Get-ChildItem -Path "${dir}" -Recurse -Filter "ffmpeg.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName`,
-                { encoding: 'utf8', shell: 'powershell.exe' }
-              );
-              return result.trim();
-            } catch {
+            const fs = require('fs');
+            const { readdirSync, statSync } = fs;
+
+            function search(currentDir) {
+              try {
+                const entries = readdirSync(currentDir, { withFileTypes: true });
+                for (const entry of entries) {
+                  const fullPath = path.join(currentDir, entry.name);
+                  if (entry.name === 'ffmpeg.exe') {
+                    return fullPath;
+                  }
+                  if (entry.isDirectory()) {
+                    const found = search(fullPath);
+                    if (found) return found;
+                  }
+                }
+              } catch {
+                // Ignore permission denied or other errors
+              }
               return null;
             }
+
+            return search(dir);
           }
 
           ffmpegPath = findFfmpeg(unpackedDir);
@@ -118,11 +132,14 @@ jobs:
           console.log('sourcePath:', sourcePath);
           console.log('tempPath:', tempPath);
 
-          if (!sourcePath.startsWith(tmp)) {
+          // Use case-insensitive comparison to handle Windows case variations
+          // (e.g., C:\Users\user vs c:\users\user)
+          const normalizedTmp = tmp.toLowerCase();
+          if (!sourcePath.toLowerCase().startsWith(normalizedTmp)) {
             console.error('FAIL: sourcePath does not start with os.tmpdir()');
             process.exit(1);
           }
-          if (!tempPath.startsWith(tmp)) {
+          if (!tempPath.toLowerCase().startsWith(normalizedTmp)) {
             console.error('FAIL: tempPath does not start with os.tmpdir()');
             process.exit(1);
           }
@@ -138,9 +155,8 @@ jobs:
 
           // 4. Verify FFmpeg binary is actually executable on Windows
           try {
-            // Use quoted path for executables with spaces
-            const quotedPath = '"' + ffmpegPath + '"';
-            const version = execSync(quotedPath + ' -version', { encoding: 'utf8', timeout: 10000 });
+            // Use array form to avoid quoting edge cases with trailing backslash
+            const version = execSync([ffmpegPath, '-version'], { encoding: 'utf8', timeout: 10000 });
             if (!version.includes('ffmpeg')) {
               console.error('FAIL: FFmpeg -version output unexpected:', version.slice(0, 200));
               process.exit(1);
