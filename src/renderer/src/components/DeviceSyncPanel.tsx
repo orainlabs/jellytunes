@@ -67,6 +67,7 @@ interface DeviceSyncPanelProps {
   onToggleConvert: () => void;
   onBitrateChange: (b: Bitrate) => void;
   onCoverArtModeChange: (m: CoverArtMode) => void;
+  onLyricsModeChange: (m: LyricsMode) => void;
   onStartSync: () => void;
   onCancelSync: () => void;
   onCancelPreview: () => void;
@@ -116,6 +117,7 @@ export function DeviceSyncPanel({
   onToggleConvert,
   onBitrateChange,
   onCoverArtModeChange,
+  onLyricsModeChange,
   onStartSync,
   onCancelSync,
   onCancelPreview,
@@ -491,6 +493,30 @@ export function DeviceSyncPanel({
                   className={`px-2.5 py-1 text-label-sm rounded-lg disabled:cursor-default disabled:opacity-50 ${coverArtMode === m ? 'bg-primary_container text-on_primary_container' : 'bg-surface_container_highest text-on_surface hover:bg-surface_bright'}`}
                 >
                   {m === 'off' ? 'None' : m === 'embed' ? 'Embedded' : 'Folder image'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Lyrics Mode */}
+          <div className="bg-surface_container_low rounded-xl p-4 border border-outline_variant mb-4">
+            <span className="text-body-md font-medium">Lyrics</span>
+            <p className="text-caption text-on_surface_variant mt-0.5">
+              {lyricsMode === 'off'
+                ? 'No lyrics'
+                : lyricsMode === 'embed'
+                  ? 'Lyrics embedded in audio file'
+                  : 'Synced lyrics saved as .lrc file alongside each track'}
+            </p>
+            <div className="flex items-center gap-2 mt-3">
+              {(['off', 'lrc', 'embed'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => onLyricsModeChange(m)}
+                  disabled={isSyncing}
+                  className={`px-2.5 py-1 text-label-sm rounded-lg disabled:cursor-default disabled:opacity-50 ${lyricsMode === m ? 'bg-primary_container text-on_primary_container' : 'bg-surface_container_highest text-on_surface hover:bg-surface_bright'}`}
+                >
+                  {m === 'off' ? 'Off' : m === 'embed' ? 'Embed' : 'LRC'}
                 </button>
               ))}
             </div>

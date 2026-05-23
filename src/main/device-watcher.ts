@@ -35,7 +35,12 @@ const MAX_ATTACH_RETRIES = 60;
 const ATTACH_RETRY_INTERVAL_MS = 500;
 
 // Lazy-loaded usb-detection — may fail to load if Electron ABI doesn't match prebuilt
-type UsbDetection = typeof import('usb-detection');
+interface UsbDetection {
+  startMonitoring: () => void;
+  stopMonitoring: () => void;
+  on: (event: string, callback: (device: { device: string; deviceName: string }) => void) => void;
+  findAll: () => Promise<Array<{ device: string }>>;
+}
 let usbDetection: UsbDetection | null = null;
 
 async function tryLoadUsbDetection(): Promise<boolean> {
@@ -44,9 +49,10 @@ async function tryLoadUsbDetection(): Promise<boolean> {
     // usb-detection is a CJS module (module.exports = detector).
     // In Electron's main process, dynamic import() wraps it as { default: detector },
     // so startMonitoring lives on .default. In test mocks it lives directly on mod.
-    const detection: UsbDetection = (
-      typeof mod.startMonitoring === 'function' ? mod : (mod as any).default
-    ) as UsbDetection;
+    const hasDirectApi = typeof mod.startMonitoring === 'function';
+    const detection: UsbDetection = hasDirectApi
+      ? (mod as unknown as UsbDetection)
+      : (mod as unknown as { default: UsbDetection }).default;
     if (typeof detection.startMonitoring !== 'function' || typeof detection.on !== 'function') {
       log.warn(
         'usb-detection loaded but API is invalid (possible ABI mismatch with Electron), falling back to polling',

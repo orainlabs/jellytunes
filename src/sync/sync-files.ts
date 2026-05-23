@@ -16,9 +16,22 @@ import { resolveFFmpegPath } from './ffmpeg-path';
  */
 export function sanitizeMetadataField(value: string, maxLength = 500): string {
   if (!value) return '';
-  // Remove control characters (0x00-0x1F and 0x7F)
+  // Remove control characters (0x00-0x1F and 0x7F) — EXCLUDES newlines (LF=0x0A, CR=0x0D)
   // eslint-disable-next-line no-control-regex
-  const cleaned = value.replace(/[\x00-\x1F\x7F]/g, '');
+  const cleaned = value.replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return cleaned.trim().slice(0, maxLength);
+}
+
+/**
+ * Sanitize a lyrics field — preserves newlines (LF/CR) for LRC multi-line content.
+ * ID3v2 USLT supports multi-line content and FFmpeg handles it correctly.
+ * Removes other control characters, trims whitespace, and enforces a maximum length.
+ */
+export function sanitizeLyricsField(value: string, maxLength = 500): string {
+  if (!value) return '';
+  // Remove control characters EXCEPT newline (LF=0x0A) and carriage return (CR=0x0D)
+  // eslint-disable-next-line no-control-regex
+  const cleaned = value.replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]/g, '');
   return cleaned.trim().slice(0, maxLength);
 }
 
@@ -772,7 +785,7 @@ export function createFFmpegConverter(): AudioConverter {
       });
     },
 
-    embedLyrics: async (inputPath, outputPath, lyrics) => {
+    embedLyrics: async (inputPath, outputPath, lyrics, format) => {
       assertFilesystemPath(inputPath, 'inputPath');
       assertFilesystemPath(outputPath, 'outputPath');
       const { spawn } = require('child_process');
@@ -781,7 +794,10 @@ export function createFFmpegConverter(): AudioConverter {
       const path = require('path');
 
       return new Promise((resolve) => {
-        const ext = path.extname(inputPath).toLowerCase();
+        // Use explicit format parameter if provided, otherwise derive from input path
+        const ext = format
+          ? `.${format.replace(/^\./, '')}`
+          : path.extname(inputPath).toLowerCase();
         const useTempOutput = inputPath === outputPath;
         const tempOutputPath = useTempOutput
           ? `${os.tmpdir()}/jt-lyrics-${Date.now()}${ext}`
@@ -790,19 +806,20 @@ export function createFFmpegConverter(): AudioConverter {
         const args: string[] = ['-i', inputPath];
 
         // Format-specific metadata tag for lyrics:
-        // - MP3: Use SYLT (synchronized lyrics) for timestamp support, fallback to USLT
+        // - MP3: Use USLT (unsynchronized lyrics) via -metadata lyrics=... (FFmpeg cannot write SYLT)
         // - FLAC: LYRICS (Vorbis Comment)
         // - M4A/AAC: ©lyr
-        const safeLyrics = sanitizeMetadataField(lyrics, 5000);
+        const safeLyrics = sanitizeLyricsField(lyrics, 5000);
         if (ext === '.mp3') {
-          // FFmpeg embeds SYLT via -metadata:sync lyrics=... for timestamp support
-          args.push('-metadata:sync', `lyrics=${safeLyrics}`);
+          // MP3 uses USLT (unsynchronized text lyrics) via -metadata lyrics=...
+          args.push('-metadata', `lyrics=${safeLyrics}`);
         } else if (ext === '.flac') {
           // FLAC uses LYRICS Vorbis Comment tag
           args.push('-metadata', `lyrics=${safeLyrics}`);
         } else if (ext === '.m4a' || ext === '.aac') {
-          // M4A/AAC use ©lyr (copyright symbol + lyr)
-          args.push('-metadata', `©lyr=${safeLyrics}`);
+          // M4A/AAC: FFmpeg maps `-metadata lyrics=...` to the ©lyr (iTunes) atom.
+          // The raw atom name `©lyr=` is silently ignored — must use `lyrics` key.
+          args.push('-metadata', `lyrics=${safeLyrics}`);
         } else {
           // Generic fallback for other formats
           args.push('-metadata', `lyrics=${safeLyrics}`);
@@ -812,17 +829,18 @@ export function createFFmpegConverter(): AudioConverter {
 
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
 
-        let _stderr = '';
+        let stderr = '';
         proc.stderr.on('data', (chunk: Buffer) => {
-          _stderr += chunk.toString();
+          stderr += chunk.toString();
         });
 
         proc.on('error', (err: Error) => {
           if (useTempOutput)
             try {
               fs.unlinkSync(tempOutputPath);
-            } catch {
-              /* ignore */
+            } catch (cleanupError) {
+              // Log but don't fail - primary operation already failed
+              console.warn(`[embedLyrics] Failed to clean up temp file: ${cleanupError}`);
             }
           resolve({ success: false, error: `FFmpeg error: ${err.message}` });
         });
@@ -834,8 +852,9 @@ export function createFFmpegConverter(): AudioConverter {
                 fs.unlinkSync(outputPath);
               }
               fs.renameSync(tempOutputPath, outputPath);
-            } catch {
-              /* ignore */
+            } catch (cleanupError) {
+              resolve({ success: false, error: `Failed to finalize lyrics: ${cleanupError}` });
+              return;
             }
             resolve({ success: true });
             return;
@@ -844,14 +863,15 @@ export function createFFmpegConverter(): AudioConverter {
             if (useTempOutput)
               try {
                 fs.unlinkSync(tempOutputPath);
-              } catch {
-                /* ignore */
+              } catch (cleanupError) {
+                // Log but don't block the error response
+                console.warn(`[embedLyrics] Failed to clean up temp file: ${cleanupError}`);
               }
+            resolve({
+              success: false,
+              error: code !== 0 ? `FFmpeg exited with code ${code}: ${stderr}` : undefined,
+            });
           }
-          resolve({
-            success: code === 0,
-            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
-          });
         });
       });
     },

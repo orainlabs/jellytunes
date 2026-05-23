@@ -38,8 +38,8 @@ const createPagination = (): PaginationState => ({
 });
 
 const sampleArtists: Artist[] = [
-  { Id: 'artist-1', Name: 'The Beatles', AlbumCount: 13 },
-  { Id: 'artist-2', Name: 'Pink Floyd', AlbumCount: 15 },
+  { Id: 'artist-1', Name: 'The Beatles', ChildCount: 13 },
+  { Id: 'artist-2', Name: 'Pink Floyd', ChildCount: 15 },
 ];
 
 const defaultProps = {
@@ -81,7 +81,7 @@ describe('LibraryContent', () => {
   // 2. search active with 2+ chars: shows search results
   it('shows search results when search query has 2+ characters', async () => {
     const searchResults = {
-      artists: [{ Id: 'search-1', Name: 'Search Result Artist', AlbumCount: 5 }] as Artist[],
+      artists: [{ Id: 'search-1', Name: 'Search Result Artist', ChildCount: 5 }] as Artist[],
       albums: [] as Album[],
       playlists: [] as Playlist[],
     };

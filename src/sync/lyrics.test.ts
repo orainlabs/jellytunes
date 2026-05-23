@@ -240,12 +240,119 @@ describe('embedLyrics FFmpeg integration', () => {
       // (if bug exists, unlinkedFiles would contain a jt-lrc- file)
       const deletedTempFiles = unlinkedFiles.filter((f) => f.includes('jt-lrc-'));
       expect(deletedTempFiles).toHaveLength(0);
+
+      // Verify correct metadata flags are present
+      const metadataIdx = ffmpegCall!.indexOf('-metadata');
+      expect(metadataIdx).toBeGreaterThan(-1);
+      const lyricsArg = ffmpegCall![metadataIdx + 1];
+      expect(lyricsArg).toMatch(/^lyrics=/);
+      // Verify lyrics value contains our test content
+      expect(lyricsArg).toContain('Test lyrics');
+
+      // Verify NOT using the invalid `-metadata:sync` syntax
+      const invalidSyncArgs = ffmpegCall!.filter((arg) => arg.startsWith('-metadata:sync'));
+      expect(invalidSyncArgs).toHaveLength(0);
     } finally {
       // Restore
       fs.unlinkSync = originalUnlinkSync;
       if (originalSpawn) {
         childProcess.spawn = originalSpawn;
       }
+    }
+  });
+  it('embedLyrics for M4A uses "lyrics=" metadata key, not "©lyr"', async () => {
+    // Bug: sync-files.ts line 819 uses `-metadata ©lyr=...` for M4A/AAC,
+    // but FFmpeg silently ignores the ©lyr key — lyrics never get written.
+    // Fix: use `-metadata lyrics=...` which FFmpeg correctly maps to ©lyr atom.
+    const { createFFmpegConverter } = await import('./sync-files');
+    const converter = createFFmpegConverter();
+
+    const childProcess = require('child_process');
+    const spawnArgs: string[][] = [];
+    const originalSpawn = childProcess.spawn;
+    childProcess.spawn = function (_cmd: string, args: string[], _opts: any) {
+      spawnArgs.push(args);
+      const mockProc = {
+        on: function (event: string, cb: (arg: number | Error) => void) {
+          if (event === 'close') setTimeout(() => cb(0), 0);
+          if (event === 'error') setTimeout(() => cb(new Error('mock')), 0);
+          return mockProc;
+        },
+        emit: () => mockProc,
+        removeAllListeners: () => mockProc,
+        kill: () => {},
+        stderr: { on: () => {} },
+      };
+      return mockProc;
+    } as typeof childProcess.spawn;
+
+    try {
+      await converter.embedLyrics('/input.m4a', '/output.m4a', '[00:00]M4A lyrics', 'm4a');
+
+      const ffmpegCall = spawnArgs.find(
+        (args) => args.includes('-i') && args.includes('/input.m4a'),
+      );
+      expect(ffmpegCall).toBeDefined();
+
+      // Find metadata arg for lyrics
+      const metadataIdx = ffmpegCall!.indexOf('-metadata');
+      expect(metadataIdx).toBeGreaterThan(-1);
+      const lyricsArg = ffmpegCall![metadataIdx + 1];
+
+      // CORRECT: use `lyrics=` — FFmpeg maps this to ©lyr atom in MP4 container
+      expect(lyricsArg).toMatch(/^lyrics=/);
+      expect(lyricsArg).toContain('M4A lyrics');
+
+      // WRONG: ©lyr key is silently ignored by FFmpeg — verify we're NOT using it
+      const invalidCpyrArgs = ffmpegCall!.filter((arg) => arg.startsWith('©lyr='));
+      expect(invalidCpyrArgs).toHaveLength(0);
+    } finally {
+      childProcess.spawn = originalSpawn;
+    }
+  });
+
+  it('embedLyrics for AAC uses "lyrics=" metadata key, not "©lyr"', async () => {
+    const { createFFmpegConverter } = await import('./sync-files');
+    const converter = createFFmpegConverter();
+
+    const childProcess = require('child_process');
+    const spawnArgs: string[][] = [];
+    const originalSpawn = childProcess.spawn;
+    childProcess.spawn = function (_cmd: string, args: string[], _opts: any) {
+      spawnArgs.push(args);
+      const mockProc = {
+        on: function (event: string, cb: (arg: number | Error) => void) {
+          if (event === 'close') setTimeout(() => cb(0), 0);
+          if (event === 'error') setTimeout(() => cb(new Error('mock')), 0);
+          return mockProc;
+        },
+        emit: () => mockProc,
+        removeAllListeners: () => mockProc,
+        kill: () => {},
+        stderr: { on: () => {} },
+      };
+      return mockProc;
+    } as typeof childProcess.spawn;
+
+    try {
+      await converter.embedLyrics('/input.aac', '/output.aac', '[00:00]AAC lyrics', 'aac');
+
+      const ffmpegCall = spawnArgs.find(
+        (args) => args.includes('-i') && args.includes('/input.aac'),
+      );
+      expect(ffmpegCall).toBeDefined();
+
+      const metadataIdx = ffmpegCall!.indexOf('-metadata');
+      expect(metadataIdx).toBeGreaterThan(-1);
+      const lyricsArg = ffmpegCall![metadataIdx + 1];
+
+      expect(lyricsArg).toMatch(/^lyrics=/);
+      expect(lyricsArg).toContain('AAC lyrics');
+
+      const invalidCpyrArgs = ffmpegCall!.filter((arg) => arg.startsWith('©lyr='));
+      expect(invalidCpyrArgs).toHaveLength(0);
+    } finally {
+      childProcess.spawn = originalSpawn;
     }
   });
 });

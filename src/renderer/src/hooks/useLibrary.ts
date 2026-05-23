@@ -9,7 +9,14 @@ import type {
   LibraryTab,
   ItemTypeIndex,
 } from '../appTypes';
-import { jellyfinHeaders, buildUrl, PAGE_SIZE } from '../utils/jellyfin';
+import {
+  jellyfinHeaders,
+  buildUrl,
+  PAGE_SIZE,
+  normalizeArtist,
+  normalizeAlbum,
+  normalizePlaylist,
+} from '../utils/jellyfin';
 import { logger } from '../utils/logger';
 
 export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string | null) {
@@ -42,20 +49,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
   });
 
   const contentScrollRef = useRef<HTMLDivElement>(null);
-
-  // Map: lowercased artist name → Set<albumId> for bidirectional sync inference
-  const [artistAlbumMap, setArtistAlbumMap] = useState<Map<string, Set<string>>>(new Map());
-
-  const buildArtistAlbumMap = (_artistList: Artist[], albumList: Album[]) => {
-    const map = new Map<string, Set<string>>();
-    for (const album of albumList) {
-      if (!album.AlbumArtist) continue;
-      const key = album.AlbumArtist.toLowerCase();
-      if (!map.has(key)) map.set(key, new Set());
-      map.get(key)!.add(album.Id);
-    }
-    setArtistAlbumMap(map);
-  };
 
   const loadStats = async (url: string, apiKey: string, uid: string): Promise<void> => {
     const headers = jellyfinHeaders(apiKey);
@@ -117,7 +110,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     });
   };
 
-  const loadLibrary = async (url: string, apiKey: string, _uid: string): Promise<void> => {
+  const loadLibrary = async (url: string, apiKey: string, uid: string): Promise<void> => {
     const headers = jellyfinHeaders(apiKey);
     const baseUrl = url.replace(/\/$/, '');
 
@@ -130,12 +123,15 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
 
     try {
       const res = await fetch(
-        buildUrl(baseUrl, `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0`),
+        buildUrl(
+          baseUrl,
+          `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=AlbumCount,RunTimeTicks,ChildCount`,
+        ),
         { headers },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const items: Artist[] = data.Items || [];
+      const items: Artist[] = (data.Items || []).map(normalizeArtist);
       setArtists(items);
       itemTypeIndexRef.current.artists = new Set(items.map((a) => a.Id));
       updateArtistIndex(items);
@@ -160,13 +156,13 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       const res = await fetch(
         buildUrl(
           baseUrl,
-          `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`,
+          `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${uid}`,
         ),
         { headers },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const items: Album[] = data.Items || [];
+      const items: Album[] = (data.Items || []).map(normalizeAlbum);
       setAlbums(items);
       itemTypeIndexRef.current.albums = new Set(items.map((a) => a.Id));
       updateAlbumIndex(items);
@@ -190,13 +186,13 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       const res = await fetch(
         buildUrl(
           baseUrl,
-          `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`,
+          `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${uid}`,
         ),
         { headers },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const items: Playlist[] = data.Items || [];
+      const items: Playlist[] = (data.Items || []).map(normalizePlaylist);
       setPlaylists(items);
       itemTypeIndexRef.current.playlists = new Set(items.map((p) => p.Id));
       updatePlaylistIndex(items);
@@ -224,13 +220,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     });
   };
 
-  // Rebuild artist→album map whenever artists or albums change
-  useEffect(() => {
-    if (artists.length > 0 && albums.length > 0) {
-      buildArtistAlbumMap(artists, albums);
-    }
-  }, [artists, albums]);
-
   const loadTab = async (tab: LibraryTab): Promise<void> => {
     if (!jellyfinConfig || !userId) return;
     const headers = jellyfinHeaders(jellyfinConfig.apiKey);
@@ -250,12 +239,15 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     try {
       if (tab === 'artists') {
         const res = await fetch(
-          buildUrl(baseUrl, `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0`),
+          buildUrl(
+            baseUrl,
+            `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=AlbumCount,RunTimeTicks,ChildCount`,
+          ),
           { headers },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const items: Artist[] = data.Items || [];
+        const items: Artist[] = (data.Items || []).map(normalizeArtist);
         setArtists(items);
         updateArtistIndex(items);
         const totalCount = data.TotalRecordCount || items.length;
@@ -273,13 +265,13 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         const res = await fetch(
           buildUrl(
             baseUrl,
-            `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`,
+            `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`,
           ),
           { headers },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const items: Album[] = data.Items || [];
+        const items: Album[] = (data.Items || []).map(normalizeAlbum);
         setAlbums(items);
         updateAlbumIndex(items);
         const totalCount = data.TotalRecordCount || items.length;
@@ -297,13 +289,13 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         const res = await fetch(
           buildUrl(
             baseUrl,
-            `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`,
+            `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`,
           ),
           { headers },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const items: Playlist[] = data.Items || [];
+        const items: Playlist[] = (data.Items || []).map(normalizePlaylist);
         setPlaylists(items);
         updatePlaylistIndex(items);
         const totalCount = data.TotalRecordCount || items.length;
@@ -338,18 +330,24 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       try {
         let endpoint = '';
         if (type === 'artists')
-          endpoint = `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}`;
+          endpoint = `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
         else if (type === 'albums')
-          endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`;
+          endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else
-          endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`;
+          endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
         const res = await fetch(buildUrl(baseUrl, endpoint), { headers });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const newItems: Array<Artist | Album | Playlist> = data.Items || [];
+        const rawItems: Array<Record<string, unknown>> = data.Items || [];
+        const normalized =
+          type === 'artists'
+            ? rawItems.map(normalizeArtist)
+            : type === 'albums'
+              ? rawItems.map(normalizeAlbum)
+              : rawItems.map(normalizePlaylist);
         const existingIds = new Set(currentPagination.items.map((item) => item.Id));
-        const uniqueNewItems = newItems.filter((item) => !existingIds.has(item.Id));
+        const uniqueNewItems = normalized.filter((item) => !existingIds.has(item.Id));
 
         if (type === 'artists') updateArtistIndex(uniqueNewItems as Artist[]);
         else if (type === 'albums') updateAlbumIndex(uniqueNewItems as Album[]);
@@ -452,18 +450,24 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       while (hasMore) {
         let endpoint = '';
         if (type === 'artists')
-          endpoint = `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}`;
+          endpoint = `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
         else if (type === 'albums')
-          endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`;
+          endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else
-          endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`;
+          endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
         const res = await fetch(buildUrl(baseUrl, endpoint), { headers });
-        if (!res.ok) break;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const newItems: Array<{ Id: string }> = data.Items || [];
-        newItems.forEach((item) => allIds.add(item.Id));
-        startIndex += newItems.length;
+        const rawItems: Array<Record<string, unknown>> = data.Items || [];
+        const normalized =
+          type === 'artists'
+            ? rawItems.map(normalizeArtist)
+            : type === 'albums'
+              ? rawItems.map(normalizeAlbum)
+              : rawItems.map(normalizePlaylist);
+        normalized.forEach((item) => allIds.add(item.Id));
+        startIndex += normalized.length;
         totalCount = data.TotalRecordCount || totalCount;
         hasMore = startIndex < totalCount;
 
@@ -473,7 +477,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
             ...prev,
             [type]: {
               ...prev[type],
-              items: [...prev[type].items, ...newItems],
+              items: [...prev[type].items, ...normalized],
               startIndex,
               hasMore,
             },
@@ -522,7 +526,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     setError,
     itemTypeIndex,
     itemTypeIndexRef,
-    artistAlbumMap,
     contentScrollRef,
     loadLibrary,
     loadStats,

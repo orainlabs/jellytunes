@@ -23,7 +23,9 @@ export interface JellyfinConfig {
 export interface Artist {
   Id: string;
   Name: string;
-  AlbumCount: number;
+  AlbumCount?: number;
+  ChildCount?: number;
+  RunTimeTicks?: number;
   ImageTags?: { Primary?: string };
 }
 
@@ -33,6 +35,8 @@ export interface Album {
   AlbumArtist?: string;
   ProductionYear?: number;
   PremiereDate?: string;
+  ChildCount?: number;
+  RunTimeTicks?: number;
   ImageTags?: { Primary?: string };
 }
 
@@ -40,6 +44,7 @@ export interface Playlist {
   Id: string;
   Name: string;
   ChildCount?: number;
+  RunTimeTicks?: number;
   ImageTags?: { Primary?: string };
 }
 

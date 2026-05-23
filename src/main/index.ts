@@ -528,9 +528,9 @@ function createWindow(): void {
   });
   const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
   if (is.dev && rendererUrl) {
-    mainWindow.loadURL(rendererUrl);
+    void mainWindow.loadURL(rendererUrl);
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
 }
 

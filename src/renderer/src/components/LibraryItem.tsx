@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { User, Disc, ListMusic } from 'lucide-react';
 import type { Artist, Album, Playlist } from '../appTypes';
+import { formatRunTimeTicks } from '../utils/jellyfin';
 
 interface LibraryItemProps {
   item: Artist | Album | Playlist;
@@ -60,20 +61,43 @@ export function LibraryItem({
   const willDelete = wasSynced && !isSelected;
   const pendingSync = isSelected && !wasSynced;
 
-  const albumCount = (item as Artist).AlbumCount;
+  const artist = item as Artist;
   const album = item as Album;
   const playlist = item as Playlist;
 
-  const subtitle =
-    type === 'artist'
-      ? albumCount !== null
-        ? `${albumCount} album${albumCount !== 1 ? 's' : ''}`
-        : null
-      : type === 'album'
-        ? [album.AlbumArtist, album.ProductionYear].filter(Boolean).join(' · ') || null
-        : playlist.ChildCount !== null
-          ? `${playlist.ChildCount} track${playlist.ChildCount !== 1 ? 's' : ''}`
-          : null;
+  const subtitle = (() => {
+    if (type === 'artist') {
+      const albumCount = artist.ChildCount;
+      const runtime = formatRunTimeTicks(artist.RunTimeTicks);
+      if (albumCount != null && runtime) return `${albumCount} albums · ${runtime}`;
+      if (runtime) return runtime;
+      if (albumCount != null) return `${albumCount} album${albumCount !== 1 ? 's' : ''}`;
+      return null;
+    }
+
+    if (type === 'album') {
+      const parts: string[] = [];
+      if (album.AlbumArtist) parts.push(album.AlbumArtist);
+      if (album.ProductionYear) parts.push(String(album.ProductionYear));
+      if (album.ChildCount != null)
+        parts.push(`${album.ChildCount} track${album.ChildCount !== 1 ? 's' : ''}`);
+      const runtime = formatRunTimeTicks(album.RunTimeTicks);
+      if (runtime) parts.push(runtime);
+      if (parts.length === 0) return null;
+      if (parts.length === 1 && album.AlbumArtist) return album.AlbumArtist;
+      if (parts.length === 2 && album.AlbumArtist && album.ProductionYear)
+        return `${album.AlbumArtist} · ${album.ProductionYear}`;
+      return parts.join(' · ');
+    }
+
+    // type === 'playlist'
+    const trackCount = playlist.ChildCount;
+    const runtime = formatRunTimeTicks(playlist.RunTimeTicks);
+    if (trackCount != null && runtime) return `${trackCount} tracks · ${runtime}`;
+    if (trackCount != null) return `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
+    if (runtime) return runtime;
+    return null;
+  })();
 
   return (
     <div

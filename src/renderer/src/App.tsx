@@ -126,33 +126,37 @@ function App(): JSX.Element {
     const result = new Set(deviceSelections.previouslySyncedItems);
 
     // Rule 1: If an artist is synced, infer all their albums as synced
+    // Use AlbumArtist field on albums to match artist name
     for (const id of deviceSelections.previouslySyncedItems) {
       if (artistIds.has(id)) {
         const artist = extArtists.find((a) => a.Id === id);
         if (artist) {
-          const key = artist.Name.toLowerCase();
-          const albumSet = lib.artistAlbumMap.get(key);
-          if (albumSet) {
-            for (const albumId of albumSet) {
-              if (albumIds.has(albumId)) result.add(albumId);
-            }
+          const matchingAlbums = extAlbums.filter(
+            (a) => a.AlbumArtist?.toLowerCase() === artist.Name.toLowerCase(),
+          );
+          for (const album of matchingAlbums) {
+            if (albumIds.has(album.Id)) result.add(album.Id);
           }
         }
       }
     }
 
-    // Rule 2: If all albums of an artist are synced, infer the artist as synced
-    for (const [artistNameLower, albumSet] of lib.artistAlbumMap) {
-      const artist = extArtists.find((a) => a.Name.toLowerCase() === artistNameLower);
-      if (!artist) continue;
-      const allAlbumIds = [...albumSet].filter((id) => albumIds.has(id));
-      if (allAlbumIds.length === 0) continue;
-      const allSynced = allAlbumIds.every((id) => deviceSelections.previouslySyncedItems.has(id));
-      if (allSynced) result.add(artist.Id);
+    // Rule 2: If all albums of an artist are synced (based on ChildCount), infer the artist as synced
+    for (const artist of extArtists) {
+      // Use ChildCount (number of albums for this artist) from Jellyfin
+      const childCount = artist.ChildCount ?? 0;
+      if (childCount === 0) continue;
+      const matchingAlbums = extAlbums.filter(
+        (a) => a.AlbumArtist?.toLowerCase() === artist.Name.toLowerCase(),
+      );
+      const syncedCount = matchingAlbums.filter((a) =>
+        deviceSelections.previouslySyncedItems.has(a.Id),
+      ).length;
+      if (syncedCount >= childCount) result.add(artist.Id);
     }
 
     return result;
-  }, [deviceSelections.previouslySyncedItems, extArtists, extAlbums, lib.artistAlbumMap]);
+  }, [deviceSelections.previouslySyncedItems, extArtists, extAlbums]);
 
   useEffect(() => {
     if (activeSection === 'library' && connection.jellyfinConfig && connection.userId) {
@@ -515,6 +519,7 @@ function App(): JSX.Element {
                   )?.id;
                   if (destId) saveDestPrefs(destId, { coverArtMode: m });
                 }}
+                onLyricsModeChange={(m) => sync.setLyricsMode(m)}
                 onStartSync={sync.handleStartSync}
                 onCancelSync={sync.handleCancelSync}
                 onCancelPreview={() => sync.setShowPreview(false)}

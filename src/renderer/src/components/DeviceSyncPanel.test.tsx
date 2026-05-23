@@ -78,6 +78,7 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     onConfirmSync: vi.fn(),
     onRemoveDestination: vi.fn(),
     lyricsMode: 'off' as const,
+    onLyricsModeChange: vi.fn(),
     hasFlacOrM4a: false,
     ...overrides,
   };
@@ -298,6 +299,76 @@ describe('DeviceSyncPanel', () => {
       await renderPanelAndSettle({ showPreview: true, previewData, onCancelPreview });
       await userEvent.click(screen.getByTestId('cancel-preview-button'));
       expect(onCancelPreview).toHaveBeenCalled();
+    });
+  });
+
+  describe('lyrics mode', () => {
+    it('shows lyrics section', async () => {
+      await renderPanelAndSettle();
+      expect(screen.getByText('Lyrics')).toBeInTheDocument();
+    });
+
+    it('shows three lyrics mode buttons: Off, LRC, Embed', async () => {
+      await renderPanelAndSettle();
+      expect(screen.getByRole('button', { name: 'Off' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'LRC' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Embed' })).toBeInTheDocument();
+    });
+
+    it('calls onLyricsModeChange with "off" when Off is clicked', async () => {
+      const onLyricsModeChange = vi.fn();
+      await renderPanelAndSettle({ lyricsMode: 'lrc', onLyricsModeChange });
+      await userEvent.click(screen.getByRole('button', { name: 'Off' }));
+      expect(onLyricsModeChange).toHaveBeenCalledWith('off');
+    });
+
+    it('calls onLyricsModeChange with "lrc" when LRC is clicked', async () => {
+      const onLyricsModeChange = vi.fn();
+      await renderPanelAndSettle({ lyricsMode: 'off', onLyricsModeChange });
+      await userEvent.click(screen.getByRole('button', { name: 'LRC' }));
+      expect(onLyricsModeChange).toHaveBeenCalledWith('lrc');
+    });
+
+    it('calls onLyricsModeChange with "embed" when Embed is clicked', async () => {
+      const onLyricsModeChange = vi.fn();
+      await renderPanelAndSettle({ lyricsMode: 'off', onLyricsModeChange });
+      await userEvent.click(screen.getByRole('button', { name: 'Embed' }));
+      expect(onLyricsModeChange).toHaveBeenCalledWith('embed');
+    });
+
+    it('shows description for "off" mode', async () => {
+      await renderPanelAndSettle({ lyricsMode: 'off' });
+      expect(screen.getByText('No lyrics')).toBeInTheDocument();
+    });
+
+    it('shows description for "lrc" mode', async () => {
+      await renderPanelAndSettle({ lyricsMode: 'lrc' });
+      expect(screen.getByText(/synced lyrics.*\.lrc file/i)).toBeInTheDocument();
+    });
+
+    it('shows description for "embed" mode', async () => {
+      await renderPanelAndSettle({ lyricsMode: 'embed' });
+      expect(screen.getByText('Lyrics embedded in audio file')).toBeInTheDocument();
+    });
+
+    it('buttons are disabled when isSyncing is true', async () => {
+      await renderPanelAndSettle({ isSyncing: true });
+      expect(screen.getByRole('button', { name: 'Off' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'LRC' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Embed' })).toBeDisabled();
+    });
+
+    it('active button has different styling than inactive buttons', async () => {
+      await renderPanelAndSettle({ lyricsMode: 'lrc' });
+      // Active button (lrc) has bg-primary_container
+      expect(screen.getByRole('button', { name: 'LRC' })).toHaveClass('bg-primary_container');
+      // Inactive buttons (off, embed) have bg-surface_container_highest
+      expect(screen.getByRole('button', { name: 'Off' })).toHaveClass(
+        'bg-surface_container_highest',
+      );
+      expect(screen.getByRole('button', { name: 'Embed' })).toHaveClass(
+        'bg-surface_container_highest',
+      );
     });
   });
 
