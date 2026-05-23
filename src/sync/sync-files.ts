@@ -19,7 +19,6 @@ import { resolveFFmpegPath } from './ffmpeg-path';
 export function sanitizeMetadataField(value: string, maxLength = 500): string {
   if (!value) return '';
   // Remove control characters (0x00-0x1F and 0x7F) — EXCLUDES newlines (LF=0x0A, CR=0x0D)
-  // eslint-disable-next-line no-control-regex
   const cleaned = value.replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]/g, '');
   return cleaned.trim().slice(0, maxLength);
 }
@@ -32,7 +31,6 @@ export function sanitizeMetadataField(value: string, maxLength = 500): string {
 export function sanitizeLyricsField(value: string, maxLength = 500): string {
   if (!value) return '';
   // Remove control characters EXCEPT newline (LF=0x0A) and carriage return (CR=0x0D)
-  // eslint-disable-next-line no-control-regex
   const cleaned = value.replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]/g, '');
   return cleaned.trim().slice(0, maxLength);
 }
@@ -952,7 +950,6 @@ export function sanitizeFilename(filename: string): string {
   return (
     filename
       .replace(/[<>:"/\\|?*]/g, '_')
-      // eslint-disable-next-line no-control-regex
       .replace(/[^\x00-\x7F]/g, (c) => c) // Keep unicode characters
       .slice(0, 255)
   ); // Max filename length
