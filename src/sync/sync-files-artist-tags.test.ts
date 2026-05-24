@@ -143,7 +143,7 @@ describe('Artist and AlbumArtist metadata', () => {
       const metadata: TrackMetadata = callArgs[3];
 
       // albumArtist should be undefined when not provided by Jellyfin
-expect(metadata.albumArtist ?? undefined).toBeUndefined();
+      expect(metadata.albumArtist ?? undefined).toBeUndefined();
     });
 
     it('passes artist and albumArtist to tagFile for non-MP3 formats', async () => {
@@ -217,7 +217,7 @@ expect(metadata.albumArtist ?? undefined).toBeUndefined();
       const metadata: TrackMetadata = callArgs[2];
 
       // Empty string is falsy - should not be present in metadata
-expect(metadata.albumArtist ?? undefined).toBeUndefined();
+      expect(metadata.albumArtist ?? undefined).toBeUndefined();
     });
   });
 

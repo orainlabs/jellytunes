@@ -3,8 +3,6 @@
  * Tests for fetchLyrics API, embedding by format, LRC sidecar, and fallback behavior.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- Test mocks intentionally use any types */
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createApiClient, ApiError, createMockApiClient } from './sync-api';
 import { createMockConverter, createMockFileSystem } from './sync-files';

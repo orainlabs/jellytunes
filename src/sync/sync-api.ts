@@ -580,6 +580,7 @@ export function parseLyricsResponse(responseText: string): string {
       return (parsed.Lyrics as unknown[])
         .filter(
           (line): line is { Start?: number; Text?: string } =>
+            // eslint-disable-next-line eqeqeq -- != null intentionally checks both null and undefined
             line != null && typeof line === 'object',
         )
         .map((line: { Start?: number; Text?: string }) => {

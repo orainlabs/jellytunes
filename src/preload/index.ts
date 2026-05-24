@@ -284,9 +284,9 @@ if (process.contextIsolated) {
     // contextBridge setup failed — nothing we can do here, app will not function
   }
 } else {
-// Electron renderer context (non-browser) — window types are not available
+  // Electron renderer context (non-browser) — window types are not available
 
-   window.electron = electronAPI;
+  window.electron = electronAPI;
 
   window.api = api;
 }

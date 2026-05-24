@@ -17,14 +17,13 @@ beforeEach(() => {
     logInfo: vi.fn(),
     getLogPath: vi.fn().mockResolvedValue('/mock/log'),
   };
-// @ts-expect-error — Mocking window.api for test environment
+  // @ts-expect-error — Mocking window.api for test environment
   window.api = mockApi;
 });
 
 describe('AboutModal', () => {
   it('loads analytics preference on mount', async () => {
     render(<AboutModal onClose={vi.fn()} />);
-// @ts-expect-error — Mocking window.api for test environment
     await waitFor(() => {
       expect(window.api.getPreferences).toHaveBeenCalled();
     });

@@ -1668,7 +1668,9 @@ class SyncCoreImpl {
     return {
       title: track.name,
       artist: track.artists?.join('; '),
-      albumArtist: track.albumArtist || undefined,
+      albumArtist:
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Empty string must become undefined, not empty string
+        track.albumArtist || undefined,
       album: track.album,
       year: track.year?.toString(),
       trackNumber: track.trackNumber !== undefined ? String(track.trackNumber) : undefined,

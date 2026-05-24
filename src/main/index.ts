@@ -7,7 +7,6 @@ import * as os from 'os';
 
 // Import new sync module
 import { createSyncCore, createApiClient, type CoverArtMode } from '../sync';
-import type { FilesystemType } from '../sync/types';
 
 // Import database
 import {
@@ -304,7 +303,8 @@ function detectAudioFormat(filePath: string): string {
 import * as path from 'path';
 
 let isSyncCancelled = false;
-let activeSyncCore: Awaited<ReturnType<typeof createSyncCore>> | null = null;
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+let activeSyncCore: import('../sync').SyncCore | null = null;
 
 // Helper to extract server root from a file path
 // Example: /mediamusic/lib/lib/4 Strings/Album/track.flac -> /mediamusic/lib/lib/
@@ -733,81 +733,69 @@ ipcMain.handle('sync:start', async (_event, options) => {
 });
 
 // New sync:start2 handler - uses SyncCore for proper path resolution
-ipcMain.handle(
-  'sync:start2',
-  async (
-    _event,
-    options: {
-      serverUrl: string;
-      apiKey: string;
-      userId: string;
-      itemIds: string[];
-      itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
-      itemNames?: Record<string, string>;
-      destinationPath: string;
-      options?: {
-        convertToMp3?: boolean;
-        bitrate?: '128k' | '192k' | '320k';
-        coverArtMode?: 'off' | 'embed' | 'companion';
-        lyricsMode?: 'off' | 'embed' | 'lrc';
-      };
-    },
-  ): Promise<{
-    success: boolean;
-    tracksCopied: number;
-    tracksSkipped: number;
-    tracksRetagged?: number;
-    lyricsAdded?: number;
-    tracksFailed: string[];
-    errors: string[];
-    totalSizeBytes?: number;
-  }> => {
-    try {
-      const {
-        serverUrl,
+ipcMain.handle('sync:start2', async (_event, options) => {
+  try {
+    const {
+      serverUrl,
+      apiKey,
+      userId,
+      itemIds,
+      itemTypes,
+      itemNames = {},
+      destinationPath,
+      options: syncOptions = {},
+    } = options;
+    log.info(`Starting sync v2 to ${destinationPath} with ${itemIds.length} items`);
+
+    // Validate inputs
+    if (!serverUrl || !apiKey || !userId) {
+      return { success: false, errors: ['Missing serverUrl, apiKey, or userId'], tracksCopied: 0 };
+    }
+
+    // Create destination folder if needed
+    if (!fs.existsSync(destinationPath)) {
+      fs.mkdirSync(destinationPath, { recursive: true });
+    }
+
+    // Create SyncCore instance with proper configuration
+    const syncCore = createSyncCore(
+      {
+        serverUrl: serverUrl.replace(/\/$/, ''),
         apiKey,
         userId,
+        // serverRootPath will be auto-detected from tracks during sync
+      },
+      {
+        logger: {
+          info: (msg) => log.info('[sync]', msg),
+          warn: (msg) => log.warn('[sync]', msg),
+          error: (msg) => log.error('[sync]', msg),
+          debug: (msg) => log.debug('[sync]', msg),
+        },
+      },
+    );
+    activeSyncCore = syncCore;
+
+    // Convert itemTypes to Map if needed
+    const itemTypesMap = itemTypes instanceof Map ? itemTypes : new Map(Object.entries(itemTypes));
+
+    // Detect destination filesystem for path sanitization
+    const filesystemType = await detectFilesystem(destinationPath);
+    log.info(`Destination filesystem: ${filesystemType}`);
+
+    // Run sync with progress callback that maps to renderer format
+    const result = await syncCore.sync(
+      {
         itemIds,
-        itemTypes,
-        itemNames = {},
+        itemTypes: itemTypesMap,
         destinationPath,
-        options: syncOptions = {},
-      } = options;
-      log.info(`Starting sync v2 to ${destinationPath} with ${itemIds.length} items`);
-
-      // Validate inputs
-      if (!serverUrl || !apiKey || !userId) {
-        return {
-          success: false,
-          errors: ['Missing serverUrl, apiKey, or userId'],
-          tracksCopied: 0,
-          tracksSkipped: 0,
-          tracksFailed: [],
-        };
-      }
-
-      // Create destination folder if needed
-      if (!fs.existsSync(destinationPath)) {
-        fs.mkdirSync(destinationPath, { recursive: true });
-      }
-
-      // Create SyncCore instance with proper configuration
-      const syncCore = createSyncCore(
-        {
-          serverUrl: serverUrl.replace(/\/$/, ''),
-          apiKey,
-          userId,
-          // serverRootPath will be auto-detected from tracks during sync
+        options: {
+          preserveStructure: true,
+          skipExisting: true,
+          filesystemType,
+          ...syncOptions,
+          embedMetadata: true, // always embed metadata - never skip tagging
         },
-        {
-          logger: {
-            info: (msg) => log.info('[sync]', msg),
-            warn: (msg) => log.warn('[sync]', msg),
-            error: (msg) => log.error('[sync]', msg),
-            debug: (msg) => log.debug('[sync]', msg),
-          },
-        },
-<<<<<<< HEAD
       },
       // Progress callback - map SyncCore format to renderer format
       (progress) => {
@@ -849,101 +837,31 @@ ipcMain.handle(
         result.totalSizeBytes ?? 0,
         status,
         syncedItems,
-=======
->>>>>>> b1075ad (fix(lint): resolve all ESLint warnings (AC-2) and suppressions (AC-3))
       );
-      activeSyncCore = syncCore;
-
-      // Convert itemTypes to Map if needed
-      const itemTypesMap =
-        itemTypes instanceof Map ? itemTypes : new Map(Object.entries(itemTypes));
-
-      // Detect destination filesystem for path sanitization
-      const filesystemType = (await detectFilesystem(destinationPath)) as FilesystemType;
-      log.info(`Destination filesystem: ${filesystemType}`);
-
-      // Run sync with progress callback that maps to renderer format
-      const result = await syncCore.sync(
-        {
-          itemIds,
-          itemTypes: itemTypesMap,
-          destinationPath,
-          options: {
-            preserveStructure: true,
-            skipExisting: true,
-            filesystemType,
-            ...syncOptions,
-            embedMetadata: true, // always embed metadata - never skip tagging
-          },
-        },
-        // Progress callback - map SyncCore format to renderer format
-        (progress) => {
-          // Map phase to status
-          let status: 'syncing' | 'completed' | 'cancelled' = 'syncing';
-          if (progress.phase === 'complete') status = 'completed';
-          else if (progress.phase === 'cancelled') status = 'cancelled';
-
-          mainWindow?.webContents.send('sync:progress', {
-            current: progress.current,
-            // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Empty string is a valid sync state indicator
-            currentFile: progress.currentTrack || '',
-            status,
-            phase: progress.phase,
-            bytesProcessed: progress.bytesProcessed,
-            totalBytes: progress.totalBytes,
-            warning: progress.warning,
-          });
-        },
-      );
-
-      activeSyncCore = null;
-      log.info(
-        `Sync v2 completed: ${result.tracksCopied} copied, ${result.tracksSkipped} skipped, ${result.errors.length} errors`,
-      );
-
-      // Record to SQLite
-      const status = result.cancelled ? 'cancelled' : result.success ? 'success' : 'error';
-      const syncedIds = itemIds.filter((id: string) => !result.tracksFailed.includes(id));
-      const syncedItems = syncedIds.map((id: string) => ({
-        id,
-        name: (itemNames as Record<string, string>)[id] ?? id,
-        type: (itemTypes as Record<string, 'artist' | 'album' | 'playlist'>)[id] ?? 'artist',
-      }));
-      try {
-        recordSyncCompleted(
-          destinationPath,
-          result.tracksCopied,
-          result.totalSizeBytes ?? 0,
-          status,
-          syncedItems,
-        );
-      } catch (dbErr) {
-        log.warn('Failed to record sync history:', dbErr);
-      }
-
-      return {
-        success: result.success,
-        tracksCopied: result.tracksCopied,
-        tracksSkipped: result.tracksSkipped,
-        tracksRetagged: result.tracksRetagged,
-        lyricsAdded: result.lyricsAdded,
-        tracksFailed: result.tracksFailed,
-        errors: result.errors,
-        totalSizeBytes: result.totalSizeBytes,
-      };
-    } catch (error) {
-      activeSyncCore = null;
-      log.error('Sync v2 error:', error);
-      return {
-        success: false,
-        errors: [error instanceof Error ? error.message : String(error)],
-        tracksCopied: 0,
-        tracksSkipped: 0,
-        tracksFailed: [],
-      };
+    } catch (dbErr) {
+      log.warn('Failed to record sync history:', dbErr);
     }
-  },
-);
+
+    return {
+      success: result.success,
+      tracksCopied: result.tracksCopied,
+      tracksSkipped: result.tracksSkipped,
+      tracksRetagged: result.tracksRetagged,
+      lyricsAdded: result.lyricsAdded,
+      tracksFailed: result.tracksFailed,
+      errors: result.errors,
+      totalSizeBytes: result.totalSizeBytes,
+    };
+  } catch (error) {
+    activeSyncCore = null;
+    log.error('Sync v2 error:', error);
+    return {
+      success: false,
+      errors: [error instanceof Error ? error.message : String(error)],
+      tracksCopied: 0,
+    };
+  }
+});
 ipcMain.handle(
   'sync:analyzeDiff',
   async (
