@@ -303,7 +303,6 @@ export interface JellyfinTrackItem {
 export interface JellyfinAlbumItem {
   Id: string;
   Name: string;
-  AlbumArtist?: string;
   ProductionYear?: number;
 }
 
