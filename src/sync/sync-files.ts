@@ -5,8 +5,6 @@
  * Pure functions with dependency injection for testing.
  */
 
-/* eslint-disable no-control-regex -- Control characters are intentionally removed during metadata sanitization */
-
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata } from './types';
 import { resolveFFmpegPath } from './ffmpeg-path';
