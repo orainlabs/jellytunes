@@ -319,7 +319,16 @@ class SyncCoreImpl {
       // Phase 4: Cleanup
       await this.runCleanupPhase(input.itemIds, input.itemTypes, input.destinationPath, options);
 
-      // AC-2: When lyricsMode is embed, clean up stale .lrc files from prior syncs
+      // AC-1: When switching FROM companion mode, remove stale cover.jpg files
+      const currentCoverMode = options.coverArtMode ?? 'embed';
+      if (currentCoverMode !== 'companion' && (copyResult.companionCoverPaths?.length ?? 0) > 0) {
+        await this.cleanCoverFilesForNonCompanionMode(
+          input.destinationPath,
+          copyResult.companionCoverPaths ?? [],
+        );
+      }
+
+      // Lyrics cleanup: When lyricsMode is embed, clean up stale .lrc files from prior syncs
       if (options.lyricsMode === 'embed') {
         const syncedBasenames = new Set(copyResult.syncedBasenames ?? []);
         await this.cleanLrcFilesForEmbedMode(input.destinationPath, syncedBasenames);
@@ -422,6 +431,7 @@ class SyncCoreImpl {
     statsMoved: number;
     lyricsAdded: number;
     syncedBasenames: string[];
+    companionCoverPaths: string[];
   }> {
     this.currentPhase = 'copying';
     phaseManager.startCopying(tracks.length);
@@ -436,6 +446,7 @@ class SyncCoreImpl {
     let statsMoved = 0;
     let lyricsAdded = 0;
     const syncedBasenames: string[] = [];
+    const companionCoverPaths: string[] = [];
 
     let allSyncedRecords: SyncedTrackRecord[] = [];
     try {
@@ -477,6 +488,10 @@ class SyncCoreImpl {
         if (result.processed) {
           syncedBasenames.push(getFilenameFromPath(track.path ?? track.id).replace(/\.[^.]+$/, ''));
         }
+        // Collect companion cover.jpg paths for AC-1 cleanup
+        if (result.companionCoverPath) {
+          companionCoverPaths.push(result.companionCoverPath);
+        }
       } finally {
         completed++;
         phaseManager.updateCopying(completed, tracks.length, track.name);
@@ -484,7 +499,7 @@ class SyncCoreImpl {
     });
 
     this.cancellation.throwIfCancelled();
-    return { statsRetagged, statsMoved, lyricsAdded, syncedBasenames };
+    return { statsRetagged, statsMoved, lyricsAdded, syncedBasenames, companionCoverPaths };
   }
 
   private async runCleanupPhase(
@@ -533,6 +548,7 @@ class SyncCoreImpl {
     processed: boolean;
     skipped: boolean;
     lyricsAdded: number;
+    companionCoverPath?: string;
     error?: string;
   }> {
     const outputDir = this.getOutputDir(
@@ -605,6 +621,7 @@ class SyncCoreImpl {
     processed: boolean;
     skipped: boolean;
     lyricsAdded: number;
+    companionCoverPath?: string;
     error?: string;
   }> {
     const metadataChanged = syncedRecord.metadataHash !== currentHash;
@@ -632,12 +649,14 @@ class SyncCoreImpl {
           outputPath,
           options.lyricsMode ?? 'off',
         );
+        const outputDir = outputPath.substring(0, outputPath.lastIndexOf('/'));
         return {
           retagged: false,
           moved: true,
           processed: true,
           skipped: false,
           lyricsAdded: lyricsResult,
+          companionCoverPath: coverArtMode === 'companion' ? `${outputDir}/cover.jpg` : undefined,
         };
       }
 
@@ -657,6 +676,15 @@ class SyncCoreImpl {
     }
 
     if (!pathChanged && (metadataChanged || bitrateChanged || coverArtChanged)) {
+      // AC-2: Strip embedded cover when switching from embed to companion mode
+      if (
+        coverArtChanged &&
+        syncedRecord.coverArtMode === 'embed' &&
+        coverArtMode === 'companion'
+      ) {
+        await this.stripCoverFromTrack(syncedRecord.destinationPath, syncedRecord.destinationPath);
+      }
+
       const embedCover =
         coverArtMode === 'embed'
           ? await this.getCoverArtBuffer(track.id, track.albumId, coverArtMode)
@@ -691,6 +719,10 @@ class SyncCoreImpl {
           processed: false,
           skipped: false,
           lyricsAdded: lyricsResult,
+          companionCoverPath:
+            coverArtMode === 'companion'
+              ? syncedRecord.destinationPath.replace(/\.[^.]+$/, '') + '-cover.jpg'
+              : undefined,
         };
       }
       this.log.warn(`Re-tag failed for ${track.name}, falling back to re-download`);
@@ -698,7 +730,7 @@ class SyncCoreImpl {
 
     // Fall through to copy/conversion — but mark as processed:false since retag failures
     // don't increment itemsProcessed in the original (they fall through but don't re-download)
-    return this.copyOrConvertTrack(
+    const copyResult = await this.copyOrConvertTrack(
       track,
       this.getOutputDir(
         track,
@@ -718,6 +750,13 @@ class SyncCoreImpl {
       options,
       stats,
     );
+    return {
+      ...copyResult,
+      companionCoverPath:
+        copyResult.processed && coverArtMode === 'companion'
+          ? `${this.getOutputDir(track, destinationPath, options.preserveStructure ?? true, options.filesystemType ?? 'unknown')}/cover.jpg`
+          : undefined,
+    };
   }
 
   private async copyOrConvertTrack(
@@ -1022,6 +1061,16 @@ class SyncCoreImpl {
           const lrcPath = outputPath.replace(/\.[^.]+$/, '.lrc');
           if (await this.deps.fs.exists(lrcPath)) {
             await this.deps.fs.unlink(lrcPath);
+          }
+
+          // AC-3: Delete cover.jpg if present (will be cleaned if dir becomes empty)
+          const coverPath = `${outputDir}/cover.jpg`;
+          try {
+            if (await this.deps.fs.exists(coverPath)) {
+              await this.deps.fs.unlink(coverPath);
+            }
+          } catch {
+            /* non-fatal */
           }
 
           await this.deps.fs.unlink(outputPath);
@@ -1728,6 +1777,47 @@ class SyncCoreImpl {
       }
     } catch {
       /* ignore errors during cleanup */
+    }
+  }
+
+  /**
+   * Clean up cover.jpg companion files for tracks that were synced with companion mode
+   * but are now being synced with embed or off mode.
+   * AC-1: Removes cover.jpg from dirs when switching from companion to non-companion mode.
+   * AC-4: Scoped to DB-tracked track directories only (no global filesystem walk).
+   */
+  private async cleanCoverFilesForNonCompanionMode(
+    _destinationPath: string,
+    coverJpgPaths: string[],
+  ): Promise<void> {
+    for (const coverPath of coverJpgPaths) {
+      try {
+        const exists = await this.deps.fs.exists(coverPath);
+        if (exists) {
+          await this.deps.fs.unlink(coverPath);
+          this.log.debug(`Removed stale cover.jpg: ${coverPath}`);
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }
+
+  /**
+   * Strip embedded cover art from a track file when switching to companion mode.
+   * Uses the converter's stripCoverArt method with ffprobe early exit.
+   * AC-2: Strip embedded cover when switching from embed to companion mode.
+   */
+  private async stripCoverFromTrack(inputPath: string, outputPath: string): Promise<void> {
+    try {
+      const result = await this.deps.converter.stripCoverArt(inputPath, outputPath);
+      if (!result.success) {
+        this.log.warn(`Failed to strip cover from ${inputPath}: ${result.error}`);
+      } else if (result.hadCover) {
+        this.log.debug(`Stripped embedded cover from: ${inputPath}`);
+      }
+    } catch (err) {
+      this.log.warn(`Cover strip error for ${inputPath}: ${err}`);
     }
   }
 

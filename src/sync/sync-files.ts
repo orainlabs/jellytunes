@@ -382,6 +382,16 @@ export interface AudioConverter {
     lyrics: string,
     format: string,
   ): Promise<{ success: boolean; error?: string }>;
+
+  /**
+   * Strip embedded cover art from an audio file using FFmpeg.
+   * Uses ffprobe to check for video/cover streams before invoking FFmpeg.
+   * Returns { success: true } if no cover was present or stripping succeeded.
+   */
+  stripCoverArt(
+    inputPath: string,
+    outputPath: string,
+  ): Promise<{ success: boolean; error?: string; hadCover: boolean }>;
 }
 
 export function createFFmpegConverter(): AudioConverter {
@@ -873,6 +883,74 @@ export function createFFmpegConverter(): AudioConverter {
         });
       });
     },
+
+    stripCoverArt: async (inputPath, outputPath) => {
+      assertFilesystemPath(inputPath, 'inputPath');
+      assertFilesystemPath(outputPath, 'outputPath');
+      const { spawn } = require('child_process');
+
+      // Step 1: ffprobe to check for video/cover streams (early exit optimization)
+      const hadCover = await new Promise<boolean>((resolveProbe) => {
+        // Look for attached_pic in streams — indicates cover art
+        const probeArgs = [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_entries',
+          'stream=disposition',
+          '-of',
+          'csv=p=0',
+          inputPath,
+        ];
+        const probeProcess = spawn(ffmpegPath, probeArgs, { stdio: 'pipe' });
+        let stdout = '';
+        probeProcess.stdout.on('data', (data: Buffer) => {
+          stdout += data.toString();
+        });
+        probeProcess.on('close', (_code: number) => {
+          // disposition=attached_pic indicates cover art
+          const hasAttachedPic = stdout.includes('attached_pic');
+          resolveProbe(hasAttachedPic);
+        });
+      });
+
+      if (!hadCover) {
+        // No cover to strip — no-op
+        return { success: true, hadCover: false };
+      }
+
+      // Step 2: Strip cover using -vn to skip video/cover streams, copy audio codec
+      return new Promise((resolve) => {
+        const args = [
+          '-i',
+          inputPath,
+          '-vn', // skip video/cover streams
+          '-c',
+          'copy', // passthrough audio encoding
+          '-y', // overwrite output
+          outputPath,
+        ];
+
+        const process = spawn(ffmpegPath, args, { stdio: 'ignore' });
+
+        process.on('error', (err: Error) => {
+          resolve({
+            success: false,
+            error: `FFmpeg strip error: ${err.message}`,
+            hadCover: true,
+          });
+        });
+
+        process.on('close', (code: number) => {
+          resolve({
+            success: code === 0,
+            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+            hadCover: true,
+          });
+        });
+      });
+    },
   };
 }
 
@@ -888,6 +966,7 @@ export function createMockConverter(): AudioConverter {
     readFileMetadata: async () => ({}),
     isAvailable: async () => true,
     embedLyrics: async () => ({ success: true }),
+    stripCoverArt: async () => ({ success: true, hadCover: false }),
   };
 }
 

@@ -733,6 +733,7 @@ describe('sync-core', () => {
         tagFile: async () => ({ success: true }),
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
       };
 
       const core = createTestSyncCore(validConfig, { ...deps, converter });
@@ -958,6 +959,7 @@ describe('Error Handling', () => {
         tagFile: async () => ({ success: true }),
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
       },
     });
 
@@ -1711,6 +1713,7 @@ describe('Server Root Path - Original Path Usage', () => {
         },
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
       };
 
       const deps: SyncDependencies = {
@@ -1765,6 +1768,7 @@ describe('Server Root Path - Original Path Usage', () => {
         },
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
       };
 
       const deps: SyncDependencies = {
@@ -1822,6 +1826,7 @@ describe('Server Root Path - Original Path Usage', () => {
         },
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
       };
 
       const deps: SyncDependencies = {
@@ -3042,6 +3047,425 @@ describe('removeItems', () => {
       // Track must be deleted after both playlists removed
       expect((mockFs as any).__getFile('/music/Artist/Shared.mp3')).toBeUndefined();
     });
+  });
+});
+
+describe('cleanCoverFilesForNonCompanionMode', () => {
+  // ---------------------------------------------------------------------------
+  // AC-1: cover.jpg cleanup when switching from companion to !companion
+  // ---------------------------------------------------------------------------
+
+  const configWithServerRoot: SyncConfig = {
+    serverUrl: 'https://jellyfin.example.com',
+    apiKey: '0123456789abcdef0123456789abcdef',
+    userId: 'abcdef1234567890abcdef1234567890',
+    serverRootPath: '/music/',
+  };
+
+  it('removes cover.jpg from album dirs when new coverArtMode is embed (AC-1)', async () => {
+    const mockFs = createMockFileSystem() as any;
+
+    // Simulate prior sync with companion mode: album has cover.jpg
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+    mockFs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.alloc(5000));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    // First sync with companion mode (creates cover.jpg)
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'companion' },
+    });
+
+    // Verify cover.jpg was created
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeDefined();
+
+    // Second sync switching to embed mode — cover.jpg should be removed
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'embed' },
+    });
+
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeUndefined();
+  });
+
+  it('removes cover.jpg when switching from companion to off mode (AC-1)', async () => {
+    const mockFs = createMockFileSystem() as any;
+
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+    mockFs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.alloc(5000));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'off' },
+    });
+
+    // cover.jpg must not exist after switching to off mode
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeUndefined();
+  });
+
+  it('does NOT remove cover.jpg when coverArtMode stays companion (no change)', async () => {
+    const mockFs = createMockFileSystem() as any;
+
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+    mockFs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.alloc(5000));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'companion' },
+    });
+
+    // cover.jpg should still exist
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeDefined();
+  });
+
+  it('only walks dirs of tracks present in synced_tracks DB (AC-4)', async () => {
+    // AC-4: the walk must be scoped to directories of tracks tracked in DB,
+    // not a global filesystem walk.
+    // We verify this by having a cover.jpg in a directory that has NO DB entry
+    // and checking it is NOT removed.
+    const mockFs = createMockFileSystem() as any;
+
+    // Directory with DB-tracked track
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+    mockFs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.alloc(5000));
+
+    // Directory with no DB record — cover.jpg should be preserved
+    mockFs.__setFile('/mnt/usb/Artist/Other/cover.jpg', Buffer.alloc(5000));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'embed' },
+    });
+
+    // cover.jpg in tracked dir removed
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeUndefined();
+    // cover.jpg in untracked dir preserved (scope boundary respected)
+    expect(mockFs.__getFile('/mnt/usb/Artist/Other/cover.jpg')).toBeDefined();
+  });
+});
+
+describe('strip embed cover when switching to companion mode (AC-2)', () => {
+  const configWithServerRoot: SyncConfig = {
+    serverUrl: 'https://jellyfin.example.com',
+    apiKey: '0123456789abcdef0123456789abcdef',
+    userId: 'abcdef1234567890abcdef1234567890',
+    serverRootPath: '/music/',
+  };
+
+  it('calls stripCoverArt when syncedRecord.coverArtMode is embed and new mode is companion (AC-2)', async () => {
+    const stripCoverArtSpy = vi.fn().mockResolvedValue({ success: true });
+
+    const mockConverter = {
+      ...createMockConverter(),
+      stripCoverArt: stripCoverArtSpy,
+    };
+
+    const mockFs = createMockFileSystem() as any;
+    // Track already on disk with embedded cover
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: mockConverter as any };
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    // Mock a prior sync record where cover was embedded
+    const existingRecord = {
+      trackId: 'track-1',
+      itemId: 'album-1',
+      destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+      fileSize: 100,
+      metadataHash: 'abc123def456abc1', // matches current track metadata hash
+      coverArtMode: 'embed' as const,
+      encodedBitrate: '192k',
+      serverPath: '/music/Artist/Album/track.mp3',
+      serverRootPath: '/music/',
+    };
+    vi.mocked(getSyncedTracksForDevice).mockReturnValueOnce([existingRecord] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValueOnce([existingRecord] as any);
+
+    // Switch to companion mode — should trigger stripCoverArt
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'companion' },
+    });
+
+    expect(stripCoverArtSpy).toHaveBeenCalledWith(
+      '/mnt/usb/Artist/Album/track.mp3',
+      '/mnt/usb/Artist/Album/track.mp3',
+    );
+  });
+
+  it('does NOT call stripCoverArt when coverArtMode did not change', async () => {
+    const stripCoverArtSpy = vi.fn().mockResolvedValue({ success: true });
+
+    const mockConverter = {
+      ...createMockConverter(),
+      stripCoverArt: stripCoverArtSpy,
+    };
+
+    const mockFs = createMockFileSystem() as any;
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: mockConverter as any };
+    const core = createTestSyncCore(configWithServerRoot, deps);
+
+    const existingRecord = {
+      trackId: 'track-1',
+      itemId: 'album-1',
+      destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+      fileSize: 100,
+      metadataHash: 'abc123def456abc1',
+      coverArtMode: 'embed' as const,
+      encodedBitrate: '192k',
+      serverPath: '/music/Artist/Album/track.mp3',
+      serverRootPath: '/music/',
+    };
+    vi.mocked(getSyncedTracksForDevice).mockReturnValueOnce([existingRecord] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValueOnce([existingRecord] as any);
+
+    // Stay in embed mode — no strip needed
+    await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'embed' },
+    });
+
+    expect(stripCoverArtSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeItems cover.jpg cleanup (AC-3)', () => {
+  const removeConfig: SyncConfig = {
+    serverUrl: 'https://jellyfin.example.com',
+    apiKey: '0123456789abcdef0123456789abcdef',
+    userId: 'abcdef1234567890abcdef1234567890',
+    serverRootPath: '/music/',
+  };
+
+  it('removes cover.jpg when directory has no audio files after track removal (AC-3)', async () => {
+    const mockFs = createMockFileSystem() as any;
+
+    // Album dir contains only one track + cover.jpg
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+    mockFs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.alloc(5000));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+      getItem: async (_id: string) => ({ id: _id, name: 'Album', type: 'Album' }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    const core = createTestSyncCore(removeConfig, deps);
+
+    await core.removeItems(['album-1'], new Map([['album-1', 'album' as ItemType]]), '/mnt/usb');
+
+    // cover.jpg must be deleted when the last audio file in the dir is removed
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeUndefined();
+  });
+
+  it('does NOT remove cover.jpg if other audio files remain in the directory (AC-3)', async () => {
+    const mockFs = createMockFileSystem() as any;
+
+    // Album dir: two tracks + cover.jpg
+    mockFs.__setFile('/mnt/usb/Artist/Album/track-1.mp3', Buffer.alloc(100));
+    mockFs.__setFile('/mnt/usb/Artist/Album/track-2.mp3', Buffer.alloc(100));
+    mockFs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.alloc(5000));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track 1',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track-1.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+      getItem: async (_id: string) => ({ id: _id, name: 'Album', type: 'Album' }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    const core = createTestSyncCore(removeConfig, deps);
+
+    await core.removeItems(['album-1'], new Map([['album-1', 'album' as ItemType]]), '/mnt/usb');
+
+    // cover.jpg preserved because track-2.mp3 still exists
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeDefined();
+    // track-2.mp3 preserved
+    expect(mockFs.__getFile('/mnt/usb/Artist/Album/track-2.mp3')).toBeDefined();
+  });
+
+  it('handles removal gracefully when cover.jpg does not exist (AC-3 non-fatal)', async () => {
+    const mockFs = createMockFileSystem() as any;
+
+    // Directory with only audio file, no cover.jpg
+    mockFs.__setFile('/mnt/usb/Artist/Album/track.mp3', Buffer.alloc(100));
+
+    const mockApi = createMockApiClient({
+      getTracksForItems: async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track',
+            artists: ['Artist'],
+            path: '/music/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+          },
+        ],
+        errors: [],
+      }),
+      getItem: async (_id: string) => ({ id: _id, name: 'Album', type: 'Album' }),
+    });
+
+    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    const core = createTestSyncCore(removeConfig, deps);
+
+    // Must not throw even if cover.jpg doesn't exist
+    await expect(
+      core.removeItems(['album-1'], new Map([['album-1', 'album' as ItemType]]), '/mnt/usb'),
+    ).resolves.toBeDefined();
   });
 });
 

@@ -40,6 +40,7 @@ function createConverterWithSpy(overrides: Partial<AudioConverter> = {}): AudioC
     readFileMetadata: vi.fn().mockResolvedValue({}),
     isAvailable: vi.fn().mockResolvedValue(true),
     embedLyrics: vi.fn().mockResolvedValue({ success: true }),
+    stripCoverArt: vi.fn().mockResolvedValue({ success: true, hadCover: false }),
     ...overrides,
   };
 }
