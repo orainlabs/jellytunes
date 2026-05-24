@@ -1642,8 +1642,8 @@ class SyncCoreImpl {
         // Check if any audio file with the same base name exists
         const hasAudio = audioExtensions.some(
           (ext) =>
-            entries.includes(`${baseName}${ext}`) ||
-            entries.includes(`${baseName}${ext.toUpperCase()}`),
+            entries.includes(`${baseName}.${ext}`) ||
+            entries.includes(`${baseName}.${ext.toUpperCase()}`),
         );
 
         if (!hasAudio) {

@@ -947,12 +947,10 @@ export async function validateDestination(
  */
 export function sanitizeFilename(filename: string): string {
   // Remove or replace invalid characters
-  return (
-    filename
-      .replace(/[<>:"/\\|?*]/g, '_')
-      .replace(/[^\x00-\x7F]/g, (c) => c) // Keep unicode characters
-      .slice(0, 255)
-  ); // Max filename length
+  return filename
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/[^\x00-\x7F]/g, (c) => c) // Keep unicode characters
+    .slice(0, 255); // Max filename length
 }
 
 /**
