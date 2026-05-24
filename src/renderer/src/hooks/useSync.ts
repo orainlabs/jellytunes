@@ -25,7 +25,13 @@ interface UseSyncOptions {
   albums: Album[];
   playlists: Playlist[];
   setPreviouslySyncedItems: (items: SyncedItemInfo[]) => void;
-  revalidateDevice: () => Promise<void>;
+  revalidateDevice: (
+    overrides?: Partial<{
+      coverArtMode: CoverArtMode;
+      convertToMp3: boolean;
+      bitrate: Bitrate;
+    }>,
+  ) => Promise<void>;
 }
 
 export function useSync({
@@ -214,7 +220,8 @@ export function useSync({
           errors: result.errors,
         });
         // Re-run analyzeDiff in background to update out-of-sync indicators
-        void revalidateDevice();
+        // Pass current coverArtMode to avoid stale ref in revalidateDevice
+        void revalidateDevice({ coverArtMode });
       } else {
         setSyncSuccessData({
           tracksCopied: 0,

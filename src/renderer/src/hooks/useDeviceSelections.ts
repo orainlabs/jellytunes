@@ -416,11 +416,39 @@ export function useDeviceSelections() {
   }, [activeDevicePath]);
 
   // Invalidate cache AND re-run activation with last used params
-  const revalidateDevice = useCallback(async () => {
-    if (!activeDevicePath) return;
-    lastActivationKeyRef.current = null;
-    await activateDevice(activeDevicePath, lastOptionsRef.current ?? undefined);
-  }, [activeDevicePath]);
+  // Accept optional overrides so callers (like useSync after sync) can pass current state
+  // to avoid stale ref values (e.g., coverArtMode changed via UI but ref not yet updated)
+  const revalidateDevice = useCallback(
+    async (
+      overrides?: Partial<{
+        coverArtMode: 'off' | 'embed' | 'companion';
+        convertToMp3: boolean;
+        bitrate: '128k' | '192k' | '320k';
+      }>,
+    ) => {
+      if (!activeDevicePath) return;
+      lastActivationKeyRef.current = null;
+
+      // Build options: start with lastOptionsRef (which has required fields like serverUrl),
+      // then overlay any provided overrides so explicit params win over stale ref values
+      const baseOptions = lastOptionsRef.current;
+      const mergedOptions = baseOptions
+        ? {
+            ...baseOptions,
+            ...(overrides?.coverArtMode !== undefined && {
+              coverArtMode: overrides.coverArtMode,
+            }),
+            ...(overrides?.convertToMp3 !== undefined && {
+              convertToMp3: overrides.convertToMp3,
+            }),
+            ...(overrides?.bitrate !== undefined && { bitrate: overrides.bitrate }),
+          }
+        : undefined;
+
+      await activateDevice(activeDevicePath, mergedOptions ?? undefined);
+    },
+    [activeDevicePath],
+  );
 
   // Called on library refresh — clears stale item track data and re-runs analysis
   const onLibraryRefresh = useCallback(async () => {

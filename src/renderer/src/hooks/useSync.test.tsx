@@ -275,9 +275,7 @@ describe('useSync', () => {
     });
 
     it('calls revalidateDevice with current coverArtMode after successful sync', async () => {
-      // Test that revalidateDevice is called after sync completes.
-      // Note: The actual coverArtMode passed to analyzeDiff is tested in useDeviceSelections.test.tsx
-      // as it requires the integration between hooks to be properly simulated.
+      // Test that revalidateDevice is called after sync completes with correct coverArtMode
       const revalidateDevice = vi.fn().mockResolvedValue(undefined);
       const props = {
         ...defaultProps,
@@ -299,7 +297,9 @@ describe('useSync', () => {
         await result.current.executeSyncNow();
       });
 
-      expect(revalidateDevice).toHaveBeenCalled();
+      // Verify revalidateDevice is called with the current coverArtMode from state
+      // This prevents the bug where stale 'embed' was used instead of 'companion'
+      expect(revalidateDevice).toHaveBeenCalledWith({ coverArtMode: 'companion' });
     });
   });
 });
