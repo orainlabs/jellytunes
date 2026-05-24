@@ -11,7 +11,6 @@ import type { SyncConfig, TrackInfo, ItemType, LyricsMode } from './types';
 import { LyricsModes } from './types';
 
 const mockGetSyncedTracksForDevice = vi.hoisted(() => vi.fn(() => []));
-const mockGetSyncedItems = vi.hoisted(() => vi.fn(() => []));
 
 vi.mock('../main/database', () => ({
   initDatabase: vi.fn(),
@@ -19,7 +18,6 @@ vi.mock('../main/database', () => ({
   upsertSyncedTrack: vi.fn(),
   getSyncedTracksForDevice: mockGetSyncedTracksForDevice,
   getSyncedTracksForItem: mockGetSyncedTracksForDevice,
-  getSyncedItems: mockGetSyncedItems,
   removeSyncedTracksForItem: vi.fn(),
   removeSyncedTrack: vi.fn(),
 }));
@@ -27,8 +25,6 @@ vi.mock('../main/database', () => ({
 beforeEach(() => {
   mockGetSyncedTracksForDevice.mockReset();
   mockGetSyncedTracksForDevice.mockReturnValue([]);
-  mockGetSyncedItems.mockReset();
-  mockGetSyncedItems.mockReturnValue([]);
 });
 const VALID_API_CONFIG = {
   baseUrl: 'https://jellyfin.example.com',
