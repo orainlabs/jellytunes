@@ -1,3 +1,0 @@
-#!/usr/bin/env sh
-echo "" >> "$1"
-echo "Co-Authored-By: Txomin Jiménez <txomin.jimenez@proton.me>" >> "$1"
