@@ -67,12 +67,9 @@ export function LibraryItem({
 
   const subtitle = (() => {
     if (type === 'artist') {
-      const albumCount = artist.ChildCount;
+      // AC: Never show album count — /Artists endpoint doesn't return ChildCount reliably
       const runtime = formatRunTimeTicks(artist.RunTimeTicks);
-      if (albumCount !== null && runtime) return `${albumCount} albums · ${runtime}`;
-      if (runtime) return runtime;
-      if (albumCount !== null) return `${albumCount} album${albumCount !== 1 ? 's' : ''}`;
-      return null;
+      return runtime ?? null;
     }
 
     if (type === 'album') {

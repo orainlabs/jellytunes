@@ -70,12 +70,13 @@ const defaultProps = {
 };
 
 describe('LibraryContent', () => {
-  // 1. renders artists correctly with name and metadata (AlbumCount visible)
-  it('renders artists correctly with name and metadata', () => {
+  // 1. renders artists correctly with name (subtitle shows runtime, not album count)
+  // Note: album count was removed per ORAIN-0375 — /Artists endpoint doesn't return ChildCount reliably
+  it('renders artists correctly with name', () => {
     render(<LibraryContent {...defaultProps} />);
     const content = screen.getByTestId('library-content');
     expect(within(content).getByText('The Beatles')).toBeInTheDocument();
-    expect(within(content).getByText('13 albums')).toBeInTheDocument();
+    // The Beatles has RunTimeTicks (3h runtime) but no album count per ORAIN-0375
   });
 
   // 2. search active with 2+ chars: shows search results
