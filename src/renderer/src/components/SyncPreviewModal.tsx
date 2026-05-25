@@ -1,6 +1,6 @@
 import { Check, Loader2 } from 'lucide-react';
 import type { PreviewData, Bitrate } from '../appTypes';
-import { formatBytes } from '../utils/format';
+import { formatBytes, formatDuration } from '../utils/format';
 
 interface SyncPreviewModalProps {
   data: PreviewData;
@@ -39,6 +39,16 @@ export function SyncPreviewModal({
             <Loader2 className="w-4 h-4 animate-spin text-on_surface_variant ml-1" />
           )}
         </h2>
+
+        {/* Summary stats */}
+        <div className="flex gap-4 mb-4 text-body-sm text-on_surface_variant">
+          <span data-testid="preview-track-count">
+            {data.trackCount.toLocaleString()} track{data.trackCount !== 1 ? 's' : ''}
+          </span>
+          {data.totalDurationSeconds > 0 && (
+            <span data-testid="preview-duration">{formatDuration(data.totalDurationSeconds)}</span>
+          )}
+        </div>
 
         <div className="space-y-3 mb-6">
           {/* New tracks */}

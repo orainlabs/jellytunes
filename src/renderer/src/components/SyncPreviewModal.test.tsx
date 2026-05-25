@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { SyncPreviewModal } from './SyncPreviewModal';
@@ -35,6 +35,7 @@ afterEach(() => {
 const samplePreviewDataNewTracks: PreviewData = {
   trackCount: 150,
   totalBytes: 5_000_000_000, // ~5 GB
+  totalDurationSeconds: 18000, // 5 hours
   formatBreakdown: { flac: 3_000_000_000, mp3: 2_000_000_000 },
   newTracksCount: 120,
   newTracksBytes: 4_000_000_000,
@@ -49,6 +50,7 @@ const samplePreviewDataNewTracks: PreviewData = {
 const samplePreviewDataNoUpdates: PreviewData = {
   trackCount: 150,
   totalBytes: 5_000_000_000,
+  totalDurationSeconds: 9000, // 2.5 hours
   formatBreakdown: { flac: 3_000_000_000, mp3: 2_000_000_000 },
   newTracksCount: 150,
   newTracksBytes: 5_000_000_000,
@@ -116,9 +118,10 @@ describe('SyncPreviewModal', () => {
     render(<SyncPreviewModal {...defaultProps} />);
     const confirmButton = screen.getByTestId('confirm-sync-button');
     await user.click(confirmButton);
+    // Flush React state updates from the click
+    await act(async () => {});
     expect(defaultProps.onConfirm).toHaveBeenCalled();
   });
-
   it('calls onCancel when cancel button is clicked', async () => {
     const user = userEvent.setup({ delay: null });
     render(<SyncPreviewModal {...defaultProps} />);
@@ -136,5 +139,33 @@ describe('SyncPreviewModal', () => {
   it('does not show MP3 conversion info when convertToMp3 is false', () => {
     render(<SyncPreviewModal {...defaultProps} convertToMp3={false} />);
     expect(screen.queryByText(/FLAC\/lossless/)).not.toBeInTheDocument();
+  });
+
+  // 6. shows track count summary and duration
+  it('shows track count summary with plural form', () => {
+    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} />);
+    expect(screen.getByTestId('preview-track-count')).toHaveTextContent('150 tracks');
+  });
+
+  it('shows singular "track" for single track count', () => {
+    const singleTrackData = {
+      ...samplePreviewDataNoUpdates,
+      trackCount: 1,
+      totalDurationSeconds: 0,
+    };
+    render(<SyncPreviewModal {...defaultProps} data={singleTrackData} />);
+    expect(screen.getByTestId('preview-track-count')).toHaveTextContent('1 track');
+  });
+
+  it('shows duration when totalDurationSeconds > 0', () => {
+    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} />);
+    // 18000 seconds = 5:00:00
+    expect(screen.getByTestId('preview-duration')).toHaveTextContent('5:00:00');
+  });
+
+  it('does not show duration when totalDurationSeconds is 0', () => {
+    const noDurationData = { ...samplePreviewDataNoUpdates, totalDurationSeconds: 0 };
+    render(<SyncPreviewModal {...defaultProps} data={noDurationData} />);
+    expect(screen.queryByTestId('preview-duration')).not.toBeInTheDocument();
   });
 });

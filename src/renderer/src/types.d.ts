@@ -119,6 +119,7 @@ interface Api {
       album?: string;
       artists?: string[];
       albumArtist?: string;
+      durationSeconds?: number;
     }>;
     errors: string[];
   }>;

@@ -16,6 +16,8 @@ export interface TrackInfo {
   artists?: string[];
   albumArtist?: string;
   parentItemId?: string;
+  /** Track duration in seconds */
+  durationSeconds?: number;
 }
 
 export interface SyncedTrackRecord {
@@ -311,6 +313,31 @@ export function createTrackRegistry() {
     return false;
   };
 
+  /**
+   * Calculate total duration for selected items, deduplicating shared tracks.
+   * Returns total duration in seconds.
+   */
+  const calculateDuration = (selectedItems: Set<string>): number => {
+    const seenTrackIds = new Set<string>();
+    let totalSeconds = 0;
+
+    for (const itemId of selectedItems) {
+      const trackIds = state.itemTracks.get(itemId);
+      if (!trackIds) continue;
+
+      for (const trackId of trackIds) {
+        if (seenTrackIds.has(trackId)) continue;
+        seenTrackIds.add(trackId);
+
+        const info = state.trackMap.get(trackId);
+        if (info?.durationSeconds) {
+          totalSeconds += info.durationSeconds;
+        }
+      }
+    }
+    return totalSeconds;
+  };
+
   return {
     loadDeviceSyncedTracks,
     ensureItemTracks,
@@ -324,6 +351,7 @@ export function createTrackRegistry() {
     isDeviceLoading,
     getItemTrackIds,
     hasFlacOrM4a,
+    calculateDuration,
   };
 }
 

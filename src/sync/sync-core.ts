@@ -468,6 +468,12 @@ class SyncCoreImpl {
       options.convertToMp3 === true && tracks.some((t) => needsConversion(t, targetBitrateKbps));
     const concurrency = anyWillConvert ? CONVERT_CONCURRENCY : COPY_CONCURRENCY;
 
+    // Estimate total bytes before copying starts so progress bar can show bytesProcessed/totalBytes
+    let totalBytesEstimate = 0;
+    for (const track of tracks) {
+      totalBytesEstimate += track.size ?? 0;
+    }
+
     let completed = 0;
     let statsRetagged = 0;
     let statsMoved = 0;
@@ -517,7 +523,13 @@ class SyncCoreImpl {
         }
       } finally {
         completed++;
-        phaseManager.updateCopying(completed, tracks.length, track.name);
+        phaseManager.updateCopying(
+          completed,
+          tracks.length,
+          track.name,
+          totalBytesEstimate,
+          stats.bytesTransferred,
+        );
       }
     });
 

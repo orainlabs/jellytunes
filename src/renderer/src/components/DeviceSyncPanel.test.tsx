@@ -277,6 +277,7 @@ describe('DeviceSyncPanel', () => {
       const previewData: PreviewData = {
         trackCount: 100,
         totalBytes: 5e9,
+        totalDurationSeconds: 0,
         formatBreakdown: { flac: 3e9, mp3: 2e9 },
         newTracksCount: 90,
         newTracksBytes: 4.5e9,
@@ -296,6 +297,7 @@ describe('DeviceSyncPanel', () => {
       const previewData: PreviewData = {
         trackCount: 100,
         totalBytes: 5e9,
+        totalDurationSeconds: 0,
         formatBreakdown: {},
         newTracksCount: 100,
         newTracksBytes: 5e9,
@@ -316,6 +318,7 @@ describe('DeviceSyncPanel', () => {
       const previewData: PreviewData = {
         trackCount: 100,
         totalBytes: 5e9,
+        totalDurationSeconds: 0,
         formatBreakdown: {},
         newTracksCount: 100,
         newTracksBytes: 5e9,

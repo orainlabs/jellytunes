@@ -279,13 +279,21 @@ export class PhaseManager {
     });
   }
 
-  /** Update copying progress */
-  updateCopying(current: number, total: number, track?: string): void {
+  /** Update copying progress with optional bytes tracking */
+  updateCopying(
+    current: number,
+    total: number,
+    track?: string,
+    totalBytes?: number,
+    bytesProcessed?: number,
+  ): void {
     this.emitter.emit({
       phase: 'copying',
       current,
       total,
       currentTrack: track,
+      totalBytes,
+      bytesProcessed,
     });
   }
 

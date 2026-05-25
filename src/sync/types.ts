@@ -151,6 +151,8 @@ export interface TrackInfo {
   trackNumber?: number;
   /** Disc number */
   discNumber?: number;
+  /** Track duration in seconds (parsed from RunTimeTicks) */
+  durationSeconds?: number;
 }
 
 // =============================================================================
@@ -286,6 +288,7 @@ export interface JellyfinTrackItem {
   Genres?: string[];
   AlbumId?: string;
   Path?: string;
+  RunTimeTicks?: number;
   MediaSources?: Array<{
     Path: string;
     Container?: string;

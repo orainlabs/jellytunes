@@ -160,6 +160,7 @@ const api = {
       album?: string;
       artists?: string[];
       albumArtist?: string;
+      durationSeconds?: number;
     }>;
     errors: string[];
   }> => ipcRenderer.invoke('sync:getTracksForItem', options),

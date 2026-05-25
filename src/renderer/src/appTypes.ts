@@ -114,6 +114,7 @@ export interface SyncProgressInfo {
 export interface PreviewData {
   trackCount: number;
   totalBytes: number;
+  totalDurationSeconds: number;
   formatBreakdown: Record<string, number>;
   newTracksCount: number;
   newTracksBytes: number;

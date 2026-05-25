@@ -487,6 +487,11 @@ class SyncApiImpl implements SyncApi {
       `trackItemToInfo track="${item.Name}" → item.Album="${item.Album ?? '(empty)'}" item.AlbumName="${item.AlbumName ?? '(empty)'}" albumName="${albumName ?? '(empty)'}" resolved="${resolvedAlbum}"`,
     );
 
+    // Parse RunTimeTicks: 1 tick = 100 nanoseconds = 10,000,000 ticks per second
+    const durationSeconds = item.RunTimeTicks
+      ? Math.floor(item.RunTimeTicks / 10_000_000)
+      : undefined;
+
     return {
       id: item.Id,
       name: item.Name,
@@ -502,6 +507,7 @@ class SyncApiImpl implements SyncApi {
       bitrate: source?.Bitrate,
       trackNumber: item.IndexNumber,
       discNumber: item.ParentIndexNumber,
+      durationSeconds,
     };
   }
 }

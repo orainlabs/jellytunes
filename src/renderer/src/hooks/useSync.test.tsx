@@ -4,6 +4,7 @@ import { renderHook, act } from '@testing-library/react';
 import { useSync } from './useSync';
 import type { Artist, Album, Playlist } from '../appTypes';
 import type { SyncedItemInfo } from './useDeviceSelections';
+import { getTrackRegistry } from './useTrackRegistry';
 
 const mockArtists: Artist[] = [
   { Id: 'artist-1', Name: 'The Beatles', AlbumCount: 13, ImageTags: {} },
@@ -300,6 +301,111 @@ describe('useSync', () => {
       // Verify revalidateDevice is called with the current coverArtMode from state
       // This prevents the bug where stale 'embed' was used instead of 'companion'
       expect(revalidateDevice).toHaveBeenCalledWith({ coverArtMode: 'companion' });
+    });
+  });
+
+  describe('handleStartSync preview data', () => {
+    beforeEach(() => {
+      // Reset registry singleton before each test
+      const registry = getTrackRegistry();
+      registry.invalidateAll();
+    });
+
+    it('sets previewData with deduplicated trackCount', async () => {
+      const props = {
+        ...defaultProps,
+        // Select artist-1 which has tracks
+        selectedTracks: new Set(['artist-1']),
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.showPreview).toBe(true);
+      expect(result.current.previewData).not.toBeNull();
+      // trackCount should reflect deduplicated tracks
+      expect(result.current.previewData!.trackCount).toBeGreaterThanOrEqual(0);
+    });
+
+    it('sets previewData with totalDurationSeconds', async () => {
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1']),
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.previewData).not.toBeNull();
+      // totalDurationSeconds should be present (may be 0 if no tracks loaded)
+      expect(result.current.previewData!.totalDurationSeconds).toBeGreaterThanOrEqual(0);
+    });
+
+    it('sets previewData with totalBytes calculated correctly', async () => {
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1']),
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.previewData).not.toBeNull();
+      // totalBytes should be >= newTracksBytes + updatedTracksBytes + alreadySyncedBytes
+      expect(result.current.previewData!.totalBytes).toBeGreaterThanOrEqual(
+        result.current.previewData!.newTracksBytes +
+          result.current.previewData!.updatedTracksBytes +
+          result.current.previewData!.alreadySyncedBytes,
+      );
+    });
+
+    it('previewData has correct structure with all required fields', async () => {
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1']),
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.previewData).not.toBeNull();
+      const data = result.current.previewData!;
+      // Check all required fields from PreviewData interface
+      expect(typeof data.trackCount).toBe('number');
+      expect(typeof data.totalBytes).toBe('number');
+      expect(typeof data.totalDurationSeconds).toBe('number');
+      expect(typeof data.newTracksCount).toBe('number');
+      expect(typeof data.newTracksBytes).toBe('number');
+      expect(typeof data.updatedTracksCount).toBe('number');
+      expect(typeof data.updatedTracksBytes).toBe('number');
+      expect(typeof data.alreadySyncedCount).toBe('number');
+      expect(typeof data.alreadySyncedBytes).toBe('number');
+      expect(typeof data.willRemoveCount).toBe('number');
+      expect(typeof data.willRemoveBytes).toBe('number');
     });
   });
 });

@@ -277,21 +277,29 @@ export function useSync({
       (id) => syncedIds.has(id) && !outOfSyncItems.has(id),
     );
 
-    // Track counts from registry (synced/outOfSync items are always loaded via loadDeviceSyncedTracks)
-    const newTracksCount = newItemIds.reduce(
-      (sum, id) => sum + registry.getItemTrackIds(id).length,
-      0,
-    );
-    const updatedTracksCount = updatedItemIds.reduce(
-      (sum, id) => sum + registry.getItemTrackIds(id).length,
-      0,
-    );
-    const alreadySyncedTracksCount = alreadySyncedItemIds.reduce(
-      (sum, id) => sum + registry.getItemTrackIds(id).length,
-      0,
-    );
+    // Deduplicated track IDs across all selected items
+    const allItemIds = [...selectedTracks];
+    const seenTrackIds = new Set<string>();
+    const itemTrackMap = new Map<string, Set<string>>(); // itemId -> trackIds (for size calculation)
 
-    // Sizes from registry (instant, same source as Audio bar in SyncPanel)
+    for (const itemId of allItemIds) {
+      const trackIds = registry.getItemTrackIds(itemId);
+      const uniqueTrackIds = new Set<string>();
+      for (const tid of trackIds) {
+        if (!seenTrackIds.has(tid)) {
+          seenTrackIds.add(tid);
+          uniqueTrackIds.add(tid);
+        }
+      }
+      if (uniqueTrackIds.size > 0) {
+        itemTrackMap.set(itemId, uniqueTrackIds);
+      }
+    }
+
+    // Calculate deduplicated total duration
+    const totalDurationSeconds = registry.calculateDuration(selectedTracks);
+
+    // Calculate sizes using deduplicated track sets per category
     const newItemSet = new Set(newItemIds);
     const updatedItemSet = new Set(updatedItemIds);
     const alreadySyncedItemSet = new Set(alreadySyncedItemIds);
@@ -304,9 +312,24 @@ export function useSync({
     const willRemoveCount = toDeleteIds.length;
     const willRemoveBytes = registry.countRemoveBytes(toDeleteIds, syncFolder);
 
+    // Deduplicated track counts by category
+    const newTracksCount = newItemIds.reduce(
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
+      0,
+    );
+    const updatedTracksCount = updatedItemIds.reduce(
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
+      0,
+    );
+    const alreadySyncedTracksCount = alreadySyncedItemIds.reduce(
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
+      0,
+    );
+
     setPreviewData({
-      trackCount: newTracksCount + updatedTracksCount + alreadySyncedTracksCount,
+      trackCount: seenTrackIds.size,
       totalBytes: newTracksBytes + updatedTracksBytes + alreadySyncedBytes,
+      totalDurationSeconds,
       formatBreakdown: {},
       newTracksCount,
       newTracksBytes,
