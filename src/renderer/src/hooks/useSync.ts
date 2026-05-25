@@ -313,16 +313,19 @@ export function useSync({
     const willRemoveBytes = registry.countRemoveBytes(toDeleteIds, syncFolder);
 
     // Deduplicated track counts by category
+    // Use itemTrackMap (deduplicated) if available, otherwise 0.
+    // If itemTrackMap has no entry for an item, all its tracks were already
+    // counted via earlier items — they don't contribute to this category's unique total.
     const newTracksCount = newItemIds.reduce(
-      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? 0),
       0,
     );
     const updatedTracksCount = updatedItemIds.reduce(
-      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? 0),
       0,
     );
     const alreadySyncedTracksCount = alreadySyncedItemIds.reduce(
-      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? 0),
       0,
     );
 
