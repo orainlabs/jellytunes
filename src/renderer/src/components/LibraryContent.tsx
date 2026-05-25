@@ -85,6 +85,12 @@ export function LibraryContent({
   }, [selectedTracks.size]);
 
   const applyFilter = (f: SyncFilter) => {
+    // Don't apply filter if the results would be empty
+    if (f === 'selected' && selectedTracks.size === 0) return;
+    if (f === 'unselected') {
+      const totalItems = artists.length + albums.length + playlists.length;
+      if (selectedTracks.size >= totalItems) return;
+    }
     setSyncFilter(f);
     setFilterSnapshot(new Set(selectedTracks));
   };
@@ -155,20 +161,26 @@ export function LibraryContent({
           {/* Title + sync filter */}
           <div className="flex items-center justify-between">
             <h2 className="text-headline-md capitalize">{activeLibrary}</h2>
-            {selectedTracks.size > 0 && (
-              <div className="flex gap-1 text-caption bg-surface_container_low rounded-lg p-1">
-                {(['all', 'selected', 'unselected'] as SyncFilter[]).map((f) => (
+            <div className="flex gap-1 text-caption bg-surface_container_low rounded-lg p-1">
+              {(['all', 'selected', 'unselected'] as SyncFilter[]).map((f) => {
+                const isSelected = syncFilter === f;
+                const isDisabled =
+                  (f === 'selected' && selectedTracks.size === 0) ||
+                  (f === 'unselected' &&
+                    selectedTracks.size >= artists.length + albums.length + playlists.length);
+                return (
                   <button
                     key={f}
                     data-testid={`sync-filter-${f}`}
                     onClick={() => applyFilter(f)}
-                    className={`px-3 py-1 rounded-md transition-colors ${syncFilter === f ? 'bg-primary_container/40 text-primary' : 'text-on_surface_variant hover:text-on_surface'}`}
+                    disabled={isDisabled}
+                    className={`px-3 py-1 rounded-md transition-colors ${isSelected ? 'bg-primary_container/40 text-primary' : 'text-on_surface_variant hover:text-on_surface'} ${isDisabled ? 'opacity-40 cursor-default' : ''}`}
                   >
                     {f === 'all' ? 'All' : f === 'selected' ? 'Selected' : 'Not selected'}
                   </button>
-                ))}
-              </div>
-            )}
+                );
+              })}
+            </div>
           </div>
 
           {/* Search */}

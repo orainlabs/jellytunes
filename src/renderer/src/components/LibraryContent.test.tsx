@@ -187,4 +187,64 @@ describe('LibraryContent', () => {
     await user.click(clearButton);
     expect(defaultProps.onClearSelection).toHaveBeenCalled();
   });
+
+  // ORAIN-0385: Filter controls should always be visible (no reflow)
+  it('shows all three filter buttons when selectedTracks is empty', () => {
+    render(<LibraryContent {...defaultProps} selectedTracks={new Set()} />);
+    expect(screen.getByTestId('sync-filter-all')).toBeInTheDocument();
+    expect(screen.getByTestId('sync-filter-selected')).toBeInTheDocument();
+    expect(screen.getByTestId('sync-filter-unselected')).toBeInTheDocument();
+  });
+
+  it('shows all three filter buttons when selectedTracks has items', () => {
+    render(
+      <LibraryContent
+        {...defaultProps}
+        selectedTracks={new Set(['artist-1'])}
+        selectionSummary={'1 selected'}
+      />,
+    );
+    expect(screen.getByTestId('sync-filter-all')).toBeInTheDocument();
+    expect(screen.getByTestId('sync-filter-selected')).toBeInTheDocument();
+    expect(screen.getByTestId('sync-filter-unselected')).toBeInTheDocument();
+  });
+
+  it('disables Selected button when no items are selected', () => {
+    render(<LibraryContent {...defaultProps} selectedTracks={new Set()} />);
+    expect(screen.getByTestId('sync-filter-selected')).toBeDisabled();
+  });
+
+  it('disables Unselected button when all items are selected', () => {
+    // When all items are selected, "unselected" filter would show nothing
+    render(
+      <LibraryContent
+        {...defaultProps}
+        selectedTracks={new Set(['artist-1', 'artist-2'])} // All items selected
+        selectionSummary={'2 selected'}
+      />,
+    );
+    expect(screen.getByTestId('sync-filter-unselected')).toBeDisabled();
+  });
+
+  it('enables Selected button when items are selected', () => {
+    render(
+      <LibraryContent
+        {...defaultProps}
+        selectedTracks={new Set(['artist-1'])}
+        selectionSummary={'1 selected'}
+      />,
+    );
+    expect(screen.getByTestId('sync-filter-selected')).toBeEnabled();
+  });
+
+  it('enables Unselected button when not all items are selected', () => {
+    render(
+      <LibraryContent
+        {...defaultProps}
+        selectedTracks={new Set(['artist-1'])} // Only some selected
+        selectionSummary={'1 selected'}
+      />,
+    );
+    expect(screen.getByTestId('sync-filter-unselected')).toBeEnabled();
+  });
 });
