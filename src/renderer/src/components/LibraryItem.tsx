@@ -87,8 +87,9 @@ export function LibraryItem({
     // type === 'playlist'
     const trackCount = playlist.ChildCount;
     const runtime = formatRunTimeTicks(playlist.RunTimeTicks);
-    if (trackCount !== null && runtime) return `${trackCount} tracks · ${runtime}`;
-    if (trackCount !== null) return `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
+    // Hide track count when it's 0 or undefined (unreliable/meaningless)
+    if (trackCount && trackCount > 0 && runtime) return `${trackCount} tracks · ${runtime}`;
+    if (trackCount && trackCount > 0) return `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
     if (runtime) return runtime;
     return null;
   })();

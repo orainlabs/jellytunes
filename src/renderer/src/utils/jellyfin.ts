@@ -87,13 +87,14 @@ export function normalizeAlbum(raw: Record<string, unknown>): Album {
  * Resolves track count across versions:
  *   modern  → raw.ChildCount  (preferred)
  *   older   → raw.ItemCount   (fallback)
- *   oldest → 0
+ *   oldest → undefined (allows LibraryItem to degrade gracefully without showing "0")
  */
 export function normalizePlaylist(raw: Record<string, unknown>): Playlist {
   return {
     Id: String(raw.Id ?? ''),
     Name: String(raw.Name ?? ''),
-    ChildCount: (raw.ChildCount as number) ?? (raw.ItemCount as number) ?? 0,
+    // undefined when absent lets LibraryItem hide subtitle instead of showing "0 tracks"
+    ChildCount: (raw.ChildCount as number) ?? (raw.ItemCount as number) ?? undefined,
     RunTimeTicks: (raw.RunTimeTicks as number) ?? undefined,
     ImageTags: (raw.ImageTags as Playlist['ImageTags']) ?? undefined,
   };

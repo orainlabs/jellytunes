@@ -157,10 +157,11 @@ describe('jellyfin normalizers', () => {
       expect(result.ChildCount).toBe(42);
     });
 
-    it('falls back to 0 when neither ChildCount nor ItemCount exists', () => {
+    it('falls back to undefined when neither ChildCount nor ItemCount exists', () => {
+      // This lets LibraryItem hide the subtitle instead of showing "0 tracks"
       const raw = { Id: 'p1', Name: 'My Favorites' };
       const result = normalizePlaylist(raw);
-      expect(result.ChildCount).toBe(0);
+      expect(result.ChildCount).toBeUndefined();
     });
 
     it('preserves Id, Name, ImageTags', () => {
