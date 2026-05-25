@@ -114,8 +114,8 @@ describe('LoginScreen', () => {
     expect(screen.getByTestId('error-message')).toHaveTextContent('Invalid credentials');
   });
 
-  // 5. API key helper text visible (Get your API Key in Jellyfin...)
-  it('shows API key helper text', () => {
+  // 5. API key helper text visible in Spanish
+  it('shows API key helper text in Spanish', () => {
     const props = {
       urlInput: '',
       apiKeyInput: '',
@@ -125,6 +125,31 @@ describe('LoginScreen', () => {
       onSubmit: vi.fn(),
     };
     render(<LoginScreen {...props} />);
-    expect(screen.getByText(/Get your API Key in Jellyfin/)).toBeInTheDocument();
+    expect(screen.getByText(/Consigue tu Clave API en Jellyfin/)).toBeInTheDocument();
+  });
+
+  // 6. i18n: Spanish strings displayed when locale is es
+  it('displays Spanish strings when locale is es', () => {
+    const props = {
+      urlInput: '',
+      apiKeyInput: '',
+      error: null as string | null,
+      onUrlChange: vi.fn(),
+      onApiKeyChange: vi.fn(),
+      onSubmit: vi.fn(),
+    };
+    render(<LoginScreen {...props} />);
+    // Header should be in Spanish
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Conectar a Jellyfin');
+    // Label should be in Spanish
+    expect(screen.getByText('URL del servidor')).toBeInTheDocument();
+    // Placeholder should be in Spanish
+    expect(screen.getByPlaceholderText(/tuDominio/i)).toBeInTheDocument();
+    // API Key label in Spanish
+    expect(screen.getByText('Clave API')).toBeInTheDocument();
+    // Button should be in Spanish
+    expect(screen.getByRole('button')).toHaveTextContent('Conectar');
+    // Helper text should be in Spanish
+    expect(screen.getByText(/Consigue tu Clave API en Jellyfin/)).toBeInTheDocument();
   });
 });
