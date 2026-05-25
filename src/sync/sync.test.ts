@@ -3086,21 +3086,35 @@ describe('cleanCoverFilesForNonCompanionMode', () => {
       }),
     });
 
-    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    // Mock DB returning record with companion mode (simulates prior sync with companion)
+    const mockDb = {
+      getSyncedTracksForDevice: (_mountPoint: string) => [
+        {
+          id: 1,
+          deviceId: 1,
+          itemId: 'album-1',
+          trackId: 'track-1',
+          destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+          fileSize: 100,
+          metadataHash: null,
+          coverArtMode: 'companion',
+          encodedBitrate: '192k',
+          serverPath: '/music/Artist/Album/track.mp3',
+          serverRootPath: '/music/',
+          syncedAt: new Date().toISOString(),
+        },
+      ],
+    };
+
+    const deps: SyncDependencies = {
+      api: mockApi,
+      fs: mockFs,
+      converter: createMockConverter(),
+      db: mockDb as any,
+    };
     const core = createTestSyncCore(configWithServerRoot, deps);
 
-    // First sync with companion mode (creates cover.jpg)
-    await core.sync({
-      itemIds: ['album-1'],
-      itemTypes: new Map([['album-1', 'album' as ItemType]]),
-      destinationPath: '/mnt/usb',
-      options: { coverArtMode: 'companion' },
-    });
-
-    // Verify cover.jpg was created
-    expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeDefined();
-
-    // Second sync switching to embed mode — cover.jpg should be removed
+    // Switch to embed mode — cover.jpg should be removed because DB had companion mode
     await core.sync({
       itemIds: ['album-1'],
       itemTypes: new Map([['album-1', 'album' as ItemType]]),
@@ -3134,9 +3148,35 @@ describe('cleanCoverFilesForNonCompanionMode', () => {
       }),
     });
 
-    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    // Mock DB returning record with companion mode
+    const mockDb = {
+      getSyncedTracksForDevice: (_mountPoint: string) => [
+        {
+          id: 1,
+          deviceId: 1,
+          itemId: 'album-1',
+          trackId: 'track-1',
+          destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+          fileSize: 100,
+          metadataHash: null,
+          coverArtMode: 'companion',
+          encodedBitrate: '192k',
+          serverPath: '/music/Artist/Album/track.mp3',
+          serverRootPath: '/music/',
+          syncedAt: new Date().toISOString(),
+        },
+      ],
+    };
+
+    const deps: SyncDependencies = {
+      api: mockApi,
+      fs: mockFs,
+      converter: createMockConverter(),
+      db: mockDb as any,
+    };
     const core = createTestSyncCore(configWithServerRoot, deps);
 
+    // Switch to off mode — cover.jpg should be removed because DB had companion mode
     await core.sync({
       itemIds: ['album-1'],
       itemTypes: new Map([['album-1', 'album' as ItemType]]),
@@ -3216,7 +3256,33 @@ describe('cleanCoverFilesForNonCompanionMode', () => {
       }),
     });
 
-    const deps: SyncDependencies = { api: mockApi, fs: mockFs, converter: createMockConverter() };
+    // Mock DB: track-1 was synced with companion mode
+    // Other/ directory has no DB record, so its cover.jpg should NOT be touched
+    const mockDb = {
+      getSyncedTracksForDevice: (_mountPoint: string) => [
+        {
+          id: 1,
+          deviceId: 1,
+          itemId: 'album-1',
+          trackId: 'track-1',
+          destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+          fileSize: 100,
+          metadataHash: null,
+          coverArtMode: 'companion',
+          encodedBitrate: '192k',
+          serverPath: '/music/Artist/Album/track.mp3',
+          serverRootPath: '/music/',
+          syncedAt: new Date().toISOString(),
+        },
+      ],
+    };
+
+    const deps: SyncDependencies = {
+      api: mockApi,
+      fs: mockFs,
+      converter: createMockConverter(),
+      db: mockDb as any,
+    };
     const core = createTestSyncCore(configWithServerRoot, deps);
 
     await core.sync({
@@ -3226,9 +3292,9 @@ describe('cleanCoverFilesForNonCompanionMode', () => {
       options: { coverArtMode: 'embed' },
     });
 
-    // cover.jpg in tracked dir removed
+    // cover.jpg in tracked dir removed (DB had companion mode)
     expect(mockFs.__getFile('/mnt/usb/Artist/Album/cover.jpg')).toBeUndefined();
-    // cover.jpg in untracked dir preserved (scope boundary respected)
+    // cover.jpg in untracked dir preserved (scope boundary respected — not in DB)
     expect(mockFs.__getFile('/mnt/usb/Artist/Other/cover.jpg')).toBeDefined();
   });
 });

@@ -183,6 +183,13 @@ function parseBitrateKbps(bitrate: string): number {
 const noopLogger: SyncLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
 
 /**
+ * Mock database interface for testing.
+ */
+interface MockDatabase {
+  getSyncedTracksForDevice: (mountPoint: string) => SyncedTrackRecord[];
+}
+
+/**
  * Dependencies container (for dependency injection).
  */
 export interface SyncDependencies {
@@ -190,6 +197,8 @@ export interface SyncDependencies {
   fs: FileSystem;
   converter: AudioConverter;
   logger?: SyncLogger;
+  /** Mock database for testing. If provided, overrides getSyncedTracksForDevice. */
+  db?: MockDatabase;
 }
 
 /**
@@ -240,6 +249,7 @@ class SyncCoreImpl {
       fs: deps?.fs ?? defaults.fs,
       converter: deps?.converter ?? defaults.converter,
       logger,
+      db: deps?.db,
     };
     this.log = logger;
     this.progressEmitter = createProgressEmitter();
@@ -319,13 +329,31 @@ class SyncCoreImpl {
       // Phase 4: Cleanup
       await this.runCleanupPhase(input.itemIds, input.itemTypes, input.destinationPath, options);
 
-      // AC-1: When switching FROM companion mode, remove stale cover.jpg files
+      // AC-1: When switching FROM companion mode, remove stale cover.jpg files.
+      // Query DB for records that were synced with companion mode to find stale covers.
       const currentCoverMode = options.coverArtMode ?? 'embed';
-      if (currentCoverMode !== 'companion' && (copyResult.companionCoverPaths?.length ?? 0) > 0) {
-        await this.cleanCoverFilesForNonCompanionMode(
-          input.destinationPath,
-          copyResult.companionCoverPaths ?? [],
-        );
+      if (currentCoverMode !== 'companion') {
+        try {
+          // Use mock DB if provided (for testing), otherwise use real DB
+          const getTracks = this.deps.db?.getSyncedTracksForDevice ?? getSyncedTracksForDevice;
+          const dbRecords = await Promise.resolve(getTracks(input.destinationPath));
+          const staleCoverPaths = dbRecords
+            .filter((rec) => rec.coverArtMode === 'companion')
+            .map((rec) => {
+              // Extract directory from track file path: /mnt/usb/Artist/Album/track.mp3 → /mnt/usb/Artist/Album
+              const dirPath = rec.destinationPath.substring(
+                0,
+                rec.destinationPath.lastIndexOf('/'),
+              );
+              return `${dirPath}/cover.jpg`;
+            })
+            .filter((path, idx, arr) => arr.indexOf(path) === idx); // deduplicate
+          if (staleCoverPaths.length > 0) {
+            await this.cleanCoverFilesForNonCompanionMode(input.destinationPath, staleCoverPaths);
+          }
+        } catch (_e) {
+          this.log.warn('Failed to load synced records for cover cleanup');
+        }
       }
 
       // Lyrics cleanup: When lyricsMode is embed, clean up stale .lrc files from prior syncs
@@ -431,7 +459,6 @@ class SyncCoreImpl {
     statsMoved: number;
     lyricsAdded: number;
     syncedBasenames: string[];
-    companionCoverPaths: string[];
   }> {
     this.currentPhase = 'copying';
     phaseManager.startCopying(tracks.length);
@@ -446,11 +473,11 @@ class SyncCoreImpl {
     let statsMoved = 0;
     let lyricsAdded = 0;
     const syncedBasenames: string[] = [];
-    const companionCoverPaths: string[] = [];
 
     let allSyncedRecords: SyncedTrackRecord[] = [];
     try {
-      allSyncedRecords = await Promise.resolve(getSyncedTracksForDevice(destinationPath));
+      const getTracks = this.deps.db?.getSyncedTracksForDevice ?? getSyncedTracksForDevice;
+      allSyncedRecords = await Promise.resolve(getTracks(destinationPath));
     } catch (_e) {
       this.log.warn('Failed to load synced records, treating all tracks as new');
     }
@@ -488,10 +515,6 @@ class SyncCoreImpl {
         if (result.processed) {
           syncedBasenames.push(getFilenameFromPath(track.path ?? track.id).replace(/\.[^.]+$/, ''));
         }
-        // Collect companion cover.jpg paths for AC-1 cleanup
-        if (result.companionCoverPath) {
-          companionCoverPaths.push(result.companionCoverPath);
-        }
       } finally {
         completed++;
         phaseManager.updateCopying(completed, tracks.length, track.name);
@@ -499,7 +522,7 @@ class SyncCoreImpl {
     });
 
     this.cancellation.throwIfCancelled();
-    return { statsRetagged, statsMoved, lyricsAdded, syncedBasenames, companionCoverPaths };
+    return { statsRetagged, statsMoved, lyricsAdded, syncedBasenames };
   }
 
   private async runCleanupPhase(
@@ -1063,16 +1086,6 @@ class SyncCoreImpl {
             await this.deps.fs.unlink(lrcPath);
           }
 
-          // AC-3: Delete cover.jpg if present (will be cleaned if dir becomes empty)
-          const coverPath = `${outputDir}/cover.jpg`;
-          try {
-            if (await this.deps.fs.exists(coverPath)) {
-              await this.deps.fs.unlink(coverPath);
-            }
-          } catch {
-            /* non-fatal */
-          }
-
           await this.deps.fs.unlink(outputPath);
           deleted = true;
           dirsToClean.add(outputDir);
@@ -1090,6 +1103,11 @@ class SyncCoreImpl {
     // (files without corresponding audio files)
     for (const dir of dirsToClean) {
       await this.cleanOrphanedLrcFiles(dir);
+    }
+
+    // AC-3: Clean cover.jpg from directories that are now empty of audio files
+    for (const dir of dirsToClean) {
+      await this.cleanCoverIfDirEmpty(dir);
     }
 
     // Clean up empty directories (deepest first)
@@ -1777,6 +1795,28 @@ class SyncCoreImpl {
       }
     } catch {
       /* ignore errors during cleanup */
+    }
+  }
+
+  /**
+   * AC-3: Remove cover.jpg from a directory if it has no audio files.
+   * Called after track deletion to clean up stale covers from now-empty dirs.
+   */
+  private async cleanCoverIfDirEmpty(dir: string): Promise<void> {
+    try {
+      const entries = await this.deps.fs.readdir(dir);
+      const hasAudio = ALL_AUDIO_EXTENSIONS.some((ext) =>
+        entries.some((e) => e.toLowerCase().endsWith(`.${ext.toLowerCase()}`)),
+      );
+      if (hasAudio) return; // directory still has audio files, keep cover.jpg
+
+      const coverPath = `${dir}/cover.jpg`;
+      if (await this.deps.fs.exists(coverPath)) {
+        await this.deps.fs.unlink(coverPath);
+        this.log.debug(`Removed cover.jpg from empty directory: ${dir}`);
+      }
+    } catch {
+      /* non-fatal */
     }
   }
 
