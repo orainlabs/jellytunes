@@ -64,6 +64,7 @@ const defaultProps = {
   serverUrl: 'https://jellyfin.example.com',
   searchQuery: '',
   onSearchChange: vi.fn(),
+  onClearSearch: vi.fn(),
   searchResults: null,
   isSearching: false,
   searchError: null,

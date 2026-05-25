@@ -34,6 +34,7 @@ interface LibraryContentProps {
   // Search (managed by parent, API-driven)
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  onClearSearch: () => void;
   searchResults: SearchResults | null;
   isSearching: boolean;
   searchError?: string | null;
@@ -61,6 +62,7 @@ export function LibraryContent({
   serverUrl,
   searchQuery,
   onSearchChange,
+  onClearSearch,
   searchResults,
   isSearching,
   searchError,
@@ -182,7 +184,8 @@ export function LibraryContent({
             />
             {searchQuery && (
               <button
-                onClick={() => onSearchChange('')}
+                onClick={onClearSearch}
+                aria-label="Clear search"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-on_surface_variant hover:text-on_surface transition-colors"
               >
                 <X className="w-4 h-4" />
