@@ -15,17 +15,21 @@ beforeEach(() => {
 });
 
 describe('useSavedDestinations', () => {
-  it('updateDestination persists convertToMp3 and bitrate prefs', () => {
+  it('updateDestination persists convertToMp3 and bitrate prefs', async () => {
     const { result } = renderHook(() => useSavedDestinations());
 
     // Add a destination
-    const dest = result.current.addDestination('/mnt/music');
-    expect(dest.convertToMp3).toBeUndefined();
-    expect(dest.bitrate).toBeUndefined();
+    act(() => {
+      result.current.addDestination('/mnt/music');
+    });
+    // Get the destination from state (setState is synchronous after act)
+    const dest = result.current.destinations.find((d) => d.path === '/mnt/music');
+    expect(dest?.convertToMp3).toBeUndefined();
+    expect(dest?.bitrate).toBeUndefined();
 
     // Update prefs
-    act(() => {
-      result.current.updateDestination(dest.id, { convertToMp3: true, bitrate: '128k' as const });
+    await act(async () => {
+      result.current.updateDestination(dest!.id, { convertToMp3: true, bitrate: '128k' as const });
     });
 
     // Verify localStorage was called with the patch (updateDestination call = index 1)

@@ -190,15 +190,7 @@ export function useSync({
         setIsSyncing(false);
         const updatedItems = await window.api.getSyncedItems(syncFolder);
         setPreviouslySyncedItems(updatedItems);
-        setSyncSuccessData({
-          tracksCopied: 0,
-          tracksSkipped: 0,
-          tracksRetagged: 0,
-          lyricsAdded: 0,
-          removed: toDeleteIds.length,
-          errors: [],
-          lyricsMode,
-        });
+        alert(`Sync complete!\n\nRemoved: ${toDeleteIds.length} item(s)\nNothing left to sync.`);
         return;
       }
 
@@ -242,56 +234,28 @@ export function useSync({
           errors: result.errors,
         });
       }
-    } catch (error: unknown) {
+    } catch (error) {
       unsubscribe?.();
       logger.error('Sync error: ' + (error instanceof Error ? error.message : String(error)));
       setSyncProgress(null);
       setIsSyncing(false);
-      setSyncSuccessData({
-        tracksCopied: 0,
-        tracksSkipped: 0,
-        tracksRetagged: 0,
-        lyricsAdded: 0,
-        removed: 0,
-        errors: [error instanceof Error ? error.message : String(error)],
-      });
+      alert('Sync error: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
   const handleStartSync = (): void => {
     if (!syncFolder) {
-      setSyncSuccessData({
-        tracksCopied: 0,
-        tracksSkipped: 0,
-        tracksRetagged: 0,
-        lyricsAdded: 0,
-        removed: 0,
-        errors: ['Please select a sync destination folder first'],
-      });
+      alert('Please select a sync destination folder first');
       return;
     }
     if (!jellyfinConfig || !userId) {
-      setSyncSuccessData({
-        tracksCopied: 0,
-        tracksSkipped: 0,
-        tracksRetagged: 0,
-        lyricsAdded: 0,
-        removed: 0,
-        errors: ['Not connected to Jellyfin'],
-      });
+      alert('Not connected to Jellyfin');
       return;
     }
 
     const toDeleteIds = buildToDeleteIds();
     if (selectedTracks.size === 0 && toDeleteIds.length === 0) {
-      setSyncSuccessData({
-        tracksCopied: 0,
-        tracksSkipped: 0,
-        tracksRetagged: 0,
-        lyricsAdded: 0,
-        removed: 0,
-        errors: ['Please select at least one item to sync'],
-      });
+      alert('Please select at least one item to sync');
       return;
     }
 
@@ -349,19 +313,16 @@ export function useSync({
     const willRemoveBytes = registry.countRemoveBytes(toDeleteIds, syncFolder);
 
     // Deduplicated track counts by category
-    // Use itemTrackMap (deduplicated) if available, otherwise 0.
-    // If itemTrackMap has no entry for an item, all its tracks were already
-    // counted via earlier items — they don't contribute to this category's unique total.
     const newTracksCount = newItemIds.reduce(
-      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? 0),
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
       0,
     );
     const updatedTracksCount = updatedItemIds.reduce(
-      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? 0),
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
       0,
     );
     const alreadySyncedTracksCount = alreadySyncedItemIds.reduce(
-      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? 0),
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? registry.getItemTrackIds(id).length),
       0,
     );
 

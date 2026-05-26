@@ -127,7 +127,7 @@ describe('useDeviceSelections', () => {
         await result.current.activateDevice('/Volumes/USB', defaultOptions);
       });
 
-      act(() => {
+      await act(async () => {
         result.current.toggleItem('album-1');
       });
 
@@ -143,12 +143,12 @@ describe('useDeviceSelections', () => {
         await result.current.activateDevice('/Volumes/USB', defaultOptions);
       });
 
-      act(() => {
+      await act(async () => {
         result.current.toggleItem('album-1');
       });
       expect(result.current.selectedTracks.has('album-1')).toBe(true);
 
-      act(() => {
+      await act(async () => {
         result.current.toggleItem('album-1');
       });
       expect(result.current.selectedTracks.has('album-1')).toBe(false);
@@ -165,7 +165,7 @@ describe('useDeviceSelections', () => {
         await result.current.activateDevice('/Volumes/USB', defaultOptions);
       });
 
-      act(() => {
+      await act(async () => {
         result.current.selectItems([{ Id: 'artist-1' }, { Id: 'album-2' }, { Id: 'playlist-1' }]);
       });
 
@@ -185,12 +185,12 @@ describe('useDeviceSelections', () => {
         await result.current.activateDevice('/Volumes/USB', defaultOptions);
       });
 
-      act(() => {
+      await act(async () => {
         result.current.selectItems([{ Id: 'artist-1' }, { Id: 'album-1' }]);
       });
       expect(result.current.selectedTracks.size).toBeGreaterThan(0);
 
-      act(() => {
+      await act(async () => {
         result.current.clearSelection();
       });
 
@@ -229,7 +229,7 @@ describe('useDeviceSelections', () => {
         await result.current.activateDevice('/Volumes/USB1', defaultOptions);
       });
 
-      act(() => {
+      await act(async () => {
         result.current.selectItems([{ Id: 'artist-1' }]);
       });
 
@@ -348,7 +348,7 @@ describe('useDeviceSelections', () => {
       expect(mockApi.analyzeDiff).toHaveBeenCalledTimes(1);
 
       // Invalidate cache (simulates library refresh detecting server changes)
-      act(() => {
+      await act(async () => {
         result.current.invalidateCache();
       });
 
@@ -394,11 +394,9 @@ describe('useDeviceSelections', () => {
         await result.current.activateDevice('/Volumes/USB', defaultOptions);
       });
 
-      expect(() => {
-        act(() => {
-          result.current.updateConvertOptions(true, '320k', 'companion');
-        });
-      }).not.toThrow();
+      await act(async () => {
+        result.current.updateConvertOptions(true, '320k', 'companion');
+      });
     });
 
     it('persists coverArtMode change across revalidation', async () => {
@@ -421,7 +419,7 @@ describe('useDeviceSelections', () => {
       expect(mockApi.analyzeDiff.mock.calls[0][0].options.coverArtMode).toBe('embed');
 
       // Change coverArtMode to companion
-      act(() => {
+      await act(async () => {
         result.current.updateConvertOptions(false, '192k', 'companion');
       });
 
