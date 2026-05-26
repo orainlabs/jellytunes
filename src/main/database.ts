@@ -468,11 +468,14 @@ export function getSyncedTracksForItem(mountPoint: string, itemId: string): Sync
  */
 export function removeSyncedTracksForItem(mountPoint: string, itemId: string): void {
   const database = requireDb();
-  const deviceId = upsertDevice(mountPoint);
+  const device = database
+    .prepare('SELECT id FROM devices WHERE mount_point = ?')
+    .get(mountPoint) as { id: number } | undefined;
+  if (!device) return;
 
   database
     .prepare('DELETE FROM synced_tracks WHERE device_id = ? AND item_id = ?')
-    .run(deviceId, itemId);
+    .run(device.id, itemId);
 }
 
 /**
@@ -480,11 +483,14 @@ export function removeSyncedTracksForItem(mountPoint: string, itemId: string): v
  */
 export function removeSyncedTrack(mountPoint: string, trackId: string): void {
   const database = requireDb();
-  const deviceId = upsertDevice(mountPoint);
+  const device = database
+    .prepare('SELECT id FROM devices WHERE mount_point = ?')
+    .get(mountPoint) as { id: number } | undefined;
+  if (!device) return;
 
   database
     .prepare('DELETE FROM synced_tracks WHERE device_id = ? AND track_id = ?')
-    .run(deviceId, trackId);
+    .run(device.id, trackId);
 }
 
 export function closeDatabase(): void {

@@ -527,7 +527,7 @@ export function createFFmpegConverter(): AudioConverter {
 
         // Input 1: cover art image (only when embedding)
         if (embedCover) {
-          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}.jpg`;
+          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
           fs.writeFileSync(coverTempPath, embedCover);
           args.push('-i', coverTempPath);
         }
@@ -655,7 +655,7 @@ export function createFFmpegConverter(): AudioConverter {
         // Handle cover art via temp file — insert immediately after first -i
         let coverTempPath: string | undefined;
         if (embedCover) {
-          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}.jpg`;
+          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
           fs.writeFileSync(coverTempPath, embedCover);
           args.push(
             '-i',

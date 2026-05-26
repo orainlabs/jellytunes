@@ -2052,12 +2052,13 @@ class SyncCoreImpl {
     const tmpPath = `${outputPath}.jt-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const stream = await this.deps.api.downloadItemStream(track.id);
 
-    // Pipe stream to temp file
+    // Pipe stream to temp file — handle errors to prevent hangs on disk-full
     const writeStream = await this.deps.fs.createWriteStream(tmpPath);
     await new Promise<void>((resolve, reject) => {
+      writeStream.on('error', reject);
+      stream.on('error', reject);
       stream.pipe(writeStream);
       stream.on('end', resolve);
-      stream.on('error', reject);
     });
 
     let metadata: TrackMetadata = {};
