@@ -6,7 +6,7 @@
  */
 
 import path from 'path';
-import type { TrackInfo, DestinationValidation, TrackMetadata } from './types';
+import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
 import { resolveFFmpegPath } from './ffmpeg-path';
 
 /**
@@ -409,7 +409,7 @@ export interface AudioConverter {
   ): Promise<{ success: boolean; error?: string; hadCover: boolean }>;
 }
 
-export function createFFmpegConverter(): AudioConverter {
+export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
   const ffmpegPath = resolveFFmpegPath();
 
   return {
@@ -482,10 +482,8 @@ export function createFFmpegConverter(): AudioConverter {
 
         proc.on('close', (code: number) => {
           if (code !== 0) {
-            console.error(
-              `[sync-files] convertStreamToMp3 FFmpeg failed for ${output}: code=${code}`,
-              `\nargs: ${args.join(' ')}`,
-              `\nstderr: ${stderr}`,
+            logger?.error(
+              `[sync-files] convertStreamToMp3 FFmpeg failed for ${output}: code=${code}\nargs: ${args.join(' ')}\nstderr: ${stderr}`,
             );
           }
           resolve({
@@ -596,10 +594,8 @@ export function createFFmpegConverter(): AudioConverter {
               /* ignore */
             }
           if (code !== 0) {
-            console.error(
-              `[sync-files] FFmpeg failed for ${output}: code=${code}`,
-              `\nargs: ${args.join(' ')}`,
-              `\nstderr: ${stderr}`,
+            logger?.error(
+              `[sync-files] FFmpeg failed for ${output}: code=${code}\nargs: ${args.join(' ')}\nstderr: ${stderr}`,
             );
           }
           resolve({
@@ -646,7 +642,7 @@ export function createFFmpegConverter(): AudioConverter {
         // Use the same extension as the original file so FFmpeg recognizes the format
         const ext = path.extname(inputPath);
         const tempOutputPath = useTempOutput
-          ? `${os.tmpdir()}/jt-tag-${Date.now()}${ext}`
+          ? `${os.tmpdir()}/jt-tag-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
           : outputPath;
 
         // Build complete args array BEFORE spawning — all inputs and flags before output
@@ -731,9 +727,8 @@ export function createFFmpegConverter(): AudioConverter {
               fs.unlinkSync(finalOutputPath);
               fs.renameSync(tempOutputPath, finalOutputPath);
             } catch (renameErr) {
-              console.error(
-                `[sync-files] tagFile failed to replace ${finalOutputPath}:`,
-                renameErr,
+              logger?.error(
+                `[sync-files] tagFile failed to replace ${finalOutputPath}: ${renameErr}`,
               );
               try {
                 fs.unlinkSync(tempOutputPath);
@@ -751,10 +746,8 @@ export function createFFmpegConverter(): AudioConverter {
               } catch {
                 /* ignore */
               }
-            console.error(
-              `[sync-files] tagFile FFmpeg failed for ${outputPath}: code=${code}`,
-              `\nargs: ${args.join(' ')}`,
-              `\nstderr: ${stderr}`,
+            logger?.error(
+              `[sync-files] tagFile FFmpeg failed for ${outputPath}: code=${code}\nargs: ${args.join(' ')}\nstderr: ${stderr}`,
             );
           }
           resolve({
@@ -823,7 +816,7 @@ export function createFFmpegConverter(): AudioConverter {
           : path.extname(inputPath).toLowerCase();
         const useTempOutput = inputPath === outputPath;
         const tempOutputPath = useTempOutput
-          ? `${os.tmpdir()}/jt-lyrics-${Date.now()}${ext}`
+          ? `${os.tmpdir()}/jt-lyrics-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
           : outputPath;
 
         const args: string[] = ['-i', inputPath];
@@ -950,7 +943,7 @@ export function createFFmpegConverter(): AudioConverter {
       const finalOutputPath = outputPath;
       const ext = path.extname(inputPath);
       const tempOutputPath = useTempOutput
-        ? `${os.tmpdir()}/jt-strip-${Date.now()}${ext}`
+        ? `${os.tmpdir()}/jt-strip-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
         : outputPath;
 
       return new Promise((resolve) => {

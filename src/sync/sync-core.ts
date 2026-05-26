@@ -213,7 +213,7 @@ function createDefaultDependencies(config: SyncConfig, logger?: SyncLogger): Syn
       logger,
     }),
     fs: createNodeFileSystem(),
-    converter: createFFmpegConverter(),
+    converter: createFFmpegConverter(logger),
   };
 }
 
@@ -2052,13 +2052,16 @@ class SyncCoreImpl {
     const tmpPath = `${outputPath}.jt-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const stream = await this.deps.api.downloadItemStream(track.id);
 
-    // Pipe stream to temp file — handle errors to prevent hangs on disk-full
+    // Pipe stream to temp file — handle errors to prevent hangs on disk-full.
+    // Use 'finish' event (not 'end') to ensure writable has flushed kernel buffers
+    // before we read metadata from the file. Also resolves race condition where
+    // readable 'end' fires before writable finishes flushing.
     const writeStream = await this.deps.fs.createWriteStream(tmpPath);
     await new Promise<void>((resolve, reject) => {
       writeStream.on('error', reject);
       stream.on('error', reject);
       stream.pipe(writeStream);
-      stream.on('end', resolve);
+      writeStream.on('finish', resolve);
     });
 
     let metadata: TrackMetadata = {};
@@ -2076,17 +2079,19 @@ class SyncCoreImpl {
 
     // Convert from the buffered temp file (preserves original stream data)
     const readStream = await this.deps.fs.createReadStream(tmpPath);
-    const result = await this.deps.converter.convertStreamToMp3WithMeta(
-      readStream,
-      outputPath,
-      bitrate,
-      metadata,
-      embedCover,
-    );
-    await this.deps.fs.unlink(tmpPath).catch(() => {}); // clean up temp
-
-    if (!result.success) {
-      throw new Error(result.error ?? 'Conversion failed');
+    try {
+      const result = await this.deps.converter.convertStreamToMp3WithMeta(
+        readStream,
+        outputPath,
+        bitrate,
+        metadata,
+        embedCover,
+      );
+      if (!result.success) {
+        throw new Error(result.error ?? 'Conversion failed');
+      }
+    } finally {
+      await this.deps.fs.unlink(tmpPath).catch(() => {}); // always clean up temp
     }
   }
 }
