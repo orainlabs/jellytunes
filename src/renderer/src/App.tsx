@@ -358,8 +358,7 @@ function AppConnected({
     }
   };
 
-  // Active search mode detection (searchQuery >= 2 triggers search)
-  const isSearchActive = searchQuery.length >= 2;
+  const isSearchActive = currentTabSearchQuery.length >= 2;
 
   // Select All - uses pagination-aware version that fetches all items first,
   // OR selects all search results when search is active

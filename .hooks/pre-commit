@@ -1,37 +1,13 @@
 #!/usr/bin/env sh
-# Automatically typecheck, lint and format on commit
+set -e
 
-# Run TypeScript type check first
-echo "Running TypeScript typecheck..."
+echo "▶ typecheck..."
 pnpm run typecheck
 
-if [ $? -ne 0 ]; then
-  echo "TypeScript typecheck failed. Please fix the errors before committing."
-  exit 1
-fi
-
-echo "Typecheck passed!"
-
-# Run format check
-echo "Checking formatting with Prettier..."
-pnpm run format:check
-
-# If format fails, abort commit
-if [ $? -ne 0 ]; then
-  echo "Prettier format check failed. Please run 'pnpm format' to fix formatting."
-  exit 1
-fi
-
-echo "Formatting passed!"
-
-# Run lint-staged on staged files (only lints files that are staged)
-echo "Running lint-staged on staged files..."
+echo "▶ lint + format (staged files)..."
 pnpm exec lint-staged
 
-# If lint-staged fails, abort commit
-if [ $? -ne 0 ]; then
-  echo "lint-staged failed. Please fix the errors before committing."
-  exit 1
-fi
+echo "▶ unit tests..."
+pnpm run test:unit
 
-echo "Linting of staged files passed!"
+echo "✓ all checks passed"

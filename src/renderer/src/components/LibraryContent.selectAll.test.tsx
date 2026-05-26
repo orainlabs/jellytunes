@@ -33,6 +33,7 @@ const defaultProps = {
   hasActiveDevice: true,
   searchQuery: '',
   onSearchChange: vi.fn(),
+  onClearSearch: vi.fn(),
   searchResults: null,
   isSearching: false,
   searchError: null,
