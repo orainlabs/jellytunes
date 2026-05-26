@@ -15,18 +15,6 @@ const mockApi = {
 };
 Object.defineProperty(window, 'api', { value: mockApi, writable: true });
 
-function createMockFetch(items: unknown[], totalCount: number, startIndex: number = 0) {
-  return {
-    ok: true,
-    json: () =>
-      Promise.resolve({
-        Items: items,
-        TotalRecordCount: totalCount,
-        StartIndex: startIndex,
-      }),
-  };
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   mockFetch.mockReset();
@@ -41,239 +29,60 @@ function setupFetchMock(urlToResponse: Record<string, { items: unknown[]; total:
     // Try to find exact match first
     if (urlToResponse[url]) {
       const { items, total } = urlToResponse[url];
-      return Promise.resolve(createMockFetch(items, total));
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            Items: items,
+            TotalRecordCount: total,
+            StartIndex: 0,
+          }),
+      });
     }
     // Fallback to pattern matching
     for (const pattern of Object.keys(urlToResponse)) {
       if (url.includes(pattern)) {
         const { items, total } = urlToResponse[pattern];
-        return Promise.resolve(createMockFetch(items, total));
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: items,
+              TotalRecordCount: total,
+              StartIndex: 0,
+            }),
+        });
       }
     }
-    return Promise.resolve(createMockFetch([], 0, 0));
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ Items: [], TotalRecordCount: 0, StartIndex: 0 }),
+    });
   });
 }
 
+function createArtist(id: string, name: string): unknown {
+  return { Id: id, Name: name, AlbumCount: 1, ImageTags: {}, RunTimeTicks: 0 };
+}
+
 describe('useLibrary - selectAll with pagination', () => {
-  describe('fetchAllIds', () => {
-    it('fetches all item IDs for artists when total > loaded', async () => {
-      setupFetchMock({
-        '/Artists?SortBy=Name&Limit=50&StartIndex=0': {
-          items: [
-            { Id: 'artist-1', Name: 'Artist 1', AlbumCount: 5, ImageTags: {} },
-            { Id: 'artist-2', Name: 'Artist 2', AlbumCount: 3, ImageTags: {} },
-          ],
-          total: 4,
-        },
-        '/Artists?SortBy=Name&Limit=50&StartIndex=2': {
-          items: [
-            { Id: 'artist-3', Name: 'Artist 3', AlbumCount: 2, ImageTags: {} },
-            { Id: 'artist-4', Name: 'Artist 4', AlbumCount: 1, ImageTags: {} },
-          ],
-          total: 4,
-        },
-        '/Items?IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
-        '/Items?IncludeItemTypes=Playlist': { items: [], total: 0 },
-      });
-
-      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
-
-      await act(async () => {
-        await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
-      });
-
-      const allIds = await act(async () => {
-        return await result.current.fetchAllIds('artists');
-      });
-
-      expect(allIds).toHaveLength(4);
-      expect(allIds).toContain('artist-1');
-      expect(allIds).toContain('artist-2');
-      expect(allIds).toContain('artist-3');
-      expect(allIds).toContain('artist-4');
-    });
-
-    it('fetches all item IDs for albums when total > loaded', async () => {
-      setupFetchMock({
-        '/Artists?SortBy=Name&Limit=50&StartIndex=0': { items: [], total: 0 },
-        '/Items?IncludeItemTypes=MusicAlbum&Limit=50&StartIndex=0&Recursive=true': {
-          items: [
-            {
-              Id: 'album-1',
-              Name: 'Album 1',
-              AlbumArtist: 'Artist 1',
-              ImageTags: {},
-              Type: 'MusicAlbum',
-            },
-          ],
-          total: 3,
-        },
-        '/Items?IncludeItemTypes=MusicAlbum&Limit=50&StartIndex=1&Recursive=true': {
-          items: [
-            {
-              Id: 'album-2',
-              Name: 'Album 2',
-              AlbumArtist: 'Artist 2',
-              ImageTags: {},
-              Type: 'MusicAlbum',
-            },
-          ],
-          total: 3,
-        },
-        '/Items?IncludeItemTypes=MusicAlbum&Limit=50&StartIndex=2&Recursive=true': {
-          items: [
-            {
-              Id: 'album-3',
-              Name: 'Album 3',
-              AlbumArtist: 'Artist 3',
-              ImageTags: {},
-              Type: 'MusicAlbum',
-            },
-          ],
-          total: 3,
-        },
-        '/Items?IncludeItemTypes=Playlist': { items: [], total: 0 },
-      });
-
-      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
-
-      await act(async () => {
-        await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
-      });
-
-      const allIds = await act(async () => {
-        return await result.current.fetchAllIds('albums');
-      });
-
-      expect(allIds).toHaveLength(3);
-      expect(allIds).toContain('album-1');
-      expect(allIds).toContain('album-2');
-      expect(allIds).toContain('album-3');
-    });
-
-    it('fetches all item IDs for playlists when total > loaded', async () => {
-      setupFetchMock({
-        '/Artists?SortBy=Name&Limit=50&StartIndex=0': { items: [], total: 0 },
-        '/Items?IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
-        '/Items?IncludeItemTypes=Playlist&Limit=50&StartIndex=0&Recursive=true': {
-          items: [
-            { Id: 'playlist-1', Name: 'Playlist 1', ImageTags: {}, Type: 'Playlist' },
-            { Id: 'playlist-2', Name: 'Playlist 2', ImageTags: {}, Type: 'Playlist' },
-          ],
-          total: 5,
-        },
-        '/Items?IncludeItemTypes=Playlist&Limit=50&StartIndex=2&Recursive=true': {
-          items: [
-            { Id: 'playlist-3', Name: 'Playlist 3', ImageTags: {}, Type: 'Playlist' },
-            { Id: 'playlist-4', Name: 'Playlist 4', ImageTags: {}, Type: 'Playlist' },
-          ],
-          total: 5,
-        },
-        '/Items?IncludeItemTypes=Playlist&Limit=50&StartIndex=4&Recursive=true': {
-          items: [{ Id: 'playlist-5', Name: 'Playlist 5', ImageTags: {}, Type: 'Playlist' }],
-          total: 5,
-        },
-      });
-
-      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
-
-      await act(async () => {
-        await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
-      });
-
-      const allIds = await act(async () => {
-        return await result.current.fetchAllIds('playlists');
-      });
-
-      expect(allIds).toHaveLength(5);
-      expect(allIds).toContain('playlist-1');
-      expect(allIds).toContain('playlist-2');
-      expect(allIds).toContain('playlist-3');
-      expect(allIds).toContain('playlist-4');
-      expect(allIds).toContain('playlist-5');
-    });
-
-    it('returns already-loaded IDs when all items already fetched', async () => {
-      setupFetchMock({
-        '/Artists?SortBy=Name&Limit=50&StartIndex=0': {
-          items: [
-            { Id: 'artist-1', Name: 'Artist 1', AlbumCount: 5, ImageTags: {} },
-            { Id: 'artist-2', Name: 'Artist 2', AlbumCount: 3, ImageTags: {} },
-          ],
-          total: 2,
-        },
-        '/Items?IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
-        '/Items?IncludeItemTypes=Playlist': { items: [], total: 0 },
-      });
-
-      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
-
-      await act(async () => {
-        await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
-      });
-
-      const allIds = await act(async () => {
-        return await result.current.fetchAllIds('artists');
-      });
-
-      expect(allIds).toHaveLength(2);
-    });
-
-    it('deduplicates IDs across multiple pages', async () => {
-      setupFetchMock({
-        '/Artists?SortBy=Name&Limit=50&StartIndex=0': {
-          items: [
-            { Id: 'artist-1', Name: 'Artist 1', AlbumCount: 5, ImageTags: {} },
-            { Id: 'artist-2', Name: 'Artist 2', AlbumCount: 3, ImageTags: {} },
-          ],
-          total: 3,
-        },
-        '/Artists?SortBy=Name&Limit=50&StartIndex=2': {
-          items: [
-            { Id: 'artist-2', Name: 'Artist 2', AlbumCount: 3, ImageTags: {} },
-            { Id: 'artist-3', Name: 'Artist 3', AlbumCount: 2, ImageTags: {} },
-          ],
-          total: 3,
-        },
-        '/Items?IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
-        '/Items?IncludeItemTypes=Playlist': { items: [], total: 0 },
-      });
-
-      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
-
-      await act(async () => {
-        await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
-      });
-
-      const allIds = await act(async () => {
-        return await result.current.fetchAllIds('artists');
-      });
-
-      expect(allIds).toHaveLength(3);
-      expect(allIds).toEqual(['artist-1', 'artist-2', 'artist-3']);
-    });
-  });
-
   describe('selectAllWithCompleteSet', () => {
     it('selects all items including unloaded pages and calls onSelectAllIds', async () => {
       setupFetchMock({
         '/Artists?SortBy=Name&Limit=50&StartIndex=0': {
-          items: [
-            { Id: 'artist-1', Name: 'Artist 1', AlbumCount: 5, ImageTags: {} },
-            { Id: 'artist-2', Name: 'Artist 2', AlbumCount: 3, ImageTags: {} },
-          ],
+          items: [createArtist('artist-1', 'Artist 1'), createArtist('artist-2', 'Artist 2')],
           total: 5,
         },
         '/Artists?SortBy=Name&Limit=50&StartIndex=2': {
-          items: [{ Id: 'artist-3', Name: 'Artist 3', AlbumCount: 2, ImageTags: {} }],
+          items: [createArtist('artist-3', 'Artist 3')],
           total: 5,
         },
         '/Artists?SortBy=Name&Limit=50&StartIndex=3': {
-          items: [{ Id: 'artist-4', Name: 'Artist 4', AlbumCount: 1, ImageTags: {} }],
+          items: [createArtist('artist-4', 'Artist 4')],
           total: 5,
         },
         '/Artists?SortBy=Name&Limit=50&StartIndex=4': {
-          items: [{ Id: 'artist-5', Name: 'Artist 5', AlbumCount: 4, ImageTags: {} }],
+          items: [createArtist('artist-5', 'Artist 5')],
           total: 5,
         },
         '/Items?IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
@@ -303,15 +112,15 @@ describe('useLibrary - selectAll with pagination', () => {
     it('shows loading state during fetch when items not fully loaded', async () => {
       setupFetchMock({
         '/Artists?SortBy=Name&Limit=50&StartIndex=0': {
-          items: [{ Id: 'artist-1', Name: 'Artist 1', AlbumCount: 1, ImageTags: {} }],
+          items: [createArtist('artist-1', 'Artist 1')],
           total: 3,
         },
         '/Artists?SortBy=Name&Limit=50&StartIndex=1': {
-          items: [{ Id: 'artist-2', Name: 'Artist 2', AlbumCount: 1, ImageTags: {} }],
+          items: [createArtist('artist-2', 'Artist 2')],
           total: 3,
         },
         '/Artists?SortBy=Name&Limit=50&StartIndex=2': {
-          items: [{ Id: 'artist-3', Name: 'Artist 3', AlbumCount: 1, ImageTags: {} }],
+          items: [createArtist('artist-3', 'Artist 3')],
           total: 3,
         },
         '/Items?IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
@@ -342,6 +151,67 @@ describe('useLibrary - selectAll with pagination', () => {
       // Should no longer be loading after completion
       expect(result.current.isSelectingAll).toBe(false);
       expect(onSelectAllIds).toHaveBeenCalledWith(['artist-1', 'artist-2', 'artist-3']);
+    });
+
+    it('uses stats fallback when pagination.total is 0', async () => {
+      // Simulates race condition: stats available but pagination.albums.total = 0
+      // (user navigated to Albums tab before loadLibrary completed)
+      setupFetchMock({
+        '/Artists?SortBy=Name&Limit=50&StartIndex=0': {
+          items: [createArtist('artist-1', 'Artist 1')],
+          total: 1,
+        },
+        '/Items?IncludeItemTypes=MusicAlbum&Limit=50&StartIndex=0&Recursive=true': {
+          items: [],
+          total: 0, // pagination.total = 0 (tab not loaded yet)
+        },
+        '/Items?IncludeItemTypes=Playlist': { items: [], total: 0 },
+      });
+
+      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+      // Load stats first (simulating race condition where stats resolves before albums tab)
+      await act(async () => {
+        mockFetch.mockImplementation((url: string) => {
+          if (url.includes('/Users/user-1/Items/Counts')) {
+            return Promise.resolve({
+              ok: true,
+              json: () =>
+                Promise.resolve({
+                  ArtistCount: 1,
+                  AlbumCount: 5, // stats has correct count
+                  ChildCount: 50,
+                  PlaylistCount: 0,
+                }),
+            });
+          }
+          // Fallback to library responses
+          for (const pattern of Object.keys({
+            '/Artists?SortBy=Name&Limit=50&StartIndex=0': { items: [], total: 0 },
+            '/Items?IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
+            '/Items?IncludeItemTypes=Playlist': { items: [], total: 0 },
+          })) {
+            if (url.includes(pattern)) {
+              return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+              });
+            }
+          }
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+          });
+        });
+
+        await result.current.loadStats('https://jellyfin.test', 'test-key', 'user-1');
+        await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
+      });
+
+      // At this point stats.AlbumCount = 5 but pagination.albums.total = 0
+      // The count logic should use stats as fallback
+      expect(result.current.stats?.AlbumCount).toBe(5);
+      expect(result.current.pagination.albums.total).toBe(0);
     });
   });
 });

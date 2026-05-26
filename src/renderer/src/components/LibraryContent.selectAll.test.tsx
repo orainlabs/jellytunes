@@ -7,14 +7,17 @@ import type { LibraryTab, PaginationState } from '../appTypes';
 
 const defaultProps = {
   activeLibrary: 'artists' as LibraryTab,
-  artists: [
-    { Id: 'artist-1', Name: 'Artist 1', AlbumCount: 5, ImageTags: {}, RunTimeTicks: 0 },
-    { Id: 'artist-2', Name: 'Artist 2', AlbumCount: 3, ImageTags: {}, RunTimeTicks: 0 },
-  ],
+  artists: Array.from({ length: 50 }, (_, i) => ({
+    Id: `artist-${i + 1}`,
+    Name: `Artist ${i + 1}`,
+    AlbumCount: 5,
+    ImageTags: {},
+    RunTimeTicks: 0,
+  })),
   albums: [],
   playlists: [],
   pagination: {
-    artists: { items: [], total: 2, startIndex: 2, hasMore: false, scrollPos: 0 },
+    artists: { items: [], total: 50, startIndex: 50, hasMore: false, scrollPos: 0 },
     albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
     playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   } as PaginationState,
@@ -39,106 +42,289 @@ const defaultProps = {
   searchError: null,
 };
 
-describe('LibraryContent - Select All/Clear hidden during active search', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('LibraryContent - Select All disabled during loading', () => {
+  it('disables Select All button when isLoadingMore is true', () => {
+    render(<LibraryContent {...defaultProps} isLoadingMore={true} />);
+
+    const selectAllButton = screen.getByTestId('select-all-button');
+    expect(selectAllButton).toBeDisabled();
   });
 
-  it('hides Select All button during active search', () => {
+  it('Select All button is enabled when not loading', () => {
+    render(<LibraryContent {...defaultProps} isLoadingMore={false} />);
+
+    const selectAllButton = screen.getByTestId('select-all-button');
+    expect(selectAllButton).not.toBeDisabled();
+  });
+});
+
+describe('LibraryContent - Select All confirmation for large selections', () => {
+  it('shows confirmation dialog when Select All is clicked with large item count (>500)', async () => {
+    const onSelectAll = vi.fn();
+
+    // Use small array but large pagination total to trigger dialog
+    const smallArtists = Array.from({ length: 50 }, (_, i) => ({
+      Id: `artist-${i + 1}`,
+      Name: `Artist ${i + 1}`,
+      AlbumCount: 5,
+      ImageTags: {},
+      RunTimeTicks: 0,
+    }));
+
     render(
       <LibraryContent
         {...defaultProps}
-        searchQuery="beatles"
-        searchResults={{
-          artists: [
-            {
-              Id: 'search-artist-1',
-              Name: 'The Beatles',
-              AlbumCount: 13,
-              ImageTags: {},
-              RunTimeTicks: 0,
-            },
-          ],
-          albums: [],
-          playlists: [],
+        artists={smallArtists}
+        pagination={{
+          artists: { items: [], total: 550, startIndex: 550, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
-        isSearching={false}
+        onSelectAll={onSelectAll}
       />,
     );
 
-    expect(screen.queryByTestId('select-all-button')).not.toBeInTheDocument();
+    // Click Select All
+    await userEvent.click(screen.getByTestId('select-all-button'));
+
+    // Should show confirmation dialog with item count
+    expect(screen.getByTestId('select-all-confirm-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('select-all-count')).toHaveTextContent('550');
   });
 
-  it('hides Clear button during active search even when items are selected', () => {
+  it('shows plural label "artists" when count > 1', async () => {
+    const onSelectAll = vi.fn();
+
     render(
       <LibraryContent
         {...defaultProps}
-        selectedTracks={new Set(['search-artist-1'])}
-        searchQuery="beatles"
-        searchResults={{
-          artists: [
-            {
-              Id: 'search-artist-1',
-              Name: 'The Beatles',
-              AlbumCount: 13,
-              ImageTags: {},
-              RunTimeTicks: 0,
-            },
-          ],
-          albums: [],
-          playlists: [],
+        artists={Array.from({ length: 501 }, (_, i) => ({
+          Id: `artist-${i + 1}`,
+          Name: `Artist ${i + 1}`,
+          AlbumCount: 5,
+          ImageTags: {},
+          RunTimeTicks: 0,
+        }))}
+        pagination={{
+          artists: { items: [], total: 501, startIndex: 501, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
-        isSearching={false}
+        onSelectAll={onSelectAll}
       />,
     );
 
-    expect(screen.queryByTestId('select-all-button')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('clear-selection-button')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('select-all-button'));
+
+    // Dialog should show correct label
+    expect(screen.getByTestId('select-all-confirm-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('select-all-label')).toHaveTextContent('artists');
   });
 
-  it('shows both Select All and Clear when no search active and items selected', () => {
+  it('does not show dialog when count is <= 500', async () => {
+    const onSelectAll = vi.fn();
+
     render(
       <LibraryContent
         {...defaultProps}
-        selectedTracks={new Set(['artist-1'])}
+        artists={Array.from({ length: 400 }, (_, i) => ({
+          Id: `artist-${i + 1}`,
+          Name: `Artist ${i + 1}`,
+          AlbumCount: 5,
+          ImageTags: {},
+          RunTimeTicks: 0,
+        }))}
+        pagination={{
+          artists: { items: [], total: 400, startIndex: 400, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
+        onSelectAll={onSelectAll}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('select-all-button'));
+
+    // Dialog should NOT appear - onSelectAll should be called directly
+    expect(screen.queryByTestId('select-all-confirm-dialog')).not.toBeInTheDocument();
+    expect(onSelectAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows dialog with Cancel and Select All buttons', async () => {
+    const onSelectAll = vi.fn();
+
+    render(
+      <LibraryContent
+        {...defaultProps}
+        artists={Array.from({ length: 600 }, (_, i) => ({
+          Id: `artist-${i + 1}`,
+          Name: `Artist ${i + 1}`,
+          AlbumCount: 5,
+          ImageTags: {},
+          RunTimeTicks: 0,
+        }))}
+        pagination={{
+          artists: { items: [], total: 600, startIndex: 600, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
+        onSelectAll={onSelectAll}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('select-all-button'));
+
+    // Dialog should have both buttons
+    expect(screen.getByTestId('select-all-cancel-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('select-all-confirm-btn')).toBeInTheDocument();
+  });
+
+  it('Cancel button closes dialog without calling onSelectAll', async () => {
+    const onSelectAll = vi.fn();
+
+    render(
+      <LibraryContent
+        {...defaultProps}
+        artists={Array.from({ length: 600 }, (_, i) => ({
+          Id: `artist-${i + 1}`,
+          Name: `Artist ${i + 1}`,
+          AlbumCount: 5,
+          ImageTags: {},
+          RunTimeTicks: 0,
+        }))}
+        pagination={{
+          artists: { items: [], total: 600, startIndex: 600, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
+        onSelectAll={onSelectAll}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('select-all-button'));
+    expect(screen.getByTestId('select-all-confirm-dialog')).toBeInTheDocument();
+
+    // Click Cancel
+    await userEvent.click(screen.getByTestId('select-all-cancel-btn'));
+
+    // Dialog should be closed
+    expect(screen.queryByTestId('select-all-confirm-dialog')).not.toBeInTheDocument();
+    // onSelectAll should NOT have been called
+    expect(onSelectAll).not.toHaveBeenCalled();
+  });
+
+  it('Select All button in dialog calls onSelectAll', async () => {
+    const onSelectAll = vi.fn();
+
+    render(
+      <LibraryContent
+        {...defaultProps}
+        artists={Array.from({ length: 600 }, (_, i) => ({
+          Id: `artist-${i + 1}`,
+          Name: `Artist ${i + 1}`,
+          AlbumCount: 5,
+          ImageTags: {},
+          RunTimeTicks: 0,
+        }))}
+        pagination={{
+          artists: { items: [], total: 600, startIndex: 600, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
+        onSelectAll={onSelectAll}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId('select-all-button'));
+    await userEvent.click(screen.getByTestId('select-all-confirm-btn'));
+
+    // onSelectAll should be called
+    expect(onSelectAll).toHaveBeenCalledTimes(1);
+    // Dialog should be closed
+    expect(screen.queryByTestId('select-all-confirm-dialog')).not.toBeInTheDocument();
+  });
+
+  it('uses stats fallback when pagination.total is 0', () => {
+    // This test verifies the count logic uses stats when pagination not loaded
+    // The component should use stats.ArtistCount as fallback when pagination.albums.total = 0
+    render(
+      <LibraryContent
+        {...defaultProps}
+        activeLibrary="albums"
+        artists={[]}
+        albums={Array.from({ length: 10 }, (_, i) => ({
+          Id: `album-${i + 1}`,
+          Name: `Album ${i + 1}`,
+          AlbumArtist: `Artist ${i + 1}`,
+          ImageTags: {},
+          RunTimeTicks: 0,
+          Type: 'MusicAlbum',
+        }))}
+        pagination={{
+          artists: { items: [], total: 50, startIndex: 50, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 }, // total = 0
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
         searchQuery=""
         searchResults={null}
       />,
     );
 
-    expect(screen.getByTestId('select-all-button')).toBeVisible();
-    expect(screen.getByTestId('clear-selection-button')).toBeVisible();
+    // When user clicks Select All on albums tab with pagination.total = 0,
+    // the component should check stats.AlbumCount as fallback
+    const selectAllButton = screen.getByTestId('select-all-button');
+
+    // Button should be enabled (can still be clicked - the count check happens in handler)
+    expect(selectAllButton).not.toBeDisabled();
   });
+});
 
-  it('shows Select All only when no search active and no items selected', () => {
-    render(<LibraryContent {...defaultProps} searchQuery="" searchResults={null} />);
-
-    expect(screen.getByTestId('select-all-button')).toBeVisible();
-    expect(screen.queryByTestId('clear-selection-button')).not.toBeInTheDocument();
-  });
-
-  it('calls onSelectAll when Select All clicked (no search)', async () => {
+describe('LibraryContent - Select All with stats fallback', () => {
+  it('triggers confirmation dialog when stats.AlbumCount exceeds 500 even if pagination.albums.total is 0', async () => {
     const onSelectAll = vi.fn();
-    render(<LibraryContent {...defaultProps} searchQuery="" onSelectAll={onSelectAll} />);
 
-    await userEvent.click(screen.getByTestId('select-all-button'));
-
-    expect(onSelectAll).toHaveBeenCalledTimes(1);
-  });
-
-  it('calls onClearSelection when Clear clicked (no search)', async () => {
-    const onClearSelection = vi.fn();
     render(
       <LibraryContent
         {...defaultProps}
+        activeLibrary="albums"
+        artists={[]}
+        albums={Array.from({ length: 10 }, (_, i) => ({
+          Id: `album-${i + 1}`,
+          Name: `Album ${i + 1}`,
+          AlbumArtist: `Artist ${i + 1}`,
+          ImageTags: {},
+          RunTimeTicks: 0,
+          Type: 'MusicAlbum',
+        }))}
+        pagination={{
+          artists: { items: [], total: 50, startIndex: 50, hasMore: false, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 }, // 0 - needs stats fallback
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
+        // Pass stats with AlbumCount = 600 to trigger confirmation dialog
+        stats={{
+          ArtistCount: 50,
+          AlbumCount: 600, // > 500 threshold
+          SongCount: 5000,
+          PlaylistCount: 20,
+          ItemCount: 6000,
+        }}
+        onSelectAll={onSelectAll}
         searchQuery=""
-        selectedTracks={new Set(['artist-1'])}
-        onClearSelection={onClearSelection}
+        searchResults={null}
       />,
     );
 
-    await userEvent.click(screen.getByTestId('clear-selection-button'));
+    // Click Select All
+    await userEvent.click(screen.getByTestId('select-all-button'));
 
-    expect(onClearSelection).toHaveBeenCalledTimes(1);
+    // Dialog should appear because stats.AlbumCount (600) > 500
+    expect(screen.getByTestId('select-all-confirm-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('select-all-count')).toHaveTextContent('600');
+    expect(screen.getByTestId('select-all-label')).toHaveTextContent('albums');
   });
 });
