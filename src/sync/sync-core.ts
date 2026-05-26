@@ -25,6 +25,8 @@ import type {
   LyricsMode,
 } from './types';
 
+import path from 'path';
+
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 
 import {
@@ -342,10 +344,7 @@ class SyncCoreImpl {
                 .filter((rec) => rec.coverArtMode === 'companion')
                 .map((rec) => {
                   // Extract directory from track file path: /mnt/usb/Artist/Album/track.mp3 → /mnt/usb/Artist/Album
-                  const dirPath = rec.destinationPath.substring(
-                    0,
-                    rec.destinationPath.lastIndexOf('/'),
-                  );
+                  const dirPath = path.dirname(rec.destinationPath);
                   return `${dirPath}/cover.jpg`;
                 }),
             ),
