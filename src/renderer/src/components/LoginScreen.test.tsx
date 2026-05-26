@@ -114,8 +114,8 @@ describe('LoginScreen', () => {
     expect(screen.getByTestId('error-message')).toHaveTextContent('Invalid credentials');
   });
 
-  // 5. API key helper text visible in Spanish
-  it('shows API key helper text in Spanish', () => {
+  // 5. API key helper text visible
+  it('shows API key helper text', () => {
     const props = {
       urlInput: '',
       apiKeyInput: '',
@@ -125,11 +125,11 @@ describe('LoginScreen', () => {
       onSubmit: vi.fn(),
     };
     render(<LoginScreen {...props} />);
-    expect(screen.getByText(/Consigue tu Clave API en Jellyfin/)).toBeInTheDocument();
+    expect(screen.getByText(/Get your API Key in Jellyfin/)).toBeInTheDocument();
   });
 
-  // 6. i18n: Spanish strings displayed when locale is es
-  it('displays Spanish strings when locale is es', () => {
+  // 6. English strings displayed (default locale)
+  it('displays English strings', () => {
     const props = {
       urlInput: '',
       apiKeyInput: '',
@@ -139,17 +139,17 @@ describe('LoginScreen', () => {
       onSubmit: vi.fn(),
     };
     render(<LoginScreen {...props} />);
-    // Header should be in Spanish
-    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Conectar a Jellyfin');
-    // Label should be in Spanish
-    expect(screen.getByText('URL del servidor')).toBeInTheDocument();
-    // Placeholder should be in Spanish
-    expect(screen.getByPlaceholderText(/tuDominio/i)).toBeInTheDocument();
-    // API Key label in Spanish
-    expect(screen.getByText('Clave API')).toBeInTheDocument();
-    // Button should be in Spanish
-    expect(screen.getByRole('button')).toHaveTextContent('Conectar');
-    // Helper text should be in Spanish
-    expect(screen.getByText(/Consigue tu Clave API en Jellyfin/)).toBeInTheDocument();
+    // Header should be in English
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Connect to Jellyfin');
+    // Label should be in English
+    expect(screen.getByText('Server URL')).toBeInTheDocument();
+    // Placeholder should be in English
+    expect(screen.getByPlaceholderText(/jellyfin.example.com/i)).toBeInTheDocument();
+    // API Key label in English
+    expect(screen.getByText('API Key')).toBeInTheDocument();
+    // Button should be in English
+    expect(screen.getByRole('button')).toHaveTextContent('Connect');
+    // Helper text should be in English
+    expect(screen.getByText(/Get your API Key in Jellyfin/)).toBeInTheDocument();
   });
 });

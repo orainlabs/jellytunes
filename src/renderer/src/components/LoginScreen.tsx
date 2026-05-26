@@ -30,7 +30,7 @@ export function LoginScreen({
         </div>
 
         <div className="bg-surface_container_low rounded-xl p-6 border border-outline_variant">
-          <h2 className="text-headline-md mb-4">Conectar a Jellyfin</h2>
+          <h2 className="text-headline-md mb-4">Connect to Jellyfin</h2>
 
           <form
             onSubmit={(e) => {
@@ -44,7 +44,7 @@ export function LoginScreen({
             <div className="space-y-4">
               <div>
                 <label className="block text-body-md text-on_surface_variant mb-1">
-                  URL del servidor
+                  Server URL
                 </label>
                 <input
                   data-testid="server-url-input"
@@ -52,20 +52,20 @@ export function LoginScreen({
                   type="url"
                   value={urlInput}
                   onChange={(e) => onUrlChange(e.target.value)}
-                  placeholder="https://jellyfin.tuDominio.com"
+                  placeholder="https://jellyfin.example.com"
                   required
                   className="w-full bg-surface_container_low border border-outline_variant rounded-lg px-4 py-2 text-body-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 />
               </div>
               <div>
-                <label className="block text-body-md text-on_surface_variant mb-1">Clave API</label>
+                <label className="block text-body-md text-on_surface_variant mb-1">API Key</label>
                 <input
                   data-testid="api-key-input"
                   name="apiKey"
                   type="password"
                   value={apiKeyInput}
                   onChange={(e) => onApiKeyChange(e.target.value)}
-                  placeholder="Tu clave API de Jellyfin"
+                  placeholder="Your Jellyfin API key"
                   required
                   className="w-full bg-surface_container_low border border-outline_variant rounded-lg px-4 py-2 text-body-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 />
@@ -86,14 +86,14 @@ export function LoginScreen({
                 type="submit"
                 className="w-full bg-gradient-primary hover:bg-secondary_container py-2 rounded-lg font-medium transition-colors"
               >
-                Conectar
+                Connect
               </button>
             </div>
           </form>
         </div>
 
         <p className="text-caption text-on_surface_variant text-center mt-4">
-          Consigue tu Clave API en Jellyfin → Panel de Control → Usuario → Claves API
+          Get your API Key in Jellyfin → Dashboard → Users → API Keys
         </p>
       </div>
     </div>
