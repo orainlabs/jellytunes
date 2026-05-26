@@ -336,17 +336,20 @@ class SyncCoreImpl {
           // Use mock DB if provided (for testing), otherwise use real DB
           const getTracks = this.deps.db?.getSyncedTracksForDevice ?? getSyncedTracksForDevice;
           const dbRecords = await Promise.resolve(getTracks(input.destinationPath));
-          const staleCoverPaths = dbRecords
-            .filter((rec) => rec.coverArtMode === 'companion')
-            .map((rec) => {
-              // Extract directory from track file path: /mnt/usb/Artist/Album/track.mp3 → /mnt/usb/Artist/Album
-              const dirPath = rec.destinationPath.substring(
-                0,
-                rec.destinationPath.lastIndexOf('/'),
-              );
-              return `${dirPath}/cover.jpg`;
-            })
-            .filter((path, idx, arr) => arr.indexOf(path) === idx); // deduplicate
+          const staleCoverPaths = [
+            ...new Set(
+              dbRecords
+                .filter((rec) => rec.coverArtMode === 'companion')
+                .map((rec) => {
+                  // Extract directory from track file path: /mnt/usb/Artist/Album/track.mp3 → /mnt/usb/Artist/Album
+                  const dirPath = rec.destinationPath.substring(
+                    0,
+                    rec.destinationPath.lastIndexOf('/'),
+                  );
+                  return `${dirPath}/cover.jpg`;
+                }),
+            ),
+          ];
           if (staleCoverPaths.length > 0) {
             await this.cleanCoverFilesForNonCompanionMode(input.destinationPath, staleCoverPaths);
           }
