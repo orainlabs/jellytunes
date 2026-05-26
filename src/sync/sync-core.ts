@@ -330,7 +330,6 @@ class SyncCoreImpl {
       await this.runCleanupPhase(input.itemIds, input.itemTypes, input.destinationPath, options);
 
       // AC-1: When switching FROM companion mode, remove stale cover.jpg files.
-      // Query DB for records that were synced with companion mode to find stale covers.
       const currentCoverMode = options.coverArtMode ?? 'embed';
       if (currentCoverMode !== 'companion') {
         try {
@@ -356,9 +355,20 @@ class SyncCoreImpl {
         }
       }
 
-      // Lyrics cleanup: When lyricsMode is embed, clean up stale .lrc files from prior syncs
+      // AC-2: When lyricsMode is embed, clean up stale .lrc files from prior syncs
+      // Also includes tracks previously synced with lrc mode (from DB)
       if (options.lyricsMode === 'embed') {
         const syncedBasenames = new Set(copyResult.syncedBasenames ?? []);
+
+        // Add basenames of tracks previously synced with 'lrc' mode (from DB)
+        const getTracks = this.deps.db?.getSyncedTracksForDevice ?? getSyncedTracksForDevice;
+        const dbRecords = await Promise.resolve(getTracks(input.destinationPath));
+        for (const rec of dbRecords) {
+          if (rec.lyricsMode === 'lrc') {
+            const baseName = getFilenameFromPath(rec.destinationPath).replace(/\.[^.]+$/, '');
+            syncedBasenames.add(baseName);
+          }
+        }
         await this.cleanLrcFilesForEmbedMode(input.destinationPath, syncedBasenames);
       }
 
@@ -406,9 +416,9 @@ class SyncCoreImpl {
         tracksRetagged: 0,
         tracksMoved: 0,
         tracksRemoved: 0,
-        lyricsAdded: 0,
-        tracksFailed: tracksFailed,
-        errors: [errorMsg, ...errors],
+        lyricsAdded,
+        tracksFailed,
+        errors: [...errors, errorMsg],
         totalSizeBytes: stats.bytesTransferred,
         durationMs: Date.now() - startTime,
       };
@@ -518,8 +528,10 @@ class SyncCoreImpl {
         }
 
         // Collect basenames for embed-mode LRC cleanup
-        if (result.processed) {
-          syncedBasenames.push(getFilenameFromPath(track.path ?? track.id).replace(/\.[^.]+$/, ''));
+        // Add for both processed and skipped tracks (skipped tracks still sync lyrics)
+        if (result.processed || result.skipped) {
+          const basename = getFilenameFromPath(track.path ?? track.id).replace(/\.[^.]+$/, '');
+          syncedBasenames.push(basename);
         }
       } finally {
         completed++;
@@ -676,6 +688,7 @@ class SyncCoreImpl {
           encodedBitrate,
           track.path ?? null,
           this.serverRootPath || null,
+          options.lyricsMode ?? 'off',
         );
         const lyricsResult = await this.processLyrics(
           track,
@@ -738,6 +751,7 @@ class SyncCoreImpl {
           encodedBitrate,
           track.path ?? null,
           this.serverRootPath || null,
+          options.lyricsMode ?? 'off',
         );
         const outputDir = syncedRecord.destinationPath.substring(
           0,
@@ -829,6 +843,7 @@ class SyncCoreImpl {
             encodedBitrate,
             track.path ?? null,
             this.serverRootPath || null,
+            options.lyricsMode ?? 'off',
           );
           return { retagged: false, moved: false, processed: true, skipped: true, lyricsAdded: 0 };
         }
@@ -844,6 +859,7 @@ class SyncCoreImpl {
             encodedBitrate,
             track.path ?? null,
             this.serverRootPath || null,
+            options.lyricsMode ?? 'off',
           );
           return { retagged: false, moved: false, processed: true, skipped: true, lyricsAdded: 0 };
         }
@@ -887,6 +903,7 @@ class SyncCoreImpl {
         encodedBitrate,
         track.path ?? null,
         this.serverRootPath || null,
+        options.lyricsMode ?? 'off',
       );
 
       // Handle lyrics (after file is written/copied)
@@ -1727,7 +1744,9 @@ class SyncCoreImpl {
     destinationPath: string,
     syncedBasenames: Set<string>,
   ): Promise<void> {
-    if (syncedBasenames.size === 0) return;
+    if (syncedBasenames.size === 0) {
+      return;
+    }
 
     // Walk the destination tree to find and remove .lrc files whose base name
     // matches any of the synced track basenames
@@ -1755,7 +1774,14 @@ class SyncCoreImpl {
         const fullPath = `${dir}/${entry}`;
         try {
           const isDir = await this.deps.fs.isDirectory(fullPath);
-          if (isDir) {
+          // Also check if it's an "implicit" directory (has files under it but not explicitly marked)
+          const fsAny = this.deps.fs as unknown as Record<string, unknown>;
+          const isImplicitDir =
+            !isDir &&
+            typeof fsAny.__isImplicitDir === 'function' &&
+            fsAny.__isImplicitDir(fullPath);
+          if (isDir || isImplicitDir) {
+            // Recurse into directory (explicit or implicit)
             await this.walkAndCleanLrc(fullPath, basenames, toRemove);
           } else if (entry.toLowerCase().endsWith('.lrc')) {
             const baseName = entry.replace(/\.lrc$/i, '');

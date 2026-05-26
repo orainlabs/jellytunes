@@ -52,6 +52,9 @@ beforeEach(() => {
   mockGetSyncedTracksForItem.mockReturnValue([]);
   mockGetSyncedItems.mockReset();
   mockGetSyncedItems.mockReturnValue([]);
+  // Reset getSyncedTracksForDevice mock and restore default (empty array) behavior
+  vi.mocked(getSyncedTracksForDevice).mockReset();
+  vi.mocked(getSyncedTracksForDevice).mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -2371,6 +2374,473 @@ describe('Server Root Path - Original Path Usage', () => {
       const unchanged = albumDiff.changes.filter((c) => c.changeType === 'unchanged');
       // Path should match → unchanged
       expect(unchanged).toHaveLength(1);
+    });
+  });
+});
+
+// =============================================================================
+// STALE ARTIFACT CLEANUP TESTS (ORAIN-0416)
+// Tests for companion/cover.jpg → embed cleanup and LRC file → embed cleanup
+// =============================================================================
+
+describe('stale artifact cleanup (companion→embed, file→embed)', () => {
+  // ---------------------------------------------------------------------------
+  // Helper: compute a stable metadata hash for a track
+  // ---------------------------------------------------------------------------
+  function makeTrack(overrides: Partial<TrackInfo>): TrackInfo {
+    return {
+      id: 'track-x',
+      name: 'Test Track',
+      album: 'Album',
+      artists: ['Artist'],
+      path: '/music/Artist/Album/track.mp3',
+      format: 'mp3',
+      size: 5_000_000,
+      ...overrides,
+    };
+  }
+
+  function makeSyncedRecord(
+    overrides: Partial<import('../main/database').SyncedTrackRecord>,
+  ): import('../main/database').SyncedTrackRecord {
+    return {
+      id: 1,
+      deviceId: 1,
+      itemId: 'album-1',
+      trackId: 'track-x',
+      destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+      fileSize: 5_000_000,
+      metadataHash: '1d68c7ded0780462',
+      coverArtMode: 'embed',
+      lyricsMode: 'off',
+      encodedBitrate: '192k',
+      serverPath: '/music/Artist/Album/track.mp3',
+      serverRootPath: null,
+      syncedAt: new Date().toISOString(),
+      ...overrides,
+    } as import('../main/database').SyncedTrackRecord;
+  }
+
+  // ---------------------------------------------------------------------------
+  // AC-1: companion → non-companion (embed/off) removes stale cover.jpg
+  // ---------------------------------------------------------------------------
+  describe('cover.jpg cleanup when switching from companion to embed', () => {
+    it('removes cover.jpg from directories of tracks previously synced as companion mode', async () => {
+      const configWithRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      // DB record shows this track was synced with companion mode
+      const companionRecord = makeSyncedRecord({
+        trackId: 'track-comp',
+        destinationPath: '/mnt/usb/Artist/Album/track-comp.mp3',
+        coverArtMode: 'companion',
+        metadataHash: '1d68c7ded0780462',
+      });
+
+      // Return companion record from DB, no embed records
+      // Use mockReturnValue (not Once) because cleanup phase also calls getSyncedTracksForDevice
+      vi.mocked(getSyncedTracksForDevice).mockReturnValue([companionRecord] as any);
+      mockGetSyncedTracksForItem.mockReturnValue([companionRecord] as any);
+
+      // Mock filesystem: cover.jpg exists at the companion location
+      const fs = createMockFileSystem() as any;
+      fs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.from('fake cover'));
+
+      // Converter mock that actually writes output files to the mock FS
+      const mockConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: true }),
+        tagFile: async (inputPath: string, outputPath: string) => {
+          try {
+            const data = await fs.readFile(inputPath);
+            await fs.writeFile(outputPath, data);
+          } catch {
+            // File doesn't exist yet (e.g., re-tag from DB record) — skip
+          }
+          return { success: true };
+        },
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+      };
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({
+            tracks: [
+              makeTrack({
+                id: 'track-comp',
+                path: '/music/Artist/Album/track-comp.mp3',
+              }),
+            ],
+            errors: [],
+          }),
+          downloadItem: async () => Buffer.from('fake audio data'),
+        }),
+        fs,
+        converter: mockConverter,
+      });
+
+      const core = createTestSyncCore(configWithRoot, deps);
+
+      // Sync with embed mode (not companion) → should trigger cleanup
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/mnt/usb',
+        options: { coverArtMode: 'embed' as any },
+      });
+
+      // cover.jpg should be removed
+      expect(await fs.exists('/mnt/usb/Artist/Album/cover.jpg')).toBe(false);
+    });
+
+    it('does NOT remove cover.jpg when current coverArtMode is companion', async () => {
+      const configWithRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      // No DB mocks needed — cleanup is skipped when coverArtMode === 'companion'
+
+      const fs = createMockFileSystem() as any;
+      fs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.from('fake cover'));
+
+      const mockConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: true }),
+        tagFile: async (inputPath: string, outputPath: string) => {
+          try {
+            const data = await fs.readFile(inputPath);
+            await fs.writeFile(outputPath, data);
+          } catch {
+            // File doesn't exist yet (e.g., re-tag from DB record) — skip
+          }
+          return { success: true };
+        },
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+      };
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({
+            tracks: [makeTrack({ id: 'track-comp', path: '/music/Artist/Album/track-comp.mp3' })],
+            errors: [],
+          }),
+        }),
+        fs,
+        converter: mockConverter,
+      });
+
+      const core = createTestSyncCore(configWithRoot, deps);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/mnt/usb',
+        options: { coverArtMode: 'companion' as any },
+      });
+
+      // cover.jpg should NOT be removed when switching to companion
+      expect(await fs.exists('/mnt/usb/Artist/Album/cover.jpg')).toBe(true);
+    });
+
+    it('only cleans cover.jpg from directories tracked in DB (no global walk)', async () => {
+      const configWithRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      // Only one track in DB as companion — another directory with cover.jpg
+      // should be left alone
+      const companionRecord = makeSyncedRecord({
+        trackId: 'track-a',
+        destinationPath: '/mnt/usb/Artist/AlbumA/track-a.mp3',
+        coverArtMode: 'companion',
+      });
+
+      vi.mocked(getSyncedTracksForDevice).mockReturnValue([companionRecord] as any);
+      mockGetSyncedTracksForItem.mockReturnValue([companionRecord] as any);
+
+      const fs = createMockFileSystem() as any;
+      // cover.jpg in the tracked directory (should be cleaned)
+      fs.__setFile('/mnt/usb/Artist/AlbumA/cover.jpg', Buffer.from('fake cover'));
+      // cover.jpg in an untracked directory (should NOT be cleaned)
+      fs.__setFile('/mnt/usb/Artist/AlbumB/cover.jpg', Buffer.from('manual cover'));
+
+      const mockConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: true }),
+        tagFile: async (inputPath: string, outputPath: string) => {
+          try {
+            const data = await fs.readFile(inputPath);
+            await fs.writeFile(outputPath, data);
+          } catch {
+            // File doesn't exist yet (e.g., re-tag from DB record) — skip
+          }
+          return { success: true };
+        },
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+      };
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({
+            tracks: [makeTrack({ id: 'track-a', path: '/music/Artist/AlbumA/track-a.mp3' })],
+            errors: [],
+          }),
+          downloadItem: async () => Buffer.from('fake audio data'),
+        }),
+        fs,
+        converter: mockConverter,
+      });
+
+      const core = createTestSyncCore(configWithRoot, deps);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/mnt/usb',
+        options: { coverArtMode: 'embed' as any },
+      });
+
+      // AlbumA cover should be removed, AlbumB cover should remain
+      expect(await fs.exists('/mnt/usb/Artist/AlbumA/cover.jpg')).toBe(false);
+      expect(await fs.exists('/mnt/usb/Artist/AlbumB/cover.jpg')).toBe(true);
+    });
+
+    it('handles mixed modes in the same directory — only cleans companion artifacts', async () => {
+      const configWithRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      // Two tracks in the same directory: one was companion, one was embed
+      const companionRecord = makeSyncedRecord({
+        trackId: 'track-comp',
+        destinationPath: '/mnt/usb/Artist/Album/track-comp.mp3',
+        coverArtMode: 'companion',
+      });
+      const embedRecord = makeSyncedRecord({
+        trackId: 'track-embed',
+        destinationPath: '/mnt/usb/Artist/Album/track-embed.mp3',
+        coverArtMode: 'embed',
+      });
+
+      vi.mocked(getSyncedTracksForDevice).mockReturnValue([companionRecord, embedRecord] as any);
+      mockGetSyncedTracksForItem.mockReturnValue([companionRecord, embedRecord] as any);
+
+      const fs = createMockFileSystem() as any;
+      // cover.jpg exists (left by companion mode)
+      fs.__setFile('/mnt/usb/Artist/Album/cover.jpg', Buffer.from('fake cover'));
+
+      const mockConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: true }),
+        tagFile: async (inputPath: string, outputPath: string) => {
+          try {
+            const data = await fs.readFile(inputPath);
+            await fs.writeFile(outputPath, data);
+          } catch {
+            // File doesn't exist yet (e.g., re-tag from DB record) — skip
+          }
+          return { success: true };
+        },
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+      };
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({
+            tracks: [
+              makeTrack({ id: 'track-comp', path: '/music/Artist/Album/track-comp.mp3' }),
+              makeTrack({ id: 'track-embed', path: '/music/Artist/Album/track-embed.mp3' }),
+            ],
+            errors: [],
+          }),
+          downloadItem: async () => Buffer.from('fake audio data'),
+        }),
+        fs,
+        converter: mockConverter,
+      });
+
+      const core = createTestSyncCore(configWithRoot, deps);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/mnt/usb',
+        options: { coverArtMode: 'embed' as any },
+      });
+
+      // cover.jpg should be removed (stale companion artifact)
+      expect(await fs.exists('/mnt/usb/Artist/Album/cover.jpg')).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC-2: lrc file → embed (stale .lrc cleanup)
+  // ---------------------------------------------------------------------------
+  describe('.lrc cleanup when switching from lrc mode to embed', () => {
+    it('removes stale .lrc files from directories of tracks previously synced as lrc', async () => {
+      const configWithRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      // DB record shows this track was previously synced with lrc mode
+      // Note: destinationPath points to the audio file (not .lrc), so we extract the base name
+      const lrcRecord = makeSyncedRecord({
+        trackId: 'track-lrc',
+        destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+        lyricsMode: 'lrc',
+      });
+
+      // Return lrc record from DB so cleanup adds its basename to syncedBasenames
+      vi.mocked(getSyncedTracksForDevice).mockReturnValue([lrcRecord] as any);
+      mockGetSyncedTracksForItem.mockReturnValue([lrcRecord] as any);
+
+      const fs = createMockFileSystem() as any;
+      fs.__setFile('/mnt/usb/Artist/Album/track.lrc', Buffer.from('[00:00.00]Old lyrics'));
+
+      const mockConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: true }),
+        tagFile: async (inputPath: string, outputPath: string) => {
+          try {
+            const data = await fs.readFile(inputPath);
+            await fs.writeFile(outputPath, data);
+          } catch {
+            // File doesn't exist yet (e.g., re-tag from DB record) — skip
+          }
+          return { success: true };
+        },
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+      };
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({
+            tracks: [makeTrack({ id: 'track-lrc', path: '/music/Artist/Album/track.mp3' })],
+            errors: [],
+          }),
+          downloadItem: async () => Buffer.from('fake audio data for track'),
+        }),
+        // Re-use the SAME fs instance that has track.lrc set
+        fs,
+        converter: mockConverter,
+      });
+
+      const core = createTestSyncCore(configWithRoot, deps);
+
+      // Sync with embed mode → should clean stale .lrc
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/mnt/usb',
+        options: { lyricsMode: 'embed' as any },
+      });
+
+      // .lrc file should be removed
+      expect(await fs.exists('/mnt/usb/Artist/Album/track.lrc')).toBe(false);
+    });
+
+    it('does NOT remove .lrc files when current lyricsMode is lrc', async () => {
+      const configWithRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      const fs = createMockFileSystem() as any;
+      fs.__setFile('/mnt/usb/Artist/Album/track.lrc', Buffer.from('[00:00.00]Lyrics'));
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({
+            tracks: [makeTrack({ id: 'track-lrc', path: '/music/Artist/Album/track.mp3' })],
+            errors: [],
+          }),
+          downloadItem: async () => Buffer.from('fake audio data'),
+        }),
+        fs,
+      });
+
+      const core = createTestSyncCore(configWithRoot, deps);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/mnt/usb',
+        options: { lyricsMode: 'lrc' as any },
+      });
+
+      // .lrc should NOT be removed when staying in lrc mode
+      expect(await fs.exists('/mnt/usb/Artist/Album/track.lrc')).toBe(true);
+    });
+
+    it('only removes .lrc files for tracks being synced (not all .lrc in tree)', async () => {
+      const configWithRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      // DB record: only track-lrc was synced with lrc mode, not other-track
+      // Note: destinationPath points to the audio file (not .lrc)
+      const lrcRecord = makeSyncedRecord({
+        trackId: 'track-lrc',
+        destinationPath: '/mnt/usb/Artist/Album/track.mp3',
+        lyricsMode: 'lrc',
+      });
+      vi.mocked(getSyncedTracksForDevice).mockReturnValue([lrcRecord] as any);
+      mockGetSyncedTracksForItem.mockReturnValue([lrcRecord] as any);
+
+      const fs = createMockFileSystem() as any;
+      fs.__setFile('/mnt/usb/Artist/Album/track.lrc', Buffer.from('[00:00.00]Lyrics'));
+      fs.__setFile('/mnt/usb/Artist/Album/other-track.lrc', Buffer.from('[00:00.00]Other lyrics'));
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({
+            tracks: [makeTrack({ id: 'track-lrc', path: '/music/Artist/Album/track.mp3' })],
+            errors: [],
+          }),
+          downloadItem: async () => Buffer.from('fake audio data'),
+        }),
+        fs,
+      });
+
+      const core = createTestSyncCore(configWithRoot, deps);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/mnt/usb',
+        options: { lyricsMode: 'embed' as any },
+      });
+
+      // track.lrc should be removed, other-track.lrc should remain
+      expect(await fs.exists('/mnt/usb/Artist/Album/track.lrc')).toBe(false);
+      expect(await fs.exists('/mnt/usb/Artist/Album/other-track.lrc')).toBe(true);
     });
   });
 });

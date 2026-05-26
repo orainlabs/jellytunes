@@ -48,6 +48,8 @@ export interface SyncedTrackRecord {
   fileSize: number | null;
   metadataHash: string | null;
   coverArtMode: string;
+  /** Lyrics mode at time of sync ('lrc', 'embed', or 'off') */
+  lyricsMode: string;
   encodedBitrate: string | null;
   serverPath: string | null;
   serverRootPath: string | null;
@@ -138,6 +140,11 @@ export function initDatabase(): void {
     db.exec("UPDATE synced_tracks SET cover_art_mode = 'embed' WHERE cover_art_mode = 'off'");
   } catch {
     /* ignore */
+  }
+
+  // Migration: add lyrics_mode column for tracking lyrics sync mode per track
+  if (!columnExists(db, 'synced_tracks', 'lyrics_mode')) {
+    db.exec("ALTER TABLE synced_tracks ADD COLUMN lyrics_mode TEXT NOT NULL DEFAULT 'off'");
   }
 
   log.info('Database ready');
@@ -365,6 +372,7 @@ export function upsertSyncedTrack(
   encodedBitrate: string | null,
   serverPath: string | null,
   serverRootPath: string | null,
+  lyricsMode: string = 'off',
 ): void {
   const database = requireDb();
   // Auto-register device if not yet in DB — must exist before we can insert tracks
@@ -373,8 +381,8 @@ export function upsertSyncedTrack(
   database
     .prepare(
       `
-      INSERT INTO synced_tracks (device_id, item_id, track_id, destination_path, file_size, metadata_hash, cover_art_mode, encoded_bitrate, server_path, server_root_path, synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      INSERT INTO synced_tracks (device_id, item_id, track_id, destination_path, file_size, metadata_hash, cover_art_mode, encoded_bitrate, server_path, server_root_path, lyrics_mode, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(device_id, track_id) DO UPDATE SET
         destination_path = excluded.destination_path,
         file_size = excluded.file_size,
@@ -383,6 +391,7 @@ export function upsertSyncedTrack(
         encoded_bitrate = excluded.encoded_bitrate,
         server_path = excluded.server_path,
         server_root_path = excluded.server_root_path,
+        lyrics_mode = excluded.lyrics_mode,
         synced_at = datetime('now')
     `,
     )
@@ -397,6 +406,7 @@ export function upsertSyncedTrack(
       encodedBitrate,
       serverPath,
       serverRootPath,
+      lyricsMode,
     );
 }
 
@@ -416,6 +426,7 @@ export function getSyncedTracksForDevice(mountPoint: string): SyncedTrackRecord[
       SELECT id, device_id AS deviceId, item_id AS itemId, track_id AS trackId,
              destination_path AS destinationPath, file_size AS fileSize,
              metadata_hash AS metadataHash, cover_art_mode AS coverArtMode,
+             lyrics_mode AS lyricsMode,
              encoded_bitrate AS encodedBitrate, server_path AS serverPath,
              server_root_path AS serverRootPath, synced_at AS syncedAt
       FROM synced_tracks
@@ -442,6 +453,7 @@ export function getSyncedTracksForItem(mountPoint: string, itemId: string): Sync
       SELECT id, device_id AS deviceId, item_id AS itemId, track_id AS trackId,
              destination_path AS destinationPath, file_size AS fileSize,
              metadata_hash AS metadataHash, cover_art_mode AS coverArtMode,
+             lyrics_mode AS lyricsMode,
              encoded_bitrate AS encodedBitrate, server_path AS serverPath,
              server_root_path AS serverRootPath, synced_at AS syncedAt
       FROM synced_tracks

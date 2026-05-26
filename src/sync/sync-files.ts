@@ -110,6 +110,12 @@ export interface FileSystem {
 
   /** Create a writable stream to a file (Node.js Writable) */
   createWriteStream(path: string): Promise<NodeJS.WritableStream>;
+
+  /** @internal Check if a path is an implicit directory (has children in mock FS) */
+  __isImplicitDir?(path: string): boolean;
+
+  /** @internal Register a path as a directory (mock FS only) */
+  __setDirectory?(path: string): void;
 }
 
 /**
@@ -248,6 +254,15 @@ export function createMockFileSystem(overrides?: Partial<FileSystem>): FileSyste
 
     mkdir: async (path: string) => {
       directories.add(path);
+    },
+
+    /** @internal Expose isDirectory logic for callers to trigger re-evaluation */
+    __setDirectory: (path: string) => {
+      directories.add(path);
+    },
+    __isImplicitDir: (path: string) => {
+      const prefix = path.endsWith('/') ? path : `${path}/`;
+      return Array.from(files.keys()).some((f) => f.startsWith(prefix));
     },
 
     copyFile: async (source: string, destination: string) => {
