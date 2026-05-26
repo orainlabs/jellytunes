@@ -76,7 +76,7 @@ export function LibraryItem({
       const parts: string[] = [];
       if (album.AlbumArtist) parts.push(album.AlbumArtist);
       if (album.ProductionYear) parts.push(String(album.ProductionYear));
-      if (album.ChildCount !== null)
+      if (album.ChildCount && album.ChildCount > 0)
         parts.push(`${album.ChildCount} track${album.ChildCount !== 1 ? 's' : ''}`);
       const runtime = formatRunTimeTicks(album.RunTimeTicks);
       if (runtime) parts.push(runtime);

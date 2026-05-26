@@ -39,7 +39,7 @@ export function useSearch(jellyfinConfig: JellyfinConfig | null, userId: string 
             { headers },
           ),
           fetch(
-            `${base}/Items?SearchTerm=${q}&IncludeItemTypes=MusicAlbum&Recursive=true&Limit=20&Fields=RunTimeTicks`,
+            `${base}/Items?SearchTerm=${q}&IncludeItemTypes=MusicAlbum&Recursive=true&Limit=20&Fields=RunTimeTicks,ChildCount`,
             { headers },
           ),
           fetch(
