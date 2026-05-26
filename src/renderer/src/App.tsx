@@ -20,7 +20,11 @@ import { useJellyfinConnection } from './hooks/useJellyfinConnection';
 import { useSavedDestinations } from './hooks/useSavedDestinations';
 import { getTrackRegistry } from './hooks/useTrackRegistry';
 
-function App(): JSX.Element {
+function AppConnected({
+  connection,
+}: {
+  connection: ReturnType<typeof useJellyfinConnection>;
+}): JSX.Element {
   const [activeSection, setActiveSection] = useState<ActiveSection>('library');
   const [isRemovingDestination, setIsRemovingDestination] = useState(false);
   const [switchToast, setSwitchToast] = useState<string | null>(null);
@@ -32,8 +36,6 @@ function App(): JSX.Element {
     removeDestination,
     updateDestination: saveDestPrefs,
   } = useSavedDestinations();
-
-  const connection = useJellyfinConnection((_url, _apiKey, _userId) => {});
 
   const lib = useLibrary(connection.jellyfinConfig, connection.userId);
 
@@ -373,6 +375,191 @@ function App(): JSX.Element {
   const effectiveDevicePath =
     sync.isSyncing && sync.syncFolder ? sync.syncFolder : deviceSelections.activeDevicePath;
 
+  return (
+    <div className="h-screen flex flex-col bg-surface text-on_surface">
+      <AppHeader
+        isConnected={connection.isConnected}
+        serverUrl={connection.jellyfinConfig?.url}
+        onDisconnect={connection.disconnect}
+        isSyncing={sync.isSyncing}
+      />
+
+      <div className="flex-1 flex overflow-hidden">
+        <Sidebar
+          activeSection={activeSection}
+          activeLibrary={lib.activeLibrary}
+          activeDestinationPath={deviceSelections.activeDevicePath}
+          stats={lib.stats}
+          pagination={lib.pagination}
+          artists={lib.artists}
+          albums={lib.albums}
+          playlists={lib.playlists}
+          usbDevices={usbDevices}
+          savedDestinations={savedDestinations}
+          onLibraryTab={handleLibraryTab}
+          onDestinationClick={handleDestinationClick}
+          onAddFolder={handleAddFolder}
+          onRefreshDevices={refreshDevices}
+          onRefreshLibrary={async () => {
+            await lib.refreshLibrary();
+            // Clear stale registry tracks and re-run analyzeDiff
+            await deviceSelections.onLibraryRefresh();
+          }}
+          onRemoveDestination={(path, deleteFiles, onDone) =>
+            handleRemoveDestination(path, deleteFiles, onDone)
+          }
+          isRemovingDestination={isRemovingDestination}
+          isSyncing={sync.isSyncing}
+        />
+
+        <div className="flex-1 overflow-hidden flex flex-col relative">
+          {switchToast && (
+            <div
+              className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-4 py-2
+              bg-surface_container_low border border-secondary_container/60 rounded-lg
+              text-body-md text-on_surface_variant shadow-lg pointer-events-none whitespace-nowrap"
+            >
+              {switchToast}
+            </div>
+          )}
+          {effectiveSection === 'library' ? (
+            <LibraryContent
+              activeLibrary={lib.activeLibrary}
+              artists={lib.artists}
+              albums={lib.albums}
+              playlists={lib.playlists}
+              pagination={lib.pagination}
+              selectedTracks={deviceSelections.selectedTracks}
+              previouslySyncedItems={inferredSyncedItems}
+              outOfSyncItems={deviceSelections.outOfSyncItems}
+              isLoadingMore={lib.isLoadingMore || isSelectingAll}
+              error={lib.error}
+              onToggle={deviceSelections.toggleItem}
+              onSelectAll={selectAllInCurrentView}
+              onClearSelection={deviceSelections.clearSelection}
+              onClearError={() => lib.setError(null)}
+              onLoadMore={lib.loadMore}
+              selectionSummary={getSelectionSummary()}
+              contentScrollRef={lib.contentScrollRef}
+              hasActiveDevice={!!deviceSelections.activeDevicePath}
+              serverUrl={connection.jellyfinConfig?.url}
+              searchQuery={currentTabSearchQuery}
+              onSearchChange={(q) => setSearchQuery(q, lib.activeLibrary)}
+              onClearSearch={handleClearSearch}
+              searchResults={searchResults}
+              isSearching={isSearching}
+              searchError={searchError}
+            />
+          ) : effectiveSection === 'device' && effectiveDevicePath ? (
+            <main className="flex-1 overflow-hidden">
+              <DeviceSyncPanel
+                destinationPath={effectiveDevicePath}
+                destinationName={getDestinationName(effectiveDevicePath)}
+                isUsbDevice={isUsbDevice(effectiveDevicePath)}
+                isSaved={isSavedDestination(effectiveDevicePath)}
+                convertToMp3={sync.convertToMp3}
+                bitrate={sync.bitrate}
+                coverArtMode={sync.coverArtMode}
+                lyricsMode={sync.lyricsMode}
+                hasFlacOrM4a={hasFlacOrM4a}
+                isSyncing={sync.isSyncing}
+                isActivatingDevice={deviceSelections.isActivatingDevice}
+                syncProgress={sync.syncProgress}
+                selectedTracks={deviceSelections.selectedTracks}
+                syncedItemsInfo={deviceSelections.syncedItemsInfo}
+                outOfSyncItems={deviceSelections.outOfSyncItems}
+                artists={extArtists}
+                albums={extAlbums}
+                playlists={extPlaylists}
+                showPreview={sync.showPreview}
+                previewData={sync.previewData}
+                syncedMusicBytes={deviceSelections.syncedMusicBytes ?? undefined}
+                estimatedSizeBytes={deviceSelections.estimatedSizeBytes}
+                isLoadingSize={deviceSelections.isLoadingSize}
+                onToggleItem={deviceSelections.toggleItem}
+                onToggleConvert={() => {
+                  const willBeOn = !sync.convertToMp3;
+                  sync.setConvertToMp3(willBeOn);
+                  deviceSelections.updateConvertOptions(willBeOn, sync.bitrate);
+                  const destId = savedDestinations.find(
+                    (d) => d.path === deviceSelections.activeDevicePath,
+                  )?.id;
+                  if (destId) saveDestPrefs(destId, { convertToMp3: willBeOn });
+                }}
+                onBitrateChange={(b) => {
+                  deviceSelections.updateConvertOptions(sync.convertToMp3, b);
+                  sync.setBitrate(b);
+                  const destId = savedDestinations.find(
+                    (d) => d.path === deviceSelections.activeDevicePath,
+                  )?.id;
+                  if (destId) saveDestPrefs(destId, { bitrate: b });
+                }}
+                onCoverArtModeChange={(m) => {
+                  deviceSelections.updateConvertOptions(sync.convertToMp3, sync.bitrate, m);
+                  sync.setCoverArtMode(m);
+                  const destId = savedDestinations.find(
+                    (d) => d.path === deviceSelections.activeDevicePath,
+                  )?.id;
+                  if (destId) saveDestPrefs(destId, { coverArtMode: m });
+                }}
+                onLyricsModeChange={(m) => sync.setLyricsMode(m)}
+                onStartSync={sync.handleStartSync}
+                onCancelSync={sync.handleCancelSync}
+                onCancelPreview={() => sync.setShowPreview(false)}
+                onConfirmSync={sync.executeSyncNow}
+                onRemoveDestination={(deleteFiles) =>
+                  handleRemoveDestination(effectiveDevicePath!, deleteFiles, () => {})
+                }
+              />
+            </main>
+          ) : (
+            <main className="flex-1 flex items-center justify-center text-zinc-600">
+              <div className="text-center">
+                <p className="text-title-md font-semibold mb-2">Select a device or folder</p>
+                <p className="text-body-md">Choose from the sidebar or add a new folder</p>
+              </div>
+            </main>
+          )}
+        </div>
+      </div>
+
+      <FooterStats
+        stats={lib.stats}
+        pagination={lib.pagination}
+        artists={lib.artists}
+        albums={lib.albums}
+        playlists={lib.playlists}
+        activeDeviceName={
+          deviceSelections.activeDevicePath
+            ? getDestinationName(deviceSelections.activeDevicePath)
+            : null
+        }
+        isUsbDevice={
+          deviceSelections.activeDevicePath ? isUsbDevice(deviceSelections.activeDevicePath) : false
+        }
+        onGoToDevice={() => setActiveSection('device')}
+        isSyncing={sync.isSyncing}
+      />
+
+      {sync.syncSuccessData && (
+        <SyncSuccessModal
+          tracksCopied={sync.syncSuccessData.tracksCopied}
+          tracksSkipped={sync.syncSuccessData.tracksSkipped}
+          tracksRetagged={sync.syncSuccessData.tracksRetagged}
+          lyricsAdded={sync.syncSuccessData.lyricsAdded}
+          removed={sync.syncSuccessData.removed}
+          errors={sync.syncSuccessData.errors}
+          lyricsMode={sync.syncSuccessData.lyricsMode}
+          onClose={() => sync.setSyncSuccessData(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function App(): JSX.Element {
+  const connection = useJellyfinConnection((_url, _apiKey, _userId) => {});
+
   if (!connection.isConnected && !connection.isConnecting && !connection.showUserSelector) {
     return (
       <LoginScreen
@@ -402,186 +589,7 @@ function App(): JSX.Element {
 
   return (
     <UseTabSearchProvider jellyfinConfig={connection.jellyfinConfig} userId={connection.userId}>
-      <div className="h-screen flex flex-col bg-surface text-on_surface">
-        <AppHeader
-          isConnected={connection.isConnected}
-          serverUrl={connection.jellyfinConfig?.url}
-          onDisconnect={connection.disconnect}
-          isSyncing={sync.isSyncing}
-        />
-
-        <div className="flex-1 flex overflow-hidden">
-          <Sidebar
-            activeSection={activeSection}
-            activeLibrary={lib.activeLibrary}
-            activeDestinationPath={deviceSelections.activeDevicePath}
-            stats={lib.stats}
-            pagination={lib.pagination}
-            artists={lib.artists}
-            albums={lib.albums}
-            playlists={lib.playlists}
-            usbDevices={usbDevices}
-            savedDestinations={savedDestinations}
-            onLibraryTab={handleLibraryTab}
-            onDestinationClick={handleDestinationClick}
-            onAddFolder={handleAddFolder}
-            onRefreshDevices={refreshDevices}
-            onRefreshLibrary={async () => {
-              await lib.refreshLibrary();
-              // Clear stale registry tracks and re-run analyzeDiff
-              await deviceSelections.onLibraryRefresh();
-            }}
-            onRemoveDestination={(path, deleteFiles, onDone) =>
-              handleRemoveDestination(path, deleteFiles, onDone)
-            }
-            isRemovingDestination={isRemovingDestination}
-            isSyncing={sync.isSyncing}
-          />
-
-          <div className="flex-1 overflow-hidden flex flex-col relative">
-            {switchToast && (
-              <div
-                className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-4 py-2
-              bg-surface_container_low border border-secondary_container/60 rounded-lg
-              text-body-md text-on_surface_variant shadow-lg pointer-events-none whitespace-nowrap"
-              >
-                {switchToast}
-              </div>
-            )}
-            {effectiveSection === 'library' ? (
-              <LibraryContent
-                activeLibrary={lib.activeLibrary}
-                artists={lib.artists}
-                albums={lib.albums}
-                playlists={lib.playlists}
-                pagination={lib.pagination}
-                selectedTracks={deviceSelections.selectedTracks}
-                previouslySyncedItems={inferredSyncedItems}
-                outOfSyncItems={deviceSelections.outOfSyncItems}
-                isLoadingMore={lib.isLoadingMore || isSelectingAll}
-                error={lib.error}
-                onToggle={deviceSelections.toggleItem}
-                onSelectAll={selectAllInCurrentView}
-                onClearSelection={deviceSelections.clearSelection}
-                onClearError={() => lib.setError(null)}
-                onLoadMore={lib.loadMore}
-                selectionSummary={getSelectionSummary()}
-                contentScrollRef={lib.contentScrollRef}
-                hasActiveDevice={!!deviceSelections.activeDevicePath}
-                serverUrl={connection.jellyfinConfig?.url}
-                searchQuery={currentTabSearchQuery}
-                onSearchChange={(q) => setSearchQuery(q, lib.activeLibrary)}
-                onClearSearch={handleClearSearch}
-                searchResults={searchResults}
-                isSearching={isSearching}
-                searchError={searchError}
-              />
-            ) : effectiveSection === 'device' && effectiveDevicePath ? (
-              <main className="flex-1 overflow-hidden">
-                <DeviceSyncPanel
-                  destinationPath={effectiveDevicePath}
-                  destinationName={getDestinationName(effectiveDevicePath)}
-                  isUsbDevice={isUsbDevice(effectiveDevicePath)}
-                  isSaved={isSavedDestination(effectiveDevicePath)}
-                  convertToMp3={sync.convertToMp3}
-                  bitrate={sync.bitrate}
-                  coverArtMode={sync.coverArtMode}
-                  lyricsMode={sync.lyricsMode}
-                  hasFlacOrM4a={hasFlacOrM4a}
-                  isSyncing={sync.isSyncing}
-                  isActivatingDevice={deviceSelections.isActivatingDevice}
-                  syncProgress={sync.syncProgress}
-                  selectedTracks={deviceSelections.selectedTracks}
-                  syncedItemsInfo={deviceSelections.syncedItemsInfo}
-                  outOfSyncItems={deviceSelections.outOfSyncItems}
-                  artists={extArtists}
-                  albums={extAlbums}
-                  playlists={extPlaylists}
-                  showPreview={sync.showPreview}
-                  previewData={sync.previewData}
-                  syncedMusicBytes={deviceSelections.syncedMusicBytes ?? undefined}
-                  estimatedSizeBytes={deviceSelections.estimatedSizeBytes}
-                  isLoadingSize={deviceSelections.isLoadingSize}
-                  onToggleItem={deviceSelections.toggleItem}
-                  onToggleConvert={() => {
-                    const willBeOn = !sync.convertToMp3;
-                    sync.setConvertToMp3(willBeOn);
-                    deviceSelections.updateConvertOptions(willBeOn, sync.bitrate);
-                    const destId = savedDestinations.find(
-                      (d) => d.path === deviceSelections.activeDevicePath,
-                    )?.id;
-                    if (destId) saveDestPrefs(destId, { convertToMp3: willBeOn });
-                  }}
-                  onBitrateChange={(b) => {
-                    deviceSelections.updateConvertOptions(sync.convertToMp3, b);
-                    sync.setBitrate(b);
-                    const destId = savedDestinations.find(
-                      (d) => d.path === deviceSelections.activeDevicePath,
-                    )?.id;
-                    if (destId) saveDestPrefs(destId, { bitrate: b });
-                  }}
-                  onCoverArtModeChange={(m) => {
-                    deviceSelections.updateConvertOptions(sync.convertToMp3, sync.bitrate, m);
-                    sync.setCoverArtMode(m);
-                    const destId = savedDestinations.find(
-                      (d) => d.path === deviceSelections.activeDevicePath,
-                    )?.id;
-                    if (destId) saveDestPrefs(destId, { coverArtMode: m });
-                  }}
-                  onLyricsModeChange={(m) => sync.setLyricsMode(m)}
-                  onStartSync={sync.handleStartSync}
-                  onCancelSync={sync.handleCancelSync}
-                  onCancelPreview={() => sync.setShowPreview(false)}
-                  onConfirmSync={sync.executeSyncNow}
-                  onRemoveDestination={(deleteFiles) =>
-                    handleRemoveDestination(effectiveDevicePath!, deleteFiles, () => {})
-                  }
-                />
-              </main>
-            ) : (
-              <main className="flex-1 flex items-center justify-center text-zinc-600">
-                <div className="text-center">
-                  <p className="text-title-md font-semibold mb-2">Select a device or folder</p>
-                  <p className="text-body-md">Choose from the sidebar or add a new folder</p>
-                </div>
-              </main>
-            )}
-          </div>
-        </div>
-
-        <FooterStats
-          stats={lib.stats}
-          pagination={lib.pagination}
-          artists={lib.artists}
-          albums={lib.albums}
-          playlists={lib.playlists}
-          activeDeviceName={
-            deviceSelections.activeDevicePath
-              ? getDestinationName(deviceSelections.activeDevicePath)
-              : null
-          }
-          isUsbDevice={
-            deviceSelections.activeDevicePath
-              ? isUsbDevice(deviceSelections.activeDevicePath)
-              : false
-          }
-          onGoToDevice={() => setActiveSection('device')}
-          isSyncing={sync.isSyncing}
-        />
-
-        {sync.syncSuccessData && (
-          <SyncSuccessModal
-            tracksCopied={sync.syncSuccessData.tracksCopied}
-            tracksSkipped={sync.syncSuccessData.tracksSkipped}
-            tracksRetagged={sync.syncSuccessData.tracksRetagged}
-            lyricsAdded={sync.syncSuccessData.lyricsAdded}
-            removed={sync.syncSuccessData.removed}
-            errors={sync.syncSuccessData.errors}
-            lyricsMode={sync.syncSuccessData.lyricsMode}
-            onClose={() => sync.setSyncSuccessData(null)}
-          />
-        )}
-      </div>
+      <AppConnected connection={connection} />
     </UseTabSearchProvider>
   );
 }
