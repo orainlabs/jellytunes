@@ -111,6 +111,14 @@ export interface SyncProgressInfo {
   warning?: string;
 }
 
+export interface ItemPreview {
+  id: string;
+  name: string;
+  trackCount: number;
+  sizeBytes: number;
+  durationSeconds: number;
+}
+
 export interface PreviewData {
   trackCount: number;
   totalBytes: number;
@@ -125,6 +133,11 @@ export interface PreviewData {
   willRemoveCount: number;
   willRemoveBytes: number;
   isRefining?: boolean;
+  // Per-item breakdown for sync preview modal
+  removedItems?: ItemPreview[];
+  newItems?: ItemPreview[];
+  updatedItems?: ItemPreview[];
+  alreadySyncedItems?: ItemPreview[];
 }
 
 export interface ItemTypeIndex {
