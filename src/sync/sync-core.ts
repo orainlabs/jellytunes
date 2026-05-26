@@ -583,7 +583,6 @@ class SyncCoreImpl {
     processed: boolean;
     skipped: boolean;
     lyricsAdded: number;
-    companionCoverPath?: string;
     error?: string;
   }> {
     const outputDir = this.getOutputDir(
@@ -656,7 +655,6 @@ class SyncCoreImpl {
     processed: boolean;
     skipped: boolean;
     lyricsAdded: number;
-    companionCoverPath?: string;
     error?: string;
   }> {
     const metadataChanged = syncedRecord.metadataHash !== currentHash;
@@ -684,14 +682,12 @@ class SyncCoreImpl {
           outputPath,
           options.lyricsMode ?? 'off',
         );
-        const outputDir = outputPath.substring(0, outputPath.lastIndexOf('/'));
         return {
           retagged: false,
           moved: true,
           processed: true,
           skipped: false,
           lyricsAdded: lyricsResult,
-          companionCoverPath: coverArtMode === 'companion' ? `${outputDir}/cover.jpg` : undefined,
         };
       }
 
@@ -762,7 +758,6 @@ class SyncCoreImpl {
           processed: false,
           skipped: false,
           lyricsAdded: lyricsResult,
-          companionCoverPath: coverArtMode === 'companion' ? `${outputDir}/cover.jpg` : undefined,
         };
       }
       this.log.warn(`Re-tag failed for ${track.name}, falling back to re-download`);
@@ -792,10 +787,6 @@ class SyncCoreImpl {
     );
     return {
       ...copyResult,
-      companionCoverPath:
-        copyResult.processed && coverArtMode === 'companion'
-          ? `${this.getOutputDir(track, destinationPath, options.preserveStructure ?? true, options.filesystemType ?? 'unknown')}/cover.jpg`
-          : undefined,
     };
   }
 
