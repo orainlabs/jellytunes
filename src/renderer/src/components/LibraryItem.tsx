@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useState } from 'react';
 import { User, Disc, ListMusic } from 'lucide-react';
 import type { Artist, Album, Playlist } from '../appTypes';
@@ -31,15 +32,41 @@ function ItemThumbnail({
     triggerOnce: true,
   });
 
-  const shouldShowImage = serverUrl && tag && !imgError && isIntersecting && !imgLoaded;
+  // Decide whether to start loading the image (requires visibility and no errors)
+  const shouldLoad = serverUrl && tag && !imgError && isIntersecting;
+  // Decide whether to display the img element (once loaded, stay visible permanently)
+  const hasLoaded = imgLoaded;
 
   const Icon = type === 'artist' ? User : type === 'album' ? Disc : ListMusic;
   const rounded = type === 'artist' ? 'rounded-full' : 'rounded';
 
-  if (shouldShowImage) {
+  // Show image once loaded, otherwise show placeholder
+  if (hasLoaded) {
     const src = `${serverUrl}/Items/${item.Id}/Images/Primary?fillHeight=40&fillWidth=40&quality=85&tag=${tag}`;
     return (
-      <div ref={ref as never} className={`w-10 h-10 flex-shrink-0 ${rounded}`}>
+      <div
+        ref={ref as React.RefObject<HTMLDivElement>}
+        className={`w-10 h-10 flex-shrink-0 ${rounded}`}
+      >
+        <img
+          src={src}
+          alt=""
+          className={`w-10 h-10 object-cover ${rounded}`}
+          onError={() => setImgError(true)}
+          onLoad={() => setImgLoaded(true)}
+        />
+      </div>
+    );
+  }
+
+  // Show placeholder or image loading state
+  if (shouldLoad) {
+    const src = `${serverUrl}/Items/${item.Id}/Images/Primary?fillHeight=40&fillWidth=40&quality=85&tag=${tag}`;
+    return (
+      <div
+        ref={ref as React.RefObject<HTMLDivElement>}
+        className={`w-10 h-10 flex-shrink-0 ${rounded}`}
+      >
         <img
           src={src}
           alt=""
@@ -53,7 +80,7 @@ function ItemThumbnail({
 
   return (
     <div
-      ref={ref as never}
+      ref={ref as React.RefObject<HTMLDivElement>}
       className={`w-10 h-10 bg-surface_container_low flex items-center justify-center flex-shrink-0 ${rounded}`}
     >
       <Icon className="w-5 h-5 text-on_surface_variant" />

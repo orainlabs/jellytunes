@@ -11,35 +11,34 @@ if (typeof window !== 'undefined') {
 
 // Mock IntersectionObserver for jsdom
 class MockIntersectionObserver implements IntersectionObserver {
+  private _rootMargin: string;
+  private _thresholds: ReadonlyArray<number>;
   readonly root: Element | null = null;
-  readonly rootMargin: string = '';
-  readonly thresholds: ReadonlyArray<number> = [];
+  get rootMargin(): string {
+    return this._rootMargin;
+  }
+  get thresholds(): ReadonlyArray<number> {
+    return this._thresholds;
+  }
 
   private _callback: IntersectionObserverCallback | null = null;
   private _currentEntry: IntersectionObserverEntry | null = null;
 
-  constructor(callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {
+  constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
     this._callback = callback;
+    this._rootMargin = options?.rootMargin ?? '';
+    const threshold = options?.threshold;
+    if (typeof threshold === 'number') {
+      this._thresholds = [threshold];
+    } else if (Array.isArray(threshold)) {
+      this._thresholds = threshold;
+    } else {
+      this._thresholds = [];
+    }
   }
 
   observe(): void {
-    if (this._callback && !this._currentEntry) {
-      this._currentEntry = {
-        boundingClientRect: {} as DOMRectReadOnly,
-        intersectionRatio: 1,
-        intersectionRect: {} as DOMRectReadOnly,
-        isIntersecting: true,
-        rootBounds: null,
-        target: {} as Element,
-        time: Date.now(),
-      };
-      // Schedule callback after observing so tests can set up their assertions
-      setTimeout(() => {
-        if (this._callback && this._currentEntry) {
-          this._callback([this._currentEntry], this);
-        }
-      }, 0);
-    }
+    // Do not auto-trigger on observe — tests control state via setIntersecting()
   }
 
   unobserve(): void {}

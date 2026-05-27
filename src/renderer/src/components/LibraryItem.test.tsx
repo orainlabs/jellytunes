@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { LibraryItem } from './LibraryItem';
+import { mockObserverInstances } from '../__tests__/setup';
 
 describe('LibraryItem playlist subtitle', () => {
   const baseProps = {
@@ -222,7 +223,7 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
     serverUrl: 'https://jellyfin.example.com',
   };
 
-  it('shows placeholder icon when item is not in viewport', async () => {
+  it('shows placeholder icon when item is not in viewport', () => {
     render(
       <LibraryItem
         item={
@@ -238,6 +239,12 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
       />,
     );
 
+    // Explicitly set "not intersecting" so test is deterministic
+    const mock = mockObserverInstances[0];
+    act(() => {
+      mock.setIntersecting(false);
+    });
+
     // Should show placeholder (div with icon), not the img element with src
     const placeholder = screen
       .getByTestId('library-item')
@@ -246,7 +253,7 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
     expect(placeholder?.querySelector('img')).toBeNull();
   });
 
-  it('renders img with src when item enters viewport (mock auto-triggers)', async () => {
+  it('renders img with src when item enters viewport', async () => {
     render(
       <LibraryItem
         item={
@@ -262,7 +269,15 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
       />,
     );
 
-    // Wait for mock IntersectionObserver to trigger visibility
+    // Trigger visibility if mock is available
+    if (mockObserverInstances.length > 0) {
+      const mock = mockObserverInstances[mockObserverInstances.length - 1];
+      act(() => {
+        mock.setIntersecting(true);
+      });
+    }
+
+    // Wait for React to process the state update
     await waitFor(
       () => {
         const img = screen.getByTestId('library-item').querySelector('img');
@@ -296,13 +311,11 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
       />,
     );
 
-    // Wait for img to appear
-    await waitFor(
-      () => {
-        expect(screen.getByTestId('library-item').querySelector('img')).toBeInTheDocument();
-      },
-      { timeout: 2000 },
-    );
+    // Trigger visibility explicitly
+    const mock = mockObserverInstances[mockObserverInstances.length - 1];
+    act(() => {
+      mock.setIntersecting(true);
+    });
 
     // Simulate image error
     const img = screen.getByTestId('library-item').querySelector('img')!;
@@ -336,6 +349,11 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
       />,
     );
 
+    const mock = mockObserverInstances[mockObserverInstances.length - 1];
+    act(() => {
+      mock.setIntersecting(true);
+    });
+
     await waitFor(
       () => {
         const img = screen.getByTestId('library-item').querySelector('img');
@@ -364,6 +382,11 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
       />,
     );
 
+    const mock = mockObserverInstances[mockObserverInstances.length - 1];
+    act(() => {
+      mock.setIntersecting(true);
+    });
+
     await waitFor(
       () => {
         expect(screen.getByTestId('library-item').querySelector('img')).toBeInTheDocument();
@@ -391,6 +414,11 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
         {...baseProps}
       />,
     );
+
+    const mock = mockObserverInstances[mockObserverInstances.length - 1];
+    act(() => {
+      mock.setIntersecting(true);
+    });
 
     await waitFor(
       () => {
@@ -453,5 +481,69 @@ describe('LibraryItem lazy loading with IntersectionObserver', () => {
       .querySelector('.bg-surface_container_low');
     expect(placeholder?.tagName.toLowerCase()).toBe('div');
     expect(screen.getByTestId('library-item').querySelector('img')).toBeNull();
+  });
+
+  it('loads image and stays visible after onLoad (full cycle test)', async () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'album-cycle',
+            Name: 'Test Album Cycle',
+            ImageTags: { Primary: 'cycle-tag' },
+          } as const
+        }
+        type="album"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    // Wait for the effect to run (observer creation)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const mock = mockObserverInstances[mockObserverInstances.length - 1];
+
+    // Phase 1: Element enters viewport but image hasn't loaded yet
+    act(() => {
+      mock.setIntersecting(true);
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('library-item').querySelector('img')).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    // Phase 2: Simulate onLoad event (image finishes loading)
+    const img = screen.getByTestId('library-item').querySelector('img')!;
+    act(() => {
+      img.dispatchEvent(new Event('load', { bubbles: true }));
+    });
+
+    // Phase 3: Image should STILL be visible (not disappear after onLoad)
+    await waitFor(
+      () => {
+        const loadedImg = screen.getByTestId('library-item').querySelector('img');
+        expect(loadedImg).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    // Confirm the image stays - no img inside the placeholder
+    const placeholder = screen
+      .getByTestId('library-item')
+      .querySelector('.bg-surface_container_low');
+    expect(placeholder?.querySelector('img')).toBeUndefined();
+
+    // Phase 4: Even if intersection state changes, image should remain
+    act(() => {
+      mock.setIntersecting(false);
+    });
+
+    // Image should still be visible (not replaced by placeholder)
+    const stillVisibleImg = screen.getByTestId('library-item').querySelector('img');
+    expect(stillVisibleImg).toBeInTheDocument();
   });
 });
