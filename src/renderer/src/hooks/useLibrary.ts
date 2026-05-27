@@ -448,12 +448,12 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       let totalCount = currentPagination.total;
       let hasMore: boolean = currentPagination.hasMore;
 
-      // Fetch remaining pages with dynamic batch sizing
-      // AC requirement: ≤3 additional requests, max 1000 items per request
+      // Fetch remaining pages using the maximum allowed page size (1000 items per request).
+      // Using remainingItems/3 caused Zeno's paradox: page sizes shrink geometrically
+      // and the loop needs O(log n) requests instead of O(ceil(n/1000)).
       while (hasMore) {
         const remainingItems = totalCount - startIndex;
-        // Split remaining into 3 batches max, cap at 1000
-        const pageLimit = Math.min(Math.ceil(remainingItems / 3), 1000);
+        const pageLimit = Math.min(remainingItems, 1000);
 
         let endpoint = '';
         if (type === 'artists')
@@ -478,9 +478,17 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
               : type === 'albums'
                 ? rawItems.map(normalizeAlbum)
                 : rawItems.map(normalizePlaylist);
+          // Guard: if the server returns no items, stop — advancing startIndex by 0
+          // would cause an infinite loop when totalCount > actual available items.
+          if (normalized.length === 0) break;
           normalized.forEach((item) => allIds.add(item.Id));
           startIndex += normalized.length;
-          totalCount = data.TotalRecordCount ?? totalCount;
+          // Never chase an upward-oscillating TotalRecordCount: only update totalCount
+          // when the server reports fewer items than our current expectation.
+          const serverTotal = data.TotalRecordCount as number | undefined;
+          if (serverTotal !== undefined && serverTotal < totalCount) {
+            totalCount = serverTotal;
+          }
           hasMore = startIndex < totalCount;
 
           // Update pagination state to track progress (only if not using explicit pagination)
