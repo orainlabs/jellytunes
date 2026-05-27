@@ -9,6 +9,8 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['src/renderer/src/__tests__/setup.ts'],
     include: ['src/renderer/src/**/*.test.tsx'],
+    maxWorkers: 2,
+    minWorkers: 1,
   },
   resolve: {
     alias: {
