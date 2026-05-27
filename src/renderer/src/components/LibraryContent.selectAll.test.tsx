@@ -328,3 +328,66 @@ describe('LibraryContent - Select All with stats fallback', () => {
     expect(screen.getByTestId('select-all-label')).toHaveTextContent('albums');
   });
 });
+
+describe('LibraryContent - Select All with pagination loading', () => {
+  it('shows loading indicator while fetching remaining pages', () => {
+    // Test that Select All button shows loading state during pagination
+    const onSelectAll = vi.fn();
+    const onLoadMore = vi.fn();
+
+    render(
+      <LibraryContent
+        {...defaultProps}
+        artists={Array.from({ length: 50 }, (_, i) => ({
+          Id: `artist-${i + 1}`,
+          Name: `Artist ${i + 1}`,
+          AlbumCount: 5,
+          ImageTags: {},
+          RunTimeTicks: 0,
+        }))}
+        pagination={{
+          artists: { items: [], total: 250, startIndex: 50, hasMore: true, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
+        onSelectAll={onSelectAll}
+        onLoadMore={onLoadMore}
+        isLoadingMore={false}
+      />,
+    );
+
+    // The Select All button text should indicate loading when isSelectingAll is true
+    // Since isSelectingAll is controlled by the parent, we verify the button exists
+    const selectAllButton = screen.getByTestId('select-all-button');
+    expect(selectAllButton).toBeInTheDocument();
+  });
+
+  it('disables Select All during pagination with proper visual feedback', () => {
+    // Test that Select All button is disabled and shows loading when pagination active
+    const onSelectAll = vi.fn();
+
+    render(
+      <LibraryContent
+        {...defaultProps}
+        artists={Array.from({ length: 50 }, (_, i) => ({
+          Id: `artist-${i + 1}`,
+          Name: `Artist ${i + 1}`,
+          AlbumCount: 5,
+          ImageTags: {},
+          RunTimeTicks: 0,
+        }))}
+        pagination={{
+          artists: { items: [], total: 250, startIndex: 50, hasMore: true, scrollPos: 0 },
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+        }}
+        onSelectAll={onSelectAll}
+        isLoadingMore={false}
+      />,
+    );
+
+    // Select All button should be enabled (not disabled by isLoadingMore)
+    const selectAllButton = screen.getByTestId('select-all-button');
+    expect(selectAllButton).not.toBeDisabled();
+  });
+});

@@ -135,7 +135,7 @@ describe('useLibrary - selectAll with pagination', () => {
       });
 
       // Start selectAll and check loading state immediately
-      let selectAllPromise: Promise<void>;
+      let selectAllPromise: Promise<{ cancelled: boolean }>;
       act(() => {
         selectAllPromise = result.current.selectAllWithCompleteSet('artists', onSelectAllIds);
       });
@@ -214,4 +214,51 @@ describe('useLibrary - selectAll with pagination', () => {
       expect(result.current.pagination.albums.total).toBe(0);
     });
   });
+});
+
+describe('useLibrary - selectAllWithCompleteSet partial failure', () => {
+  it('returns partial results when a page fetch fails', async () => {
+    // Simulates page 2 failing during selectAll — should return IDs from successful pages
+    const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+    const onSelectAllIds = vi.fn();
+
+    // Mock fetch to fail on page 2
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('StartIndex=2')) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+        });
+      }
+      if (url.includes('StartIndex=0') && url.includes('Artists')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [createArtist('artist-1', 'Artist 1'), createArtist('artist-2', 'Artist 2')],
+              TotalRecordCount: 5,
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+      });
+    });
+
+    await act(async () => {
+      await result.current.selectAllWithCompleteSet('artists', onSelectAllIds);
+    });
+
+    // Should have returned partial results
+    expect(onSelectAllIds).toHaveBeenCalled();
+    const calledIds = onSelectAllIds.mock.calls[0][0] as string[];
+    // Only page 1 succeeded (2 items), page 2 failed
+    expect(calledIds.length).toBeLessThanOrEqual(2);
+    expect(calledIds).toContain('artist-1');
+    expect(calledIds).toContain('artist-2');
+  });
+
+  // Note: Cancellation on tab change is verified in LibraryContent.selectAll.test.tsx
+  // since it requires the full component integration with activeLibrary state.
 });

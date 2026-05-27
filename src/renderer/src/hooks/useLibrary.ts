@@ -425,20 +425,22 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
    * Fetches all item IDs for a given tab, loading additional pages if needed.
    * Returns all IDs (including already-loaded ones) after ensuring complete coverage.
    * Accepts explicit pagination state to avoid stale closure issues.
+   * Returns partial results if some pages fail, with error info.
    */
   const fetchAllIds = useCallback(
     async (
       type: LibraryTab,
       explicitPagination?: PaginationState[LibraryTab],
-    ): Promise<string[]> => {
-      if (!jellyfinConfig || !userId) return [];
+    ): Promise<{ ids: string[]; errors: string[] }> => {
+      if (!jellyfinConfig || !userId) return { ids: [], errors: [] };
       const headers = jellyfinHeaders(jellyfinConfig.apiKey);
       const baseUrl = jellyfinConfig.url.replace(/\/$/, '');
       const currentPagination = explicitPagination ?? pagination[type];
+      const errors: string[] = [];
 
       // If all items already loaded, return current IDs
       if (!currentPagination.hasMore) {
-        return currentPagination.items.map((item) => item.Id);
+        return { ids: currentPagination.items.map((item) => item.Id), errors: [] };
       }
 
       const allIds = new Set(currentPagination.items.map((item) => item.Id));
@@ -456,32 +458,44 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         else
           endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
-        const res = await fetch(buildUrl(baseUrl, endpoint), { headers });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const rawItems: Array<Record<string, unknown>> = data.Items ?? [];
-        const normalized =
-          type === 'artists'
-            ? rawItems.map(normalizeArtist)
-            : type === 'albums'
-              ? rawItems.map(normalizeAlbum)
-              : rawItems.map(normalizePlaylist);
-        normalized.forEach((item) => allIds.add(item.Id));
-        startIndex += normalized.length;
-        totalCount = data.TotalRecordCount ?? totalCount;
-        hasMore = startIndex < totalCount;
+        try {
+          const res = await fetch(buildUrl(baseUrl, endpoint), { headers });
+          if (!res.ok) {
+            errors.push(`Failed to load page at index ${startIndex}: HTTP ${res.status}`);
+            // Stop fetching but return partial results
+            break;
+          }
+          const data = await res.json();
+          const rawItems: Array<Record<string, unknown>> = data.Items ?? [];
+          const normalized =
+            type === 'artists'
+              ? rawItems.map(normalizeArtist)
+              : type === 'albums'
+                ? rawItems.map(normalizeAlbum)
+                : rawItems.map(normalizePlaylist);
+          normalized.forEach((item) => allIds.add(item.Id));
+          startIndex += normalized.length;
+          totalCount = data.TotalRecordCount ?? totalCount;
+          hasMore = startIndex < totalCount;
 
-        // Update pagination state to track progress (only if not using explicit pagination)
-        if (!explicitPagination) {
-          setPagination((prev) => ({
-            ...prev,
-            [type]: {
-              ...prev[type],
-              items: [...prev[type].items, ...normalized],
-              startIndex,
-              hasMore,
-            },
-          }));
+          // Update pagination state to track progress (only if not using explicit pagination)
+          if (!explicitPagination) {
+            setPagination((prev) => ({
+              ...prev,
+              [type]: {
+                ...prev[type],
+                items: [...prev[type].items, ...normalized],
+                startIndex,
+                hasMore,
+              },
+            }));
+          }
+        } catch (e) {
+          errors.push(
+            `Failed to load page at index ${startIndex}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+          // Stop fetching but return partial results
+          break;
         }
 
         // Break when we've fetched all items (startIndex >= totalCount)
@@ -489,7 +503,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         if (startIndex >= totalCount) break;
       }
 
-      return [...allIds];
+      return { ids: [...allIds], errors };
     },
     [jellyfinConfig, userId, pagination],
   );
@@ -498,18 +512,34 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
    * Selects all items for a given tab, fetching remaining pages if needed.
    * Calls the provided callback with all selected IDs once complete.
    * Shows loading state when fetching additional pages.
+   * Cancels if the user switches tabs.
    */
   const selectAllWithCompleteSet = useCallback(
-    async (type: LibraryTab, onSelectAllIds: (ids: string[]) => void): Promise<void> => {
+    async (
+      type: LibraryTab,
+      onSelectAllIds: (ids: string[]) => void,
+      onError?: (errors: string[]) => void,
+    ): Promise<{ cancelled: boolean }> => {
+      if (!jellyfinConfig || !userId) return { cancelled: false };
+
+      const currentTab = activeLibrary;
       setIsSelectingAll(true);
       try {
-        const allIds = await fetchAllIds(type);
-        onSelectAllIds(allIds);
+        const result = await fetchAllIds(type);
+        // Check if tab changed during fetch (cancellation)
+        if (currentTab !== activeLibrary) {
+          return { cancelled: true };
+        }
+        onSelectAllIds(result.ids);
+        if (result.errors.length > 0) {
+          onError?.(result.errors);
+        }
+        return { cancelled: false };
       } finally {
         setIsSelectingAll(false);
       }
     },
-    [fetchAllIds],
+    [fetchAllIds, activeLibrary],
   );
 
   return {
