@@ -25,6 +25,30 @@ const EMPTY: DeviceState = {
   isActivatingDevice: false,
 };
 
+/**
+ * Maximum number of concurrent Jellyfin API requests when fetching track data.
+ * Prevents server saturation when many items are selected at once (e.g. select-all).
+ */
+const FETCH_CONCURRENCY = 5;
+
+/**
+ * Runs an array of async tasks with a fixed concurrency limit.
+ * Unlike Promise.all, at most `concurrency` tasks run simultaneously.
+ */
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number,
+): Promise<void> {
+  let index = 0;
+  async function worker() {
+    while (index < tasks.length) {
+      const i = index++;
+      await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+}
+
 /** Build a cache key from path+options to detect unchanged re-activations */
 function buildActivationKey(
   path: string,
@@ -247,14 +271,15 @@ export function useDeviceSelections() {
           );
           if (syncedToFetch.length > 0) {
             setSizeLoadingCount((c) => c + 1);
-            void Promise.all(
-              syncedToFetch.map((item: SyncedItemInfo) =>
+            void runWithConcurrency(
+              syncedToFetch.map((item: SyncedItemInfo) => () =>
                 registry.ensureItemTracks(item.id, item.type, {
                   serverUrl: options.serverUrl,
                   apiKey: options.apiKey,
                   userId: options.userId,
                 }),
               ),
+              FETCH_CONCURRENCY,
             )
               .then(() => bumpRegistryVersion())
               .finally(() => setSizeLoadingCount((c) => c - 1));
@@ -271,14 +296,15 @@ export function useDeviceSelections() {
           );
           sizeLoadingIncremented = false; // prevent finally from also decrementing
           if (stillToFetch.length > 0) {
-            void Promise.all(
-              stillToFetch.map((id) =>
+            void runWithConcurrency(
+              stillToFetch.map((id) => () =>
                 registry.ensureItemTracks(id, options!.itemTypes[id], {
                   serverUrl: options!.serverUrl,
                   apiKey: options!.apiKey,
                   userId: options!.userId,
                 }),
               ),
+              FETCH_CONCURRENCY,
             )
               .then(() => bumpRegistryVersion())
               .finally(() => setSizeLoadingCount((c) => c - 1));
@@ -385,20 +411,23 @@ export function useDeviceSelections() {
         return new Map(prev).set(activeDevicePath, { ...state, selectedItems: next });
       });
 
-      // Fetch tracks for these items if needed (for size calculation)
+      // Fetch tracks for these items if needed (for size calculation).
+      // Use concurrency limit to avoid saturating Jellyfin with simultaneous requests
+      // when many items are selected at once (e.g. select-all with 5000+ artists).
       if (lastOpts) {
-        const fetches = items
-          .filter((item) => lastOpts.itemTypes[item.Id])
-          .map((item) =>
-            registry.ensureItemTracks(item.Id, lastOpts.itemTypes[item.Id], {
-              serverUrl: lastOpts.serverUrl,
-              apiKey: lastOpts.apiKey,
-              userId: lastOpts.userId,
-            }),
-          );
-        if (fetches.length > 0) {
+        const toFetch = items.filter((item) => lastOpts.itemTypes[item.Id]);
+        if (toFetch.length > 0) {
           setSizeLoadingCount((c) => c + 1);
-          void Promise.all(fetches)
+          void runWithConcurrency(
+            toFetch.map((item) => () =>
+              registry.ensureItemTracks(item.Id, lastOpts.itemTypes[item.Id], {
+                serverUrl: lastOpts.serverUrl,
+                apiKey: lastOpts.apiKey,
+                userId: lastOpts.userId,
+              }),
+            ),
+            FETCH_CONCURRENCY,
+          )
             .then(() => bumpRegistryVersion())
             .finally(() => setSizeLoadingCount((c) => c - 1));
         }

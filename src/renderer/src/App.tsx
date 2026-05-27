@@ -376,18 +376,10 @@ function AppConnected({
       await lib.selectAllWithCompleteSet(
         lib.activeLibrary,
         (allIds) => {
-          const items = allIds
-            .map((id) => {
-              const artists = lib.artists.find((a) => a.Id === id);
-              if (artists) return { Id: id };
-              const albums = lib.albums.find((a) => a.Id === id);
-              if (albums) return { Id: id };
-              const playlists = lib.playlists.find((p) => p.Id === id);
-              if (playlists) return { Id: id };
-              return null;
-            })
-            .filter((item): item is { Id: string } => item !== null);
-          deviceSelections.selectItems(items);
+          // IDs come directly from Jellyfin — no need to validate against locally-loaded
+          // lib.artists/albums/playlists (which is a stale closure capturing only the
+          // first PAGE_SIZE items and would silently drop all unloaded pages).
+          deviceSelections.selectItems(allIds.map((id) => ({ Id: id })));
         },
         (errors, selectedCount) => {
           // Notify user of partial errors
