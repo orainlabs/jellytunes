@@ -11,6 +11,7 @@ import { createFFmpegConverter } from './sync-files';
 // Mock the ffmpeg-path module to avoid actual FFmpeg dependency in tests
 vi.mock('./ffmpeg-path', () => ({
   resolveFFmpegPath: () => '/usr/local/bin/ffmpeg',
+  resolveFFprobePath: () => '/usr/local/bin/ffprobe',
 }));
 
 describe('assertFilesystemPath (via tagFile)', () => {
@@ -101,7 +102,7 @@ describe('stripCoverArt (AC-2 implementation guards)', () => {
     vi.restoreAllMocks();
   });
 
-  it('resolves hadCover=false without throwing when ffprobe spawn emits error', async () => {
+  it('resolves without throwing when ffmpeg spawn emits error', async () => {
     const { EventEmitter } = require('events');
 
     vi.spyOn(require('child_process'), 'spawn').mockImplementation(() => {
@@ -113,7 +114,10 @@ describe('stripCoverArt (AC-2 implementation guards)', () => {
 
     const conv = createFFmpegConverter();
     const result = await conv.stripCoverArt('/tmp/input.mp3', '/tmp/output.mp3');
-    expect(result).toEqual({ success: true, hadCover: false });
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringContaining('FFmpeg strip error'),
+    });
   });
 
   it('uses a temp file and renames atomically when inputPath === outputPath', async () => {
@@ -123,29 +127,16 @@ describe('stripCoverArt (AC-2 implementation guards)', () => {
 
     const renameSyncSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
 
-    let callCount = 0;
     vi.spyOn(require('child_process'), 'spawn').mockImplementation(() => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
-
-      if (callCount === 0) {
-        // ffprobe: report attached_pic present
-        callCount++;
-        setTimeout(() => {
-          proc.stdout.emit('data', Buffer.from('1,attached_pic\n'));
-          proc.emit('close', 0);
-        }, 0);
-      } else {
-        // ffmpeg strip: succeed
-        setTimeout(() => proc.emit('close', 0), 0);
-      }
+      setTimeout(() => proc.emit('close', 0), 0);
       return proc;
     });
 
     const conv = createFFmpegConverter();
     const result = await conv.stripCoverArt('/tmp/track.mp3', '/tmp/track.mp3');
 
-    expect(result.hadCover).toBe(true);
     expect(result.success).toBe(true);
     // renameSync must be called to atomically replace the original
     expect(renameSyncSpy).toHaveBeenCalledWith(

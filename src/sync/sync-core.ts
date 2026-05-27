@@ -1886,10 +1886,10 @@ class SyncCoreImpl {
   private async stripCoverFromTrack(inputPath: string, outputPath: string): Promise<void> {
     try {
       const result = await this.deps.converter.stripCoverArt(inputPath, outputPath);
-      if (!result.success) {
+      if (result.success) {
+        this.log.debug(`Cover strip operation completed for: ${inputPath}`);
+      } else {
         this.log.warn(`Failed to strip cover from ${inputPath}: ${result.error}`);
-      } else if (result.hadCover) {
-        this.log.debug(`Stripped embedded cover from: ${inputPath}`);
       }
     } catch (err) {
       this.log.warn(`Cover strip error for ${inputPath}: ${err}`);

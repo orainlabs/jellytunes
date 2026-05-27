@@ -7,7 +7,7 @@
 
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
-import { resolveFFmpegPath } from './ffmpeg-path';
+import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
 
 /**
  * Sanitize a metadata string field for safe use in FFmpeg -metadata arguments.
@@ -402,13 +402,13 @@ export interface AudioConverter {
 
   /**
    * Strip embedded cover art from an audio file using FFmpeg.
-   * Uses ffprobe to check for video/cover streams before invoking FFmpeg.
-   * Returns { success: true } if no cover was present or stripping succeeded.
+   * Always runs ffmpeg -vn -c copy (no-op for files without cover art).
+   * Returns { success: true } if stripping succeeded or file had no cover.
    */
   stripCoverArt(
     inputPath: string,
     outputPath: string,
-  ): Promise<{ success: boolean; error?: string; hadCover: boolean }>;
+  ): Promise<{ success: boolean; error?: string }>;
 }
 
 /**
@@ -437,6 +437,7 @@ function moveFileSync(src: string, dest: string): void {
 
 export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
   const ffmpegPath = resolveFFmpegPath();
+  const ffprobePath = resolveFFprobePath();
 
   return {
     convertToMp3: async (input, output, bitrate) => {
@@ -800,7 +801,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
       return new Promise((resolve) => {
         const args = ['-v', 'quiet', '-print_format', 'json', '-show_format', filePath];
 
-        const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+        const proc = spawn(ffprobePath, args, { stdio: ['ignore', 'pipe', 'ignore'] });
 
         let stdout = '';
         proc.stdout.on('data', (chunk: Buffer) => {
@@ -929,41 +930,9 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
       const os = require('os');
       const path = require('path');
 
-      // Step 1: ffprobe to check for video/cover streams (early exit optimization)
-      const hadCover = await new Promise<boolean>((resolveProbe) => {
-        // Look for attached_pic in streams — indicates cover art
-        const probeArgs = [
-          '-v',
-          'error',
-          '-select_streams',
-          'v:0',
-          '-show_entries',
-          'stream=disposition',
-          '-of',
-          'csv=p=0',
-          inputPath,
-        ];
-        const probeProcess = spawn(ffmpegPath, probeArgs, { stdio: 'pipe' });
-        let stdout = '';
-        probeProcess.stdout.on('data', (data: Buffer) => {
-          stdout += data.toString();
-        });
-        probeProcess.on('error', () => {
-          resolveProbe(false);
-        });
-        probeProcess.on('close', (_code: number) => {
-          // disposition=attached_pic indicates cover art
-          const hasAttachedPic = stdout.includes('attached_pic');
-          resolveProbe(hasAttachedPic);
-        });
-      });
-
-      if (!hadCover) {
-        // No cover to strip — no-op
-        return { success: true, hadCover: false };
-      }
-
-      // Step 2: Strip cover using -vn to skip video/cover streams, copy audio codec.
+      // Always run ffmpeg -vn -c copy (no-op for files without cover art).
+      // Previous probe step used ffmpeg with ffprobe flags, causing empty stdout
+      // and early return without strip — fixed by removing the probe entirely.
       // FFmpeg cannot edit files in-place: use a temp file when inputPath === outputPath.
       const useTempOutput = inputPath === outputPath;
       const finalOutputPath = outputPath;
@@ -996,7 +965,6 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           resolve({
             success: false,
             error: `FFmpeg strip error: ${err.message}`,
-            hadCover: true,
           });
         });
 
@@ -1014,7 +982,6 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
                 resolve({
                   success: false,
                   error: `Failed to replace file: ${renameErr}`,
-                  hadCover: true,
                 });
                 return;
               }
@@ -1029,7 +996,6 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           resolve({
             success: code === 0,
             error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
-            hadCover: true,
           });
         });
       });

@@ -27,6 +27,36 @@ const ASAR_SEGMENT = 'app.asar' + '/';
 const ASAR_WIN_SEGMENT = 'app.asar' + '\\';
 const UNPACKED_SUFFIX = 'app.asar.unpacked';
 
+const SYSTEM_FFPROBE_CANDIDATES = [
+  '/usr/local/bin/ffprobe',
+  '/opt/homebrew/bin/ffprobe',
+  '/usr/bin/ffprobe',
+  '/opt/local/bin/ffprobe',
+];
+
+/**
+ * Resolve the FFprobe executable path.
+ *
+ * Priority:
+ * 1. System paths (macOS/Linux)
+ * 2. 'ffprobe' — rely on PATH as last resort
+ *
+ * Note: @ffmpeg-installer/ffmpeg bundles ffmpeg but NOT ffprobe.
+ * Production packaged apps need ffprobe available on the system PATH.
+ */
+export function resolveFFprobePath(): string {
+  try {
+    const { existsSync } = require('fs');
+    for (const candidate of SYSTEM_FFPROBE_CANDIDATES) {
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {
+    // fs unavailable in unusual environments
+  }
+
+  return 'ffprobe';
+}
+
 const SYSTEM_FFMPEG_CANDIDATES = [
   '/usr/local/bin/ffmpeg',
   '/opt/homebrew/bin/ffmpeg',
