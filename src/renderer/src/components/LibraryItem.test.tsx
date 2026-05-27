@@ -1,7 +1,5 @@
-// src/renderer/src/components/LibraryItem.test.tsx
-
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { LibraryItem } from './LibraryItem';
 
 describe('LibraryItem playlist subtitle', () => {
@@ -144,7 +142,7 @@ describe('LibraryItem artist subtitle', () => {
     expect(subtitle?.textContent).toBe('12m');
   });
 
-  it('does NOT display album count even if ChildCount has a valid value', () => {
+  it('does NOT show album count even if ChildCount has a valid value', () => {
     // This test documents that album count should NOT appear per AC
     render(
       <LibraryItem
@@ -213,5 +211,247 @@ describe('LibraryItem search artist (ChildCount missing/undefined)', () => {
     const item = screen.getByTestId('library-item');
     const itemHtml = item.innerHTML;
     expect(itemHtml).not.toContain('undefined');
+  });
+});
+
+describe('LibraryItem lazy loading with IntersectionObserver', () => {
+  const baseProps = {
+    wasSynced: false,
+    outOfSync: false,
+    onToggle: () => {},
+    serverUrl: 'https://jellyfin.example.com',
+  };
+
+  it('shows placeholder icon when item is not in viewport', async () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'album-1',
+            Name: 'Test Album',
+            ImageTags: { Primary: 'abc123' },
+          } as const
+        }
+        type="album"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    // Should show placeholder (div with icon), not the img element with src
+    const placeholder = screen
+      .getByTestId('library-item')
+      .querySelector('.bg-surface_container_low');
+    expect(placeholder?.tagName.toLowerCase()).toBe('div');
+    expect(placeholder?.querySelector('img')).toBeNull();
+  });
+
+  it('renders img with src when item enters viewport (mock auto-triggers)', async () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'album-2',
+            Name: 'Test Album 2',
+            ImageTags: { Primary: 'xyz789' },
+          } as const
+        }
+        type="album"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    // Wait for mock IntersectionObserver to trigger visibility
+    await waitFor(
+      () => {
+        const img = screen.getByTestId('library-item').querySelector('img');
+        expect(img).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    // Verify the img has the correct src attributes
+    const img = screen.getByTestId('library-item').querySelector('img');
+    expect(img?.getAttribute('src')).toContain('https://jellyfin.example.com');
+    expect(img?.getAttribute('src')).toContain('/Items/album-2/Images/Primary');
+    expect(img?.getAttribute('src')).toContain('xyz789');
+    expect(img?.getAttribute('src')).toContain('fillHeight=40');
+    expect(img?.getAttribute('src')).toContain('fillWidth=40');
+  });
+
+  it('onError prop still works → fallback to icon when image fails', async () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'album-error',
+            Name: 'Album With Error',
+            ImageTags: { Primary: 'broken-tag' },
+          } as const
+        }
+        type="album"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    // Wait for img to appear
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('library-item').querySelector('img')).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    // Simulate image error
+    const img = screen.getByTestId('library-item').querySelector('img')!;
+    act(() => {
+      img.dispatchEvent(new Event('error', { bubbles: true }));
+    });
+
+    // Should fall back to placeholder icon
+    await waitFor(() => {
+      const placeholder = screen
+        .getByTestId('library-item')
+        .querySelector('.bg-surface_container_low');
+      expect(placeholder?.tagName.toLowerCase()).toBe('div');
+      expect(placeholder?.querySelector('img')).toBeNull();
+    });
+  });
+
+  it('renders rounded-full for artist type when visible', async () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'artist-1',
+            Name: 'Test Artist',
+            ImageTags: { Primary: 'artist-tag' },
+          } as const
+        }
+        type="artist"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    await waitFor(
+      () => {
+        const img = screen.getByTestId('library-item').querySelector('img');
+        expect(img).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    const img = screen.getByTestId('library-item').querySelector('img');
+    expect(img?.className).toContain('rounded-full');
+  });
+
+  it('renders rounded (not rounded-full) for album type when visible', async () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'album-3',
+            Name: 'Test Album 3',
+            ImageTags: { Primary: 'album-tag' },
+          } as const
+        }
+        type="album"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('library-item').querySelector('img')).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    const img = screen.getByTestId('library-item').querySelector('img');
+    expect(img?.className).toContain('rounded');
+    expect(img?.className).not.toContain('rounded-full');
+  });
+
+  it('renders rounded (not rounded-full) for playlist type when visible', async () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'playlist-1',
+            Name: 'Test Playlist',
+            ImageTags: { Primary: 'playlist-tag' },
+          } as const
+        }
+        type="playlist"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('library-item').querySelector('img')).toBeInTheDocument();
+      },
+      { timeout: 2000 },
+    );
+
+    const img = screen.getByTestId('library-item').querySelector('img');
+    expect(img?.className).toContain('rounded');
+    expect(img?.className).not.toContain('rounded-full');
+  });
+
+  it('shows placeholder when there is no serverUrl', () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'item-no-url',
+            Name: 'Item Without Server',
+            ImageTags: { Primary: 'some-tag' },
+          } as const
+        }
+        type="album"
+        isSelected={false}
+        wasSynced={false}
+        outOfSync={false}
+        onToggle={() => {}}
+        serverUrl={undefined}
+      />,
+    );
+
+    // Should show placeholder, not img with broken src
+    const placeholder = screen
+      .getByTestId('library-item')
+      .querySelector('.bg-surface_container_low');
+    expect(placeholder?.tagName.toLowerCase()).toBe('div');
+    expect(screen.getByTestId('library-item').querySelector('img')).toBeNull();
+  });
+
+  it('shows placeholder when there is no ImageTags', () => {
+    render(
+      <LibraryItem
+        item={
+          {
+            Id: 'item-no-tag',
+            Name: 'Item Without Image Tag',
+            ImageTags: undefined,
+          } as const
+        }
+        type="album"
+        isSelected={false}
+        {...baseProps}
+      />,
+    );
+
+    // Should show placeholder, not img with broken src
+    const placeholder = screen
+      .getByTestId('library-item')
+      .querySelector('.bg-surface_container_low');
+    expect(placeholder?.tagName.toLowerCase()).toBe('div');
+    expect(screen.getByTestId('library-item').querySelector('img')).toBeNull();
   });
 });

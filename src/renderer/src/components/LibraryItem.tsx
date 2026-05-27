@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { User, Disc, ListMusic } from 'lucide-react';
 import type { Artist, Album, Playlist } from '../appTypes';
 import { formatRunTimeTicks } from '../utils/jellyfin';
+import { useIntersectionObserver } from '../hooks/useIntersectionObserver';
 
 interface LibraryItemProps {
   item: Artist | Album | Playlist;
@@ -23,25 +24,36 @@ function ItemThumbnail({
   serverUrl?: string;
 }) {
   const [imgError, setImgError] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
   const tag = item.ImageTags?.Primary;
+  const { ref, isIntersecting } = useIntersectionObserver<HTMLDivElement>({
+    rootMargin: '100px',
+    triggerOnce: true,
+  });
 
-  if (serverUrl && tag && !imgError) {
-    const src = `${serverUrl}/Items/${item.Id}/Images/Primary?fillHeight=40&fillWidth=40&quality=85&tag=${tag}`;
-    const rounded = type === 'artist' ? 'rounded-full' : 'rounded';
-    return (
-      <img
-        src={src}
-        alt=""
-        className={`w-10 h-10 object-cover flex-shrink-0 ${rounded}`}
-        onError={() => setImgError(true)}
-      />
-    );
-  }
+  const shouldShowImage = serverUrl && tag && !imgError && isIntersecting && !imgLoaded;
 
   const Icon = type === 'artist' ? User : type === 'album' ? Disc : ListMusic;
   const rounded = type === 'artist' ? 'rounded-full' : 'rounded';
+
+  if (shouldShowImage) {
+    const src = `${serverUrl}/Items/${item.Id}/Images/Primary?fillHeight=40&fillWidth=40&quality=85&tag=${tag}`;
+    return (
+      <div ref={ref as never} className={`w-10 h-10 flex-shrink-0 ${rounded}`}>
+        <img
+          src={src}
+          alt=""
+          className={`w-10 h-10 object-cover ${rounded}`}
+          onError={() => setImgError(true)}
+          onLoad={() => setImgLoaded(true)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
+      ref={ref as never}
       className={`w-10 h-10 bg-surface_container_low flex items-center justify-center flex-shrink-0 ${rounded}`}
     >
       <Icon className="w-5 h-5 text-on_surface_variant" />
