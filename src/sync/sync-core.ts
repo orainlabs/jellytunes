@@ -293,6 +293,23 @@ class SyncCoreImpl {
     try {
       this.cancellation.reset();
 
+      // AC-1: Snapshot companion directories BEFORE sync loop mutates DB records.
+      // Query at sync start captures the pre-sync state of coverArtMode.
+      // This prevents the race condition where runCopyPhase updates all records to
+      // the new mode before cleanup can find the old companion records.
+      const companionDirsSnapshot = new Set<string>();
+      try {
+        const getTracks = this.deps.db?.getSyncedTracksForDevice ?? getSyncedTracksForDevice;
+        const preSyncRecords = await Promise.resolve(getTracks(input.destinationPath));
+        for (const rec of preSyncRecords) {
+          if (rec.coverArtMode === 'companion') {
+            companionDirsSnapshot.add(path.dirname(rec.destinationPath));
+          }
+        }
+      } catch (_e) {
+        this.log.warn('Failed to load pre-sync companion records');
+      }
+
       // Phase 1: Validation
       const destValidation = await this.runValidationPhase(input.destinationPath);
       if (!destValidation.valid) {
@@ -332,29 +349,11 @@ class SyncCoreImpl {
       await this.runCleanupPhase(input.itemIds, input.itemTypes, input.destinationPath, options);
 
       // AC-1: When switching FROM companion mode, remove stale cover.jpg files.
+      // Uses companionDirsSnapshot captured before the sync loop mutated DB records.
       const currentCoverMode = options.coverArtMode ?? 'embed';
-      if (currentCoverMode !== 'companion') {
-        try {
-          // Use mock DB if provided (for testing), otherwise use real DB
-          const getTracks = this.deps.db?.getSyncedTracksForDevice ?? getSyncedTracksForDevice;
-          const dbRecords = await Promise.resolve(getTracks(input.destinationPath));
-          const staleCoverPaths = [
-            ...new Set(
-              dbRecords
-                .filter((rec) => rec.coverArtMode === 'companion')
-                .map((rec) => {
-                  // Extract directory from track file path: /mnt/usb/Artist/Album/track.mp3 → /mnt/usb/Artist/Album
-                  const dirPath = path.dirname(rec.destinationPath);
-                  return `${dirPath}/cover.jpg`;
-                }),
-            ),
-          ];
-          if (staleCoverPaths.length > 0) {
-            await this.cleanCoverFilesForNonCompanionMode(input.destinationPath, staleCoverPaths);
-          }
-        } catch (_e) {
-          this.log.warn('Failed to load synced records for cover cleanup');
-        }
+      if (currentCoverMode !== 'companion' && companionDirsSnapshot.size > 0) {
+        const staleCoverPaths = [...companionDirsSnapshot].map((dir) => `${dir}/cover.jpg`);
+        await this.cleanCoverFilesForNonCompanionMode(input.destinationPath, staleCoverPaths);
       }
 
       // AC-2: When lyricsMode is embed, clean up stale .lrc files from prior syncs
