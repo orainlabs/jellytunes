@@ -18,7 +18,6 @@
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src tests",
     "format:check": "prettier --check src tests",
-    "predev": "pnpm run lint",
     "preview": "electron-vite preview",
     "start": "electron .",
     "package": "npm run build && electron-builder",
