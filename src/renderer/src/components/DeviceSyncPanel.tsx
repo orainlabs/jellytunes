@@ -224,9 +224,10 @@ export function DeviceSyncPanel({
     isOverCapacity || freeBarPct < 5 ? 'bg-error' : freeBarPct < 10 ? 'bg-warning' : 'bg-success';
   const isAudioLoading = !!isLoadingSize;
   const audioDisplayBytes = estimatedSizeBytes ?? syncedMusicBytes;
-  // Show "~" prefix when size is from tick-based estimation (not real track sizes)
+  // Show "~" prefix when size is approximate: tick-based estimate (including while loading)
+  // or MP3 conversion (size derived from bitrate, never exact)
   const showTildePrefix =
-    isTickEstimate && !isAudioLoading && typeof audioDisplayBytes === 'number';
+    (isTickEstimate || convertToMp3) && typeof audioDisplayBytes === 'number';
   const Icon = isUsbDevice ? HardDrive : Folder;
   const isFat32 = filesystemType === 'fat32';
   const fsLabel: Record<string, string> = {
