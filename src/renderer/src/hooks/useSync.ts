@@ -25,6 +25,8 @@ interface UseSyncOptions {
   artists: Artist[];
   albums: Album[];
   playlists: Playlist[];
+  /** True when size was estimated from ticks (fetch was skipped); track counts are unreliable */
+  isTickEstimate: boolean;
   setPreviouslySyncedItems: (items: SyncedItemInfo[]) => void;
   revalidateDevice: (
     overrides?: Partial<{
@@ -45,6 +47,7 @@ export function useSync({
   artists,
   albums,
   playlists,
+  isTickEstimate,
   setPreviouslySyncedItems,
   revalidateDevice,
 }: UseSyncOptions) {
@@ -394,6 +397,11 @@ export function useSync({
       return 0;
     };
 
+    // isTickEstimate is the authoritative signal: when true, size was computed from
+    // RunTimeTicks because the background fetch was skipped (>MAX_UNCACHED_FETCH_COUNT).
+    // In that state, track counts from getItemTrackCount fallbacks are unreliable.
+    const isTrackCountEstimate = isTickEstimate && newItemIds.length > 0;
+
     // Deduplicated track counts by category.
     // Prefer itemTrackMap (deduplication-aware) when available; fall back to
     // getItemTrackCount (ChildCount / registry) for items not yet fetched
@@ -464,6 +472,7 @@ export function useSync({
       updatedItems,
       alreadySyncedItems,
       removedItems,
+      isTrackCountEstimate,
     });
     setShowPreview(true);
   };

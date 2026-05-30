@@ -141,6 +141,9 @@ export interface PreviewData {
   newItems?: ItemPreview[];
   updatedItems?: ItemPreview[];
   alreadySyncedItems?: ItemPreview[];
+  /** True when new/updated track counts are tick-based estimates (real fetch was skipped).
+   *  Already-on-device counts come from the device DB and remain reliable. */
+  isTrackCountEstimate?: boolean;
 }
 
 export interface ItemTypeIndex {

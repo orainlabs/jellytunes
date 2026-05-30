@@ -119,6 +119,7 @@ function AppConnected({
     artists: extArtists,
     albums: extAlbums,
     playlists: extPlaylists,
+    isTickEstimate: deviceSelections.isTickEstimate,
     revalidateDevice: deviceSelections.revalidateDevice,
     setPreviouslySyncedItems: (items) => {
       if (deviceSelections.activeDevicePath) {

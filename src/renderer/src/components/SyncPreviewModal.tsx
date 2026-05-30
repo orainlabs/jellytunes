@@ -39,7 +39,13 @@ export function SyncPreviewModal({
   onCancel,
   onConfirm,
 }: SyncPreviewModalProps): JSX.Element {
-  const showNew = data.newTracksCount > 0;
+  const isEstimated = data.isTrackCountEstimate ?? false;
+
+  const showNew = data.newTracksCount > 0 || (isEstimated && data.newTracksBytes > 0);
+  // When track counts are estimated, show '—' instead of the unreliable number
+  const fmtNewCount = isEstimated ? '—' : `${data.newTracksCount.toLocaleString()} tracks`;
+  const fmtUpdatedCount = isEstimated ? '—' : `${data.updatedTracksCount.toLocaleString()} tracks`;
+  const fmtTotalCount = isEstimated ? '—' : `${data.trackCount.toLocaleString()} tracks`;
   const showUpdated = data.updatedTracksCount > 0;
   const showAlreadySynced = data.alreadySyncedCount > 0;
   const showRemove = data.willRemoveCount > 0;
@@ -85,7 +91,7 @@ export function SyncPreviewModal({
               <div className="text-body-md text-primary font-medium flex justify-between items-baseline">
                 <span>New tracks</span>
                 <ThreeColumns
-                  tracks={`${data.newTracksCount.toLocaleString()} tracks`}
+                  tracks={fmtNewCount}
                   duration={
                     data.newTracksDurationSeconds
                       ? formatDuration(data.newTracksDurationSeconds)
@@ -103,7 +109,7 @@ export function SyncPreviewModal({
               <div className="text-body-md text-warning font-medium flex justify-between items-baseline">
                 <span>Will update</span>
                 <ThreeColumns
-                  tracks={`${data.updatedTracksCount.toLocaleString()} tracks`}
+                  tracks={fmtUpdatedCount}
                   duration={
                     data.updatedTracksDurationSeconds
                       ? formatDuration(data.updatedTracksDurationSeconds)
@@ -141,7 +147,7 @@ export function SyncPreviewModal({
             >
               <span>Total</span>
               <ThreeColumns
-                tracks={`${data.trackCount.toLocaleString()} tracks`}
+                tracks={fmtTotalCount}
                 duration={
                   data.totalDurationSeconds ? formatDuration(data.totalDurationSeconds) : ''
                 }
