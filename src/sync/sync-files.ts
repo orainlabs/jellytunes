@@ -885,13 +885,14 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           stderrOutput += chunk.toString();
         });
 
+        const safeLog = logger ?? { warn: (msg: string) => console.warn(msg) };
         proc.on('error', (err: Error) => {
           if (useTempOutput)
             try {
               fs.unlinkSync(tempOutputPath);
             } catch (cleanupError) {
               // Log but don't fail - primary operation already failed
-              console.warn(`[embedLyrics] Failed to clean up temp file: ${cleanupError}`);
+              safeLog.warn(`[embedLyrics] Failed to clean up temp file: ${cleanupError}`);
             }
           resolve({ success: false, error: `FFmpeg error: ${err.message}` });
         });
@@ -919,7 +920,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
                 fs.unlinkSync(tempOutputPath);
               } catch (cleanupError) {
                 // Log but don't block the error response
-                console.warn(`[embedLyrics] Failed to clean up temp file: ${cleanupError}`);
+                safeLog.warn(`[embedLyrics] Failed to clean up temp file: ${cleanupError}`);
               }
             resolve({
               success: false,

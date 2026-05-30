@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useReducer } from 'react';
 import { getTrackRegistry } from './useTrackRegistry';
+import { logger } from '@/utils/logger';
 
 /** Threshold to prevent HTTP flood when selecting large numbers of items.
  *  Selecting >50 uncached items skips the batch fetch and relies on tick-based estimation.
@@ -266,7 +267,7 @@ export function useDeviceSelections() {
           // Threshold guard: skip fetch if too many uncached items to prevent HTTP flood.
           // When skipped, button stays enabled immediately with tick-based estimate (prefix ~).
           if (uncachedIds.length > MAX_UNCACHED_FETCH_COUNT) {
-            console.warn(
+            logger.warn(
               `[useDeviceSelections] Skipping fetch: ${uncachedIds.length} uncached items exceed threshold of ${MAX_UNCACHED_FETCH_COUNT}`,
             );
           } else {
@@ -359,7 +360,7 @@ export function useDeviceSelections() {
         // Threshold guard: skip fetch if too many uncached items to prevent HTTP flood.
         // When skipped, button stays enabled immediately with tick-based estimate (prefix ~).
         if (uncachedIds.length > MAX_UNCACHED_FETCH_COUNT) {
-          console.warn(
+          logger.warn(
             `[useDeviceSelections] Skipping fetch: ${uncachedIds.length} uncached items exceed threshold of ${MAX_UNCACHED_FETCH_COUNT}`,
           );
           return;

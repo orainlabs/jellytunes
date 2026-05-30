@@ -6,6 +6,8 @@
  * Tick-based estimation for immediate UI without HTTP calls.
  */
 
+import { logger } from '@/utils/logger';
+
 export interface TrackInfo {
   id: string;
   name: string;
@@ -228,7 +230,7 @@ export function createTrackRegistry() {
     if (generation !== state.generation) return;
 
     if (result.errors.length > 0) {
-      console.warn('getTracksForItem errors:', result.errors);
+      logger.warn(`getTracksForItem errors: ${JSON.stringify(result.errors)}`);
     }
 
     const trackIds: string[] = [];
@@ -278,7 +280,7 @@ export function createTrackRegistry() {
       if (controller.signal.aborted) return false;
 
       if (result.errors.length > 0) {
-        console.warn('getTracksForItems batch errors:', result.errors);
+        logger.warn(`getTracksForItems batch errors: ${JSON.stringify(result.errors)}`);
       }
 
       for (const track of result.tracks) {
@@ -310,7 +312,7 @@ export function createTrackRegistry() {
       return true;
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return false;
-      console.warn('fetchTracksForItems failed:', err);
+      logger.warn(`fetchTracksForItems failed: ${err}`);
       // On failure, leave tick estimate; button will be enabled
       return false;
     } finally {
