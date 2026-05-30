@@ -221,16 +221,25 @@ class SyncApiImpl implements SyncApi {
     const startTime = Date.now();
 
     const albumsEndpoint = `/Users/${this.userId}/Items?AlbumArtistIds=${artistId}&includeItemTypes=MusicAlbum&Recursive=true&Fields=Path,MediaSources`;
-    this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → fetching albums endpoint=${albumsEndpoint}`);
+    this.logger?.debug(
+      `[BATCH] getArtistTracks ${artistId} → fetching albums endpoint=${albumsEndpoint}`,
+    );
     const albumsData = await this.request<{ Items: JellyfinAlbumItem[] }>(albumsEndpoint);
 
     const albums = albumsData.Items ?? [];
     if (albums.length === 0) {
-      this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → 0 albums, took ${Date.now() - startTime}ms`);
+      this.logger?.debug(
+        `[BATCH] getArtistTracks ${artistId} → 0 albums, took ${Date.now() - startTime}ms`,
+      );
       return [];
     }
 
-    this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → found ${albums.length} albums: ${albums.slice(0, 5).map((a) => a.Id).join(',')}...`);
+    this.logger?.debug(
+      `[BATCH] getArtistTracks ${artistId} → found ${albums.length} albums: ${albums
+        .slice(0, 5)
+        .map((a) => a.Id)
+        .join(',')}...`,
+    );
 
     // Fetch tracks for each album in parallel using parentId (albumIds= unreliable when Album field is NULL)
     const albumMeta = new Map<string, { Name?: string; ProductionYear?: number }>();
@@ -242,7 +251,9 @@ class SyncApiImpl implements SyncApi {
     const allTracks = perAlbumResults.flat();
 
     const elapsed = Date.now() - startTime;
-    this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → DONE ${allTracks.length} tracks in ${elapsed}ms`);
+    this.logger?.debug(
+      `[BATCH] getArtistTracks ${artistId} → DONE ${allTracks.length} tracks in ${elapsed}ms`,
+    );
 
     return allTracks;
   }
@@ -283,12 +294,16 @@ class SyncApiImpl implements SyncApi {
       .filter((item) => item.MediaSources?.[0]?.Path)
       .map((item) => this.trackItemToInfo(item));
 
-    this.logger?.debug(`[BATCH] getPlaylistTracks ${playlistId} → ${tracks.length} tracks in ${Date.now() - startTime}ms`);
+    this.logger?.debug(
+      `[BATCH] getPlaylistTracks ${playlistId} → ${tracks.length} tracks in ${Date.now() - startTime}ms`,
+    );
 
     return tracks;
   }
 
-  private async getAlbumTracksBatch(albumIds: string[]): Promise<Array<TrackInfo & { _albumId: string }>> {
+  private async getAlbumTracksBatch(
+    albumIds: string[],
+  ): Promise<Array<TrackInfo & { _albumId: string }>> {
     const results = await Promise.all(
       albumIds.map(async (albumId) => {
         const tracks = await this.getAlbumTracks(albumId);
@@ -303,7 +318,12 @@ class SyncApiImpl implements SyncApi {
     itemTypes: Map<string, ItemType>,
   ): Promise<{ tracks: TrackInfo[]; errors: string[] }> {
     const startTime = Date.now();
-    this.logger?.debug(`[BATCH] getTracksForItems START items=${itemIds.length} (${Array.from(itemTypes.entries()).slice(0, 3).map(([id, t]) => `${t}:${id}`).join(',')}${itemIds.length > 3 ? '...' : ''})`);
+    this.logger?.debug(
+      `[BATCH] getTracksForItems START items=${itemIds.length} (${Array.from(itemTypes.entries())
+        .slice(0, 3)
+        .map(([id, t]) => `${t}:${id}`)
+        .join(',')}${itemIds.length > 3 ? '...' : ''})`,
+    );
 
     const albumIds = itemIds.filter((id) => itemTypes.get(id) === 'album');
     const nonAlbumIds = itemIds.filter((id) => itemTypes.get(id) !== 'album');
@@ -313,7 +333,9 @@ class SyncApiImpl implements SyncApi {
 
     // Batch-fetch all albums in a single HTTP call instead of N parallel requests
     if (albumIds.length > 0) {
-      this.logger?.debug(`[BATCH] getTracksForItems → batch fetching ${albumIds.length} albums in one HTTP call`);
+      this.logger?.debug(
+        `[BATCH] getTracksForItems → batch fetching ${albumIds.length} albums in one HTTP call`,
+      );
       try {
         const albumTracks = await this.getAlbumTracksBatch(albumIds);
         // parentItemId = albumId so the registry groups tracks under their album
@@ -322,10 +344,13 @@ class SyncApiImpl implements SyncApi {
         }
         this.logger?.debug(`[BATCH] getTracksForItems albums batch → ${albumTracks.length} tracks`);
       } catch (err) {
-        const msg = err instanceof ApiError
-          ? `Failed to batch fetch albums: ${err.message}`
-          : 'Error batch fetching albums';
-        this.logger?.debug(`[BATCH] getTracksForItems albums batch → ERROR: ${err instanceof Error ? err.message : String(err)}`);
+        const msg =
+          err instanceof ApiError
+            ? `Failed to batch fetch albums: ${err.message}`
+            : 'Error batch fetching albums';
+        this.logger?.debug(
+          `[BATCH] getTracksForItems albums batch → ERROR: ${err instanceof Error ? err.message : String(err)}`,
+        );
         errors.push(msg);
       }
     }
@@ -356,20 +381,27 @@ class SyncApiImpl implements SyncApi {
         const itemType = itemTypes.get(itemId) ?? 'unknown';
         if (result.status === 'fulfilled') {
           const taggedTracks = result.value.map((t) => ({ ...t, parentItemId: itemId }));
-          this.logger?.debug(`[BATCH] getTracksForItems ${itemType} ${itemId} → ${result.value.length} tracks`);
+          this.logger?.debug(
+            `[BATCH] getTracksForItems ${itemType} ${itemId} → ${result.value.length} tracks`,
+          );
           tracks.push(...taggedTracks);
         } else {
           const err = result.reason;
-          const msg = err instanceof ApiError
-            ? `Failed to fetch ${itemType} ${itemId}: ${err.message}`
-            : `Error processing ${itemType} ${itemId}`;
-          this.logger?.debug(`[BATCH] getTracksForItems ${itemType} ${itemId} → ERROR: ${err instanceof Error ? err.message : String(err)}`);
+          const msg =
+            err instanceof ApiError
+              ? `Failed to fetch ${itemType} ${itemId}: ${err.message}`
+              : `Error processing ${itemType} ${itemId}`;
+          this.logger?.debug(
+            `[BATCH] getTracksForItems ${itemType} ${itemId} → ERROR: ${err instanceof Error ? err.message : String(err)}`,
+          );
           errors.push(msg);
         }
       }
     }
 
-    this.logger?.debug(`[BATCH] getTracksForItems DONE → ${tracks.length} total tracks, ${errors.length} errors in ${Date.now() - startTime}ms`);
+    this.logger?.debug(
+      `[BATCH] getTracksForItems DONE → ${tracks.length} total tracks, ${errors.length} errors in ${Date.now() - startTime}ms`,
+    );
 
     return { tracks, errors };
   }

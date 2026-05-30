@@ -226,8 +226,8 @@ export function DeviceSyncPanel({
   const audioDisplayBytes = estimatedSizeBytes ?? syncedMusicBytes;
   // Show "~" prefix when size is approximate: tick-based estimate (including while loading)
   // or MP3 conversion (size derived from bitrate, never exact)
-  const showTildePrefix =
-    (isTickEstimate || convertToMp3) && typeof audioDisplayBytes === 'number';
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- boolean OR is intentional
+  const showTildePrefix = (isTickEstimate || convertToMp3) && typeof audioDisplayBytes === 'number';
   const Icon = isUsbDevice ? HardDrive : Folder;
   const isFat32 = filesystemType === 'fat32';
   const fsLabel: Record<string, string> = {

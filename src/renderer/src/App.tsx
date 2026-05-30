@@ -122,7 +122,7 @@ function AppConnected({
     revalidateDevice: deviceSelections.revalidateDevice,
     setPreviouslySyncedItems: (items) => {
       if (deviceSelections.activeDevicePath) {
-        deviceSelections.updateSyncedItems(deviceSelections.activeDevicePath, items);
+        void deviceSelections.updateSyncedItems(deviceSelections.activeDevicePath, items);
       }
     },
   });

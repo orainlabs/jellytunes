@@ -11,7 +11,11 @@ interface SyncPreviewModalProps {
 }
 
 /** Three-column layout: tracks · duration · size — fixed widths keep columns vertically aligned */
-function ThreeColumns({ tracks, duration, size }: {
+function ThreeColumns({
+  tracks,
+  duration,
+  size,
+}: {
   tracks: string;
   duration: string;
   size: string;
@@ -27,7 +31,6 @@ function ThreeColumns({ tracks, duration, size }: {
     </span>
   );
 }
-
 
 export function SyncPreviewModal({
   data,
@@ -65,7 +68,11 @@ export function SyncPreviewModal({
                 <span>Will remove</span>
                 <ThreeColumns
                   tracks={`${data.willRemoveCount.toLocaleString()} tracks`}
-                  duration={data.willRemoveDurationSeconds ? formatDuration(data.willRemoveDurationSeconds) : ''}
+                  duration={
+                    data.willRemoveDurationSeconds
+                      ? formatDuration(data.willRemoveDurationSeconds)
+                      : ''
+                  }
                   size={data.willRemoveBytes > 0 ? `−${formatBytes(data.willRemoveBytes)}` : ''}
                 />
               </div>
@@ -79,7 +86,11 @@ export function SyncPreviewModal({
                 <span>New tracks</span>
                 <ThreeColumns
                   tracks={`${data.newTracksCount.toLocaleString()} tracks`}
-                  duration={data.newTracksDurationSeconds ? formatDuration(data.newTracksDurationSeconds) : ''}
+                  duration={
+                    data.newTracksDurationSeconds
+                      ? formatDuration(data.newTracksDurationSeconds)
+                      : ''
+                  }
                   size={`${convertToMp3 ? '~' : ''}${formatBytes(data.newTracksBytes)}`}
                 />
               </div>
@@ -93,7 +104,11 @@ export function SyncPreviewModal({
                 <span>Will update</span>
                 <ThreeColumns
                   tracks={`${data.updatedTracksCount.toLocaleString()} tracks`}
-                  duration={data.updatedTracksDurationSeconds ? formatDuration(data.updatedTracksDurationSeconds) : ''}
+                  duration={
+                    data.updatedTracksDurationSeconds
+                      ? formatDuration(data.updatedTracksDurationSeconds)
+                      : ''
+                  }
                   size={`${convertToMp3 ? '~' : ''}${formatBytes(data.updatedTracksBytes)}`}
                 />
               </div>
@@ -107,7 +122,11 @@ export function SyncPreviewModal({
                 <span>Already on device</span>
                 <ThreeColumns
                   tracks={`${data.alreadySyncedCount.toLocaleString()} tracks`}
-                  duration={data.alreadySyncedDurationSeconds ? formatDuration(data.alreadySyncedDurationSeconds) : ''}
+                  duration={
+                    data.alreadySyncedDurationSeconds
+                      ? formatDuration(data.alreadySyncedDurationSeconds)
+                      : ''
+                  }
                   size={`${convertToMp3 ? '~' : ''}${formatBytes(data.alreadySyncedBytes)}`}
                 />
               </div>
@@ -116,11 +135,16 @@ export function SyncPreviewModal({
 
           {/* Total */}
           {showTotal && (
-            <div className="text-body-md text-on_surface_variant pt-2 border-t border-outline_variant flex justify-between items-baseline" data-testid="preview-total-row">
+            <div
+              className="text-body-md text-on_surface_variant pt-2 border-t border-outline_variant flex justify-between items-baseline"
+              data-testid="preview-total-row"
+            >
               <span>Total</span>
               <ThreeColumns
                 tracks={`${data.trackCount.toLocaleString()} tracks`}
-                duration={data.totalDurationSeconds ? formatDuration(data.totalDurationSeconds) : ''}
+                duration={
+                  data.totalDurationSeconds ? formatDuration(data.totalDurationSeconds) : ''
+                }
                 size={`${convertToMp3 ? '~' : ''}${formatBytes(data.totalBytes)}`}
               />
             </div>

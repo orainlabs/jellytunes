@@ -339,14 +339,18 @@ describe('SyncPreviewModal', () => {
   // 9. MP3 tilde prefix for estimated sizes
 
   it('shows tilde prefix for new tracks size when convertToMp3 is true', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} convertToMp3={true} />);
+    render(
+      <SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} convertToMp3={true} />,
+    );
     const section = screen.getByTestId('preview-new-tracks-section');
     const text = section.textContent || '';
     expect(text).toContain('~4.0 GB');
   });
 
   it('does not show tilde prefix when convertToMp3 is false', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} convertToMp3={false} />);
+    render(
+      <SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} convertToMp3={false} />,
+    );
     const section = screen.getByTestId('preview-new-tracks-section');
     const text = section.textContent || '';
     expect(text).not.toContain('~');
@@ -359,7 +363,13 @@ describe('SyncPreviewModal', () => {
     const dataWithItem: PreviewData = {
       ...samplePreviewDataNewTracks,
       alreadySyncedItems: [
-        { id: 'a4', name: 'Daft Punk', trackCount: 25, sizeBytes: 600_000_000, durationSeconds: 9000 },
+        {
+          id: 'a4',
+          name: 'Daft Punk',
+          trackCount: 25,
+          sizeBytes: 600_000_000,
+          durationSeconds: 9000,
+        },
       ],
     };
     render(<SyncPreviewModal {...defaultProps} data={dataWithItem} />);
@@ -378,7 +388,13 @@ describe('SyncPreviewModal', () => {
       newTracksCount: 0,
       newTracksBytes: 0,
       newItems: [
-        { id: 'x1', name: 'New Artist', trackCount: 3, sizeBytes: 30_000_000, durationSeconds: 600 },
+        {
+          id: 'x1',
+          name: 'New Artist',
+          trackCount: 3,
+          sizeBytes: 30_000_000,
+          durationSeconds: 600,
+        },
       ],
     };
     render(<SyncPreviewModal {...defaultProps} data={dataWithItemsOnly} />);

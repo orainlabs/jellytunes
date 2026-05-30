@@ -439,9 +439,8 @@ export function useSync({
       alreadySyncedItemIds,
       (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate).total ?? 0,
     );
-    const removedItems = buildItemPreviews(
-      toDeleteIds,
-      (id) => registry.countRemoveBytes([id], syncFolder),
+    const removedItems = buildItemPreviews(toDeleteIds, (id) =>
+      registry.countRemoveBytes([id], syncFolder),
     );
 
     setPreviewData({
