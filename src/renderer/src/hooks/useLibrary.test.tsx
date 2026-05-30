@@ -35,6 +35,21 @@ function createMockFetch() {
   };
 }
 
+function createGenresFetch() {
+  return {
+    ok: true,
+    json: () =>
+      Promise.resolve({
+        Items: [
+          { Name: 'Rock', LibraryItems: 10 },
+          { Name: 'Jazz', LibraryItems: 5 },
+          { Name: 'Electronic', LibraryItems: 8 },
+        ],
+        TotalRecordCount: 3,
+      }),
+  };
+}
+
 describe('useLibrary', () => {
   // URL-based mock helper - matches URL against patterns
   function setupFetchMock(responses: Record<string, { items: unknown[]; total: number }>) {
@@ -294,6 +309,49 @@ describe('useLibrary', () => {
       const [errors, count] = onError.mock.calls[0];
       expect(errors.length).toBeGreaterThan(0);
       expect(count).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('genres', () => {
+    it('loadTab fetches genres data when called with genres tab', async () => {
+      mockFetch.mockResolvedValue(createGenresFetch());
+
+      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+      await act(async () => {
+        await result.current.loadTab('genres');
+      });
+
+      // Should have fetched genres
+      expect(mockFetch).toHaveBeenCalled();
+      const lastCallUrl = mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0] as string;
+      expect(lastCallUrl.toLowerCase()).toContain('musicgenres');
+    });
+
+    it('genres data is populated after loadTab genres', async () => {
+      mockFetch.mockResolvedValue(createGenresFetch());
+
+      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+      await act(async () => {
+        await result.current.loadTab('genres');
+      });
+
+      expect(result.current.genres).toHaveLength(3);
+      expect(result.current.genres[0].Name).toBe('Rock');
+      expect(result.current.genres[0].LibraryItems).toBe(10);
+    });
+
+    it('handles genres fetch failure gracefully', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+      await act(async () => {
+        await result.current.loadTab('genres');
+      });
+
+      expect(result.current.genres).toHaveLength(0);
     });
   });
 });

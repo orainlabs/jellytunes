@@ -1,4 +1,4 @@
-import type { Artist, Album, Playlist } from '../appTypes';
+import type { Artist, Album, Playlist, Genre } from '../appTypes';
 
 export const PAGE_SIZE = 50;
 
@@ -97,5 +97,16 @@ export function normalizePlaylist(raw: Record<string, unknown>): Playlist {
     ChildCount: (raw.ChildCount as number) ?? (raw.ItemCount as number) ?? undefined,
     RunTimeTicks: (raw.RunTimeTicks as number) ?? undefined,
     ImageTags: (raw.ImageTags as Playlist['ImageTags']) ?? undefined,
+  };
+}
+
+/**
+ * Normalize a raw Jellyfin genre item from /MusicGenres endpoint.
+ * LibraryItems indicates how many items belong to this genre in Jellyfin's library.
+ */
+export function normalizeGenre(raw: Record<string, unknown>): Genre {
+  return {
+    Name: String(raw.Name ?? ''),
+    LibraryItems: (raw.LibraryItems as number) ?? 0,
   };
 }

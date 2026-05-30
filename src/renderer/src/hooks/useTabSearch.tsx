@@ -18,6 +18,7 @@ interface SearchQueries {
   artists: string;
   albums: string;
   playlists: string;
+  genres: string;
 }
 
 interface JellyfinConfig {
@@ -52,6 +53,7 @@ export function UseTabSearchProvider({
     artists: '',
     albums: '',
     playlists: '',
+    genres: '',
   });
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);

@@ -3,6 +3,7 @@ import {
   normalizeArtist,
   normalizeAlbum,
   normalizePlaylist,
+  normalizeGenre,
   formatRunTimeTicks,
 } from '../utils/jellyfin';
 import type { Artist, Album, Playlist } from '../appTypes';
@@ -183,6 +184,42 @@ describe('jellyfin normalizers', () => {
     it('returns a plain object, not the raw input', () => {
       const raw = { Id: 'p1', Name: 'My Favorites' };
       const result = normalizePlaylist(raw);
+      expect(result).not.toBe(raw);
+    });
+  });
+
+  describe('normalizeGenre', () => {
+    it('extracts Name and LibraryItems from raw genre', () => {
+      const raw = { Name: 'Rock', LibraryItems: 42 };
+      const result = normalizeGenre(raw);
+      expect(result.Name).toBe('Rock');
+      expect(result.LibraryItems).toBe(42);
+    });
+
+    it('extracts Name from raw genre with default LibraryItems', () => {
+      const raw = { Name: 'Jazz' };
+      const result = normalizeGenre(raw);
+      expect(result.Name).toBe('Jazz');
+      expect(result.LibraryItems).toBe(0);
+    });
+
+    it('handles empty Name gracefully', () => {
+      const raw = { Name: '' };
+      const result = normalizeGenre(raw);
+      expect(result.Name).toBe('');
+      expect(result.LibraryItems).toBe(0);
+    });
+
+    it('handles missing Name gracefully', () => {
+      const raw = { LibraryItems: 5 };
+      const result = normalizeGenre(raw);
+      expect(result.Name).toBe('');
+      expect(result.LibraryItems).toBe(5);
+    });
+
+    it('returns a plain object, not the raw input', () => {
+      const raw = { Name: 'Pop', LibraryItems: 10 };
+      const result = normalizeGenre(raw);
       expect(result).not.toBe(raw);
     });
   });

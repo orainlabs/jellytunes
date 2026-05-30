@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { LibraryContent } from './LibraryContent';
-import type { LibraryTab, Artist, Album, Playlist, PaginationState } from '../appTypes';
+import type { LibraryTab, Artist, Album, Playlist, Genre, PaginationState } from '../appTypes';
 
 const mockApi = {
   listUsbDevices: vi.fn().mockResolvedValue([]),
@@ -35,6 +35,7 @@ const createPagination = (): PaginationState => ({
   artists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+  genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
 });
 
 const sampleArtists: Artist[] = [
@@ -47,6 +48,7 @@ const defaultProps = {
   artists: sampleArtists,
   albums: [] as Album[],
   playlists: [] as Playlist[],
+  genres: [] as Genre[],
   pagination: createPagination(),
   selectedTracks: new Set<string>(),
   previouslySyncedItems: new Set<string>(),

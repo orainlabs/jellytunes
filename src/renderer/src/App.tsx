@@ -390,6 +390,7 @@ function AppConnected({
               case 'artists':
                 return 'artist' as const;
               case 'albums':
+              case 'genres':
                 return 'album' as const;
               case 'playlists':
                 return 'playlist' as const;
@@ -433,9 +434,12 @@ function AppConnected({
           artists={lib.artists}
           albums={lib.albums}
           playlists={lib.playlists}
+          genres={lib.genres}
+          selectedGenre={lib.selectedGenre}
+          onLibraryTab={handleLibraryTab}
+          onSelectGenre={lib.selectGenre}
           usbDevices={usbDevices}
           savedDestinations={savedDestinations}
-          onLibraryTab={handleLibraryTab}
           onDestinationClick={handleDestinationClick}
           onAddFolder={handleAddFolder}
           onRefreshDevices={refreshDevices}

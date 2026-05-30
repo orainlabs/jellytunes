@@ -48,6 +48,11 @@ export interface Playlist {
   ImageTags?: { Primary?: string };
 }
 
+export interface Genre {
+  Name: string;
+  LibraryItems?: number;
+}
+
 export interface LibraryStats {
   ArtistCount: number;
   AlbumCount: number;
@@ -77,6 +82,7 @@ export interface PaginationState {
   artists: PaginationEntry<Artist>;
   albums: PaginationEntry<Album>;
   playlists: PaginationEntry<Playlist>;
+  genres: PaginationEntry<Genre>;
 }
 
 export interface Track {
@@ -91,7 +97,7 @@ export interface Track {
 }
 
 export type ActiveSection = 'library' | 'device';
-export type LibraryTab = 'artists' | 'albums' | 'playlists';
+export type LibraryTab = 'artists' | 'albums' | 'playlists' | 'genres';
 // Re-export LyricsMode and LyricsModes from sync module to avoid duplication
 export type { LyricsMode } from '../../sync/types';
 export { LyricsModes } from '../../sync/types';

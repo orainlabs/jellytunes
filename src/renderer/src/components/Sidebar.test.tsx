@@ -10,6 +10,7 @@ import type {
   PaginationState,
   UsbDevice,
   SavedDestination,
+  Genre,
 } from '../appTypes';
 
 const mockApi = {
@@ -42,6 +43,7 @@ const createPagination = (): PaginationState => ({
   artists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+  genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
 });
 
 const defaultProps = {
@@ -53,13 +55,17 @@ const defaultProps = {
   artists: [],
   albums: [],
   playlists: [],
-  usbDevices: [] as UsbDevice[],
-  savedDestinations: [] as SavedDestination[],
+  genres: [] as Genre[],
+  selectedGenre: null as Genre | null,
   onLibraryTab: vi.fn(),
+  onSelectGenre: vi.fn(),
   onDestinationClick: vi.fn(),
   onAddFolder: vi.fn(),
   onRefreshDevices: vi.fn(),
+  onRefreshLibrary: vi.fn(),
   onRemoveDestination: vi.fn(),
+  usbDevices: [] as UsbDevice[],
+  savedDestinations: [] as SavedDestination[],
 };
 
 describe('Sidebar', () => {
@@ -161,5 +167,26 @@ describe('Sidebar', () => {
     await user.click(removeButton);
     expect(defaultProps.onRemoveDestination).toHaveBeenCalled();
     vi.mocked(confirm).mockRestore();
+  });
+
+  describe('Genres tab', () => {
+    it('shows Genres tab button in library navigation', () => {
+      render(<Sidebar {...defaultProps} />);
+      expect(screen.getByTestId('tab-genres')).toBeInTheDocument();
+    });
+
+    it('calls onSelectGenre with null when Genres tab is clicked', async () => {
+      const user = userEvent.setup({ delay: null });
+      render(<Sidebar {...defaultProps} />);
+      const genresTab = screen.getByTestId('tab-genres');
+      await user.click(genresTab);
+      expect(defaultProps.onSelectGenre).toHaveBeenCalledWith(null);
+    });
+
+    it('shows correct highlight style when Genres tab is active', () => {
+      render(<Sidebar {...defaultProps} activeLibrary="genres" />);
+      const genresTab = screen.getByTestId('tab-genres');
+      expect(genresTab).toHaveClass(/bg-primary_container/);
+    });
   });
 });
