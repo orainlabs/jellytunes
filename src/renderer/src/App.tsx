@@ -368,6 +368,11 @@ function AppConnected({
 
   const getSelectionSummary = (): string => {
     if (selectedCount === 0) return 'None selected';
+    // ORAIN-0393: Warn on unexpected activeLibrary value to help detect bugs early
+    if (!selectedLabel) {
+      console.warn(`Unexpected activeLibrary value: ${lib.activeLibrary}`);
+      return 'None selected';
+    }
     return `${selectedCount} ${selectedLabel} selected`;
   };
 
