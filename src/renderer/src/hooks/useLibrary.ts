@@ -363,6 +363,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
           endpoint = `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
+        else if (type === 'genres')
+          endpoint = `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=LibraryItems`;
         else
           endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
@@ -389,7 +391,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         if (type === 'artists') updateArtistIndex(uniqueNewItems as Artist[]);
         else if (type === 'albums') updateAlbumIndex(uniqueNewItems as Album[]);
         else if (type === 'genres') {
-          // Update genres in pagination
+          // Genres use Name as key, not Id — no index update needed
         } else updatePlaylistIndex(uniqueNewItems as Playlist[]);
 
         setPagination((prev) => ({
@@ -572,6 +574,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
           endpoint = `/Artists?SortBy=Name&Limit=${pageLimit}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${pageLimit}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
+        else if (type === 'genres')
+          endpoint = `/MusicGenres?SortBy=Name&Limit=${pageLimit}&StartIndex=${startIndex}&Fields=LibraryItems`;
         else
           endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${pageLimit}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
@@ -589,11 +593,17 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
               ? rawItems.map(normalizeArtist)
               : type === 'albums'
                 ? rawItems.map(normalizeAlbum)
-                : rawItems.map(normalizePlaylist);
+                : type === 'genres'
+                  ? rawItems.map(normalizeGenre)
+                  : rawItems.map(normalizePlaylist);
           // Guard: if the server returns no items, stop — advancing startIndex by 0
           // would cause an infinite loop when totalCount > actual available items.
           if (normalized.length === 0) break;
-          normalized.forEach((item) => allIds.add(item.Id));
+          // Genres use Name as key, all other types use Id
+          normalized.forEach((item) => {
+            const id = 'Id' in item ? item.Id : (item as Genre).Name;
+            allIds.add(id);
+          });
           startIndex += normalized.length;
           // Never chase an upward-oscillating TotalRecordCount: only update totalCount
           // when the server reports fewer items than our current expectation.

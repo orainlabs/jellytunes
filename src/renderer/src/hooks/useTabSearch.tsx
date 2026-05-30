@@ -18,7 +18,6 @@ interface SearchQueries {
   artists: string;
   albums: string;
   playlists: string;
-  genres: string;
 }
 
 interface JellyfinConfig {
@@ -53,7 +52,6 @@ export function UseTabSearchProvider({
     artists: '',
     albums: '',
     playlists: '',
-    genres: '',
   });
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -70,6 +68,12 @@ export function UseTabSearchProvider({
   // Search effect - runs when activeTab's search query changes
   useEffect(() => {
     if (!jellyfinConfig || !userId) return;
+    // Genres tab doesn't support search
+    if (activeTab === 'genres') {
+      setSearchResults(null);
+      setSearchError(null);
+      return;
+    }
     const activeQuery = searchQueries[activeTab];
     if (!activeQuery || activeQuery.length < 2) {
       setSearchResults(null);

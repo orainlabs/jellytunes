@@ -66,7 +66,8 @@ function AppConnected({
     useTabSearch();
 
   // Get the search query for the currently active tab
-  const currentTabSearchQuery = searchQueries[lib.activeLibrary];
+  const currentTabSearchQuery =
+    lib.activeLibrary === 'genres' ? '' : searchQueries[lib.activeLibrary];
 
   // Clear search for the current tab
   const handleClearSearch = useCallback(() => {
