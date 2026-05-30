@@ -1735,7 +1735,7 @@ class SyncCoreImpl {
           }
         }
         await this.deps.fs.rmdir(dir);
-        const parent = dir.substring(0, dir.lastIndexOf('/'));
+        const parent = path.dirname(dir);
         await this.cleanEmptyDir(parent, basePath);
       }
     } catch {
