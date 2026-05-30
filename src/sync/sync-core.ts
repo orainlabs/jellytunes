@@ -696,6 +696,7 @@ class SyncCoreImpl {
           outputPath,
           options.lyricsMode ?? 'off',
         );
+        await this.processReplayGain(track, outputPath);
         return {
           retagged: false,
           moved: true,
@@ -711,6 +712,7 @@ class SyncCoreImpl {
         syncedRecord.destinationPath,
         options.lyricsMode ?? 'off',
       );
+      await this.processReplayGain(track, outputPath);
       return {
         retagged: false,
         moved: false,
@@ -767,6 +769,7 @@ class SyncCoreImpl {
           syncedRecord.destinationPath,
           options.lyricsMode ?? 'off',
         );
+        await this.processReplayGain(track, outputPath);
         return {
           retagged: true,
           moved: false,
@@ -909,6 +912,7 @@ class SyncCoreImpl {
 
       // Handle lyrics (after file is written/copied)
       const lyricsResult = await this.processLyrics(track, outputPath, options.lyricsMode ?? 'off');
+      await this.processReplayGain(track, outputPath);
 
       return {
         retagged: false,
@@ -2062,6 +2066,34 @@ class SyncCoreImpl {
     }
   }
 
+  /**
+   * Embed ReplayGain tags into a track file.
+   * Non-blocking: skips silently if no ReplayGain data is available.
+   */
+  private async processReplayGain(track: TrackInfo, outputPath: string): Promise<void> {
+    try {
+      const replayGain = await this.deps.api.fetchReplayGain(track.id);
+      if (!replayGain) return;
+
+      const format = track.format.toLowerCase();
+      const result = await this.deps.converter.embedReplayGain?.(
+        outputPath,
+        outputPath,
+        replayGain,
+        format,
+      );
+      if (result?.success) {
+        this.log.debug(`ReplayGain embedded in: ${outputPath}`);
+      } else if (result?.error) {
+        this.log.warn(`Failed to embed ReplayGain in ${outputPath}: ${result.error}`);
+      }
+    } catch (error) {
+      // Non-fatal: skip ReplayGain for this track
+      this.log.debug(
+        `Could not process ReplayGain for ${track.name}: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
+  }
   private async convertAndCopy(
     track: TrackInfo,
     outputPath: string,

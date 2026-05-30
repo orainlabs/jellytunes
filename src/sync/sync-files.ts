@@ -409,6 +409,14 @@ export interface AudioConverter {
     inputPath: string,
     outputPath: string,
   ): Promise<{ success: boolean; error?: string }>;
+
+  /** Embed ReplayGain tags into an audio file (format-specific) */
+  embedReplayGain(
+    inputPath: string,
+    outputPath: string,
+    replayGain: { trackGain: string; trackPeak: string },
+    format: string,
+  ): Promise<{ success: boolean; error?: string }>;
 }
 
 /**
@@ -1000,6 +1008,79 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         });
       });
     },
+
+    embedReplayGain: async (inputPath, outputPath, replayGain, format) => {
+      assertFilesystemPath(inputPath, 'inputPath');
+      assertFilesystemPath(outputPath, 'outputPath');
+      const { spawn } = require('child_process');
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+
+      return new Promise((resolve) => {
+        const ext = format
+          ? `.${format.replace(/^\./, '')}`
+          : path.extname(inputPath).toLowerCase();
+        const useTempOutput = inputPath === outputPath;
+        const tempOutputPath = useTempOutput
+          ? `${os.tmpdir()}/jt-replaygain-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
+          : outputPath;
+
+        const args: string[] = ['-i', inputPath];
+
+        // ReplayGain tags are written as metadata for all formats
+        // MP3: ID3v2 REPLAYGAIN_TRACK_GAIN / REPLAYGAIN_TRACK_PEAK
+        // FLAC: Vorbis Comment REPLAYGAIN_TRACK_GAIN / REPLAYGAIN_TRACK_PEAK
+        // M4A: iTunes atom (FFmpeg maps REPLAYGAIN_TRACK_GAIN correctly)
+        args.push('-metadata', `REPLAYGAIN_TRACK_GAIN=${replayGain.trackGain}`);
+        args.push('-metadata', `REPLAYGAIN_TRACK_PEAK=${replayGain.trackPeak}`);
+
+        args.push('-c', 'copy', '-y', tempOutputPath);
+
+        let stderrOutput = '';
+        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+
+        proc.stderr.on('data', (chunk: Buffer) => {
+          stderrOutput += chunk.toString();
+        });
+
+        proc.on('error', (err: Error) => {
+          if (useTempOutput)
+            try {
+              fs.unlinkSync(tempOutputPath);
+            } catch {
+              /* ignore */
+            }
+          resolve({ success: false, error: `FFmpeg error: ${err.message}` });
+        });
+
+        proc.on('close', (code: number) => {
+          if (code === 0) {
+            try {
+              if (!useTempOutput && outputPath !== tempOutputPath) {
+                fs.unlinkSync(outputPath);
+              }
+              moveFileSync(tempOutputPath, outputPath);
+            } catch (cleanupError) {
+              resolve({ success: false, error: `Failed to finalize ReplayGain: ${cleanupError}` });
+              return;
+            }
+            resolve({ success: true });
+            return;
+          }
+          if (useTempOutput)
+            try {
+              fs.unlinkSync(tempOutputPath);
+            } catch {
+              /* ignore */
+            }
+          resolve({
+            success: false,
+            error: code !== 0 ? `FFmpeg exited with code ${code}: ${stderrOutput}` : undefined,
+          });
+        });
+      });
+    },
   };
 }
 
@@ -1015,6 +1096,7 @@ export function createMockConverter(): AudioConverter {
     readFileMetadata: async () => ({}),
     isAvailable: async () => true,
     embedLyrics: async () => ({ success: true }),
+    embedReplayGain: async () => ({ success: true }),
     stripCoverArt: async () => ({ success: true }),
   };
 }

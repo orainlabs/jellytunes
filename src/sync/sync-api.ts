@@ -88,6 +88,9 @@ export interface SyncApi {
   getCoverArt(itemId: string): Promise<Buffer>;
 
   /** Fetch lyrics for a track (returns LRC string or null if unavailable) */
+
+  /** Fetch ReplayGain normalization data for a track (returns data or null if unavailable) */
+  fetchReplayGain(itemId: string): Promise<{ trackGain: string; trackPeak: string } | null>;
   fetchLyrics(itemId: string): Promise<string | null>;
 }
 
@@ -575,6 +578,64 @@ class SyncApiImpl implements SyncApi {
     }
   }
 
+  async fetchReplayGain(itemId: string): Promise<{ trackGain: string; trackPeak: string } | null> {
+    const url = `${this.baseUrl}/Items/${itemId}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const response = await this.fetchFn(url, {
+        method: 'GET',
+        headers: this.getAuthHeaders(),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 404) {
+        this.logger?.debug(`No item found for ReplayGain: ${itemId}`);
+        return null;
+      }
+
+      if (!response.ok) {
+        throw new ApiError(
+          `Failed to fetch ReplayGain: ${response.status} ${response.statusText}`,
+          response.status,
+        );
+      }
+
+      const data = (await response.json()) as {
+        MediaSources?: Array<{
+          Metadata?: Record<string, string>;
+        }>;
+      };
+
+      const metadata = data.MediaSources?.[0]?.Metadata;
+      const trackGain = metadata?.['@replaygain_track_gain'];
+      const trackPeak = metadata?.['@replaygain_track_peak'];
+
+      if (trackGain && trackPeak) {
+        return { trackGain, trackPeak };
+      }
+      return null;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof ApiError) {
+        if (error.statusCode === 404) {
+          this.logger?.debug(`No item found for ReplayGain: ${itemId}`);
+          return null;
+        }
+        throw error;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ApiError('ReplayGain request timed out', 408);
+      }
+      throw new ApiError(
+        `Failed to fetch ReplayGain: ${error instanceof Error ? error.message : String(error)}`,
+        0,
+      );
+    }
+  }
   /**
    * Maps a Jellyfin track item to TrackInfo.
    * Year is injected separately (resolved at album level to avoid N+1 requests).
@@ -725,6 +786,7 @@ export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
     },
     getCoverArt: async () => Buffer.from(''),
     fetchLyrics: async () => null,
+    fetchReplayGain: async () => null,
   };
 
   return { ...defaultMock, ...overrides };

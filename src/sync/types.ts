@@ -408,3 +408,18 @@ export interface SyncDiffResult {
   /** Item-level errors encountered during diff (e.g. API failures) */
   itemErrors?: { itemId: string; itemName: string; error: string }[];
 }
+
+// =============================================================================
+// REPLAYGAIN
+// =============================================================================
+
+/**
+ * ReplayGain normalization data for a single track.
+ * Values come from Jellyfin's audio analysis when enabled.
+ */
+export interface ReplayGainData {
+  /** Track gain in dB (e.g. "-6.0 dB"). Players apply this to normalize loudness. */
+  trackGain: string;
+  /** Peak amplitude as a ratio (0–1). Players use this to prevent clipping. */
+  trackPeak: string;
+}

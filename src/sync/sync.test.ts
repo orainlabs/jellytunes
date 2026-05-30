@@ -737,6 +737,7 @@ describe('sync-core', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const core = createTestSyncCore(validConfig, { ...deps, converter });
@@ -963,6 +964,7 @@ describe('Error Handling', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       },
     });
 
@@ -1717,6 +1719,7 @@ describe('Server Root Path - Original Path Usage', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps: SyncDependencies = {
@@ -1772,6 +1775,7 @@ describe('Server Root Path - Original Path Usage', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps: SyncDependencies = {
@@ -1830,6 +1834,7 @@ describe('Server Root Path - Original Path Usage', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps: SyncDependencies = {
@@ -2466,6 +2471,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
@@ -2527,6 +2533,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
@@ -2593,6 +2600,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
@@ -2663,6 +2671,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
@@ -2736,6 +2745,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
@@ -2924,6 +2934,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
@@ -2983,6 +2994,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
@@ -3064,6 +3076,7 @@ describe('stale artifact cleanup (companion→embed, file→embed)', () => {
         readFileMetadata: async () => ({}),
         embedLyrics: async () => ({ success: true }),
         stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
       };
 
       const deps = createMockDeps({
