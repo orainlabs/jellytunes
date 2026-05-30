@@ -30,7 +30,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [activeLibrary, setActiveLibrary] = useState<LibraryTab>('artists');
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [isSelectingAll, setIsSelectingAll] = useState(false);
   const [loadedTabs, setLoadedTabs] = useState<Set<LibraryTab>>(new Set(['artists']));
   const [error, setError] = useState<string | null>(null);
 
@@ -658,7 +657,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       if (!jellyfinConfig || !userId) return { cancelled: false };
 
       const currentTab = activeLibrary;
-      setIsSelectingAll(true);
       try {
         const result = await fetchAllIds(type);
         // Check if tab changed during fetch (cancellation)
@@ -670,8 +668,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
           onError?.(result.errors, result.ids.length);
         }
         return { cancelled: false };
-      } finally {
-        setIsSelectingAll(false);
+      } catch {
+        return { cancelled: true };
       }
     },
     [fetchAllIds, activeLibrary],
@@ -687,7 +685,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     activeLibrary,
     pagination,
     isLoadingMore,
-    isSelectingAll,
     loadedTabs,
     error,
     setError,

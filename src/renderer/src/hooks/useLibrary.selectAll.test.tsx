@@ -130,22 +130,15 @@ describe('useLibrary - selectAll with pagination', () => {
         await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
       });
 
-      // Start selectAll and check loading state immediately
-      let selectAllPromise: Promise<{ cancelled: boolean }>;
-      act(() => {
-        selectAllPromise = result.current.selectAllWithCompleteSet('artists', onSelectAllIds);
-      });
-
-      // Loading state should be true immediately
-      expect(result.current.isSelectingAll).toBe(true);
+      // Start selectAll
+      const selectAllPromise = result.current.selectAllWithCompleteSet('artists', onSelectAllIds);
 
       // Wait for selectAll to complete
       await act(async () => {
-        await selectAllPromise!;
+        await selectAllPromise;
       });
 
-      // Should no longer be loading after completion
-      expect(result.current.isSelectingAll).toBe(false);
+      // Should have called callback with all IDs
       expect(onSelectAllIds).toHaveBeenCalledWith(['artist-1', 'artist-2', 'artist-3']);
     });
 
