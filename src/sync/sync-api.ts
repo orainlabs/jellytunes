@@ -220,66 +220,31 @@ class SyncApiImpl implements SyncApi {
     this.logger?.debug(`[BATCH] getArtistTracks START artistId=${artistId}`);
     const startTime = Date.now();
 
-    // First get albums for this artist, then batch-fetch tracks for all albums at once
     const albumsEndpoint = `/Users/${this.userId}/Items?AlbumArtistIds=${artistId}&includeItemTypes=MusicAlbum&Recursive=true&Fields=Path,MediaSources`;
     this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → fetching albums endpoint=${albumsEndpoint}`);
     const albumsData = await this.request<{ Items: JellyfinAlbumItem[] }>(albumsEndpoint);
 
-    const albumIds = (albumsData.Items ?? []).map((a) => a.Id);
-    if (albumIds.length === 0) {
+    const albums = albumsData.Items ?? [];
+    if (albums.length === 0) {
       this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → 0 albums, took ${Date.now() - startTime}ms`);
       return [];
     }
 
-    this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → found ${albumIds.length} albums: ${albumIds.slice(0, 5).join(',')}...`);
+    this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → found ${albums.length} albums: ${albums.slice(0, 5).map((a) => a.Id).join(',')}...`);
 
-    // Batch fetch tracks for all albums in one call using albumIds endpoint
-    const albumIdsParam = albumIds.slice(0, 50).join(',');
-    this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → fetching tracks batch (albumIdsParam=${albumIdsParam.slice(0, 100)}...)`);
-    const tracksData = await this.request<{
-      Items: JellyfinTrackItem[];
-      TotalRecordCount?: number;
-    }>(
-      `/Users/${this.userId}/Items?albumIds=${albumIdsParam}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album&Limit=1000`,
-    );
-
-    this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → first page: ${tracksData.Items?.length ?? 0} tracks, totalRecordCount=${tracksData.TotalRecordCount ?? 'N/A'}`);
-
-    // Handle pagination if there are more tracks than returned
-    let allTracks = tracksData.Items ?? [];
-    if (tracksData.TotalRecordCount && tracksData.TotalRecordCount > allTracks.length) {
-      const pages = Math.ceil(tracksData.TotalRecordCount / 1000);
-      this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → paginating ${pages - 1} extra pages`);
-      const pageFetches = [];
-      for (let page = 1; page < pages; page++) {
-        pageFetches.push(
-          this.request<{ Items: JellyfinTrackItem[] }>(
-            `/Users/${this.userId}/Items?albumIds=${albumIdsParam}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album&Limit=1000&StartIndex=${page * 1000}`,
-          ),
-        );
-      }
-      const extraPages = await Promise.all(pageFetches);
-      for (const page of extraPages) {
-        allTracks = allTracks.concat(page.Items ?? []);
-      }
-      this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → pagination complete: total tracks=${allTracks.length}`);
+    // Fetch tracks for each album in parallel using parentId (albumIds= unreliable when Album field is NULL)
+    const albumMeta = new Map<string, { Name?: string; ProductionYear?: number }>();
+    for (const album of albums) {
+      albumMeta.set(album.Id, { Name: album.Name, ProductionYear: album.ProductionYear });
     }
+
+    const perAlbumResults = await Promise.all(albums.map((album) => this.getAlbumTracks(album.Id)));
+    const allTracks = perAlbumResults.flat();
 
     const elapsed = Date.now() - startTime;
     this.logger?.debug(`[BATCH] getArtistTracks ${artistId} → DONE ${allTracks.length} tracks in ${elapsed}ms`);
 
-    // Build album metadata map from the first response (albums endpoint has Name/ProductionYear)
-    const albumMeta = new Map<string, { Name?: string; ProductionYear?: number }>();
-    for (const album of albumsData.Items ?? []) {
-      albumMeta.set(album.Id, { Name: album.Name, ProductionYear: album.ProductionYear });
-    }
-
-    return allTracks
-      .filter((item) => item.MediaSources?.[0]?.Path)
-      .map((item) => {
-        const meta = albumMeta.get(item.AlbumId ?? '');
-        return this.trackItemToInfo(item, meta?.ProductionYear, meta?.Name);
-      });
+    return allTracks;
   }
 
   async getAlbumTracks(albumId: string): Promise<TrackInfo[]> {
@@ -323,6 +288,16 @@ class SyncApiImpl implements SyncApi {
     return tracks;
   }
 
+  private async getAlbumTracksBatch(albumIds: string[]): Promise<Array<TrackInfo & { _albumId: string }>> {
+    const results = await Promise.all(
+      albumIds.map(async (albumId) => {
+        const tracks = await this.getAlbumTracks(albumId);
+        return tracks.map((t) => ({ ...t, _albumId: albumId }));
+      }),
+    );
+    return results.flat();
+  }
+
   async getTracksForItems(
     itemIds: string[],
     itemTypes: Map<string, ItemType>,
@@ -330,48 +305,67 @@ class SyncApiImpl implements SyncApi {
     const startTime = Date.now();
     this.logger?.debug(`[BATCH] getTracksForItems START items=${itemIds.length} (${Array.from(itemTypes.entries()).slice(0, 3).map(([id, t]) => `${t}:${id}`).join(',')}${itemIds.length > 3 ? '...' : ''})`);
 
-    // Fetch all items in parallel, capped at API_CONCURRENCY to avoid server flooding
-    const results = await Promise.allSettled(
-      itemIds.map((itemId) =>
-        this.limiter.run(async () => {
-          const itemType = itemTypes.get(itemId);
-          this.logger?.debug(`[BATCH] getTracksForItems → fetching ${itemType} ${itemId}`);
-          if (!itemType) throw new Error(`Unknown item type for ID: ${itemId}`);
-          switch (itemType) {
-            case 'artist':
-              return await this.getArtistTracks(itemId);
-            case 'album':
-              return await this.getAlbumTracks(itemId);
-            case 'playlist':
-              return await this.getPlaylistTracks(itemId);
-            default:
-              throw new Error(`Unsupported item type: ${itemType}`);
-          }
-        }),
-      ),
-    );
+    const albumIds = itemIds.filter((id) => itemTypes.get(id) === 'album');
+    const nonAlbumIds = itemIds.filter((id) => itemTypes.get(id) !== 'album');
 
     const tracks: TrackInfo[] = [];
     const errors: string[] = [];
-    let fulfilled = 0;
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      const itemId = itemIds[i];
-      const itemType = itemTypes.get(itemId) ?? 'unknown';
-      if (result.status === 'fulfilled') {
-        fulfilled++;
-        // Tag every track with its parent item ID so callers can group by parent
-        const taggedTracks = result.value.map((t) => ({ ...t, parentItemId: itemId }));
-        this.logger?.debug(`[BATCH] getTracksForItems ${itemType} ${itemId} → ${result.value.length} tracks`);
-        tracks.push(...taggedTracks);
-      } else {
-        const err = result.reason;
-        const msg =
-          err instanceof ApiError
+
+    // Batch-fetch all albums in a single HTTP call instead of N parallel requests
+    if (albumIds.length > 0) {
+      this.logger?.debug(`[BATCH] getTracksForItems → batch fetching ${albumIds.length} albums in one HTTP call`);
+      try {
+        const albumTracks = await this.getAlbumTracksBatch(albumIds);
+        // parentItemId = albumId so the registry groups tracks under their album
+        for (const { _albumId, ...track } of albumTracks) {
+          tracks.push({ ...track, parentItemId: _albumId });
+        }
+        this.logger?.debug(`[BATCH] getTracksForItems albums batch → ${albumTracks.length} tracks`);
+      } catch (err) {
+        const msg = err instanceof ApiError
+          ? `Failed to batch fetch albums: ${err.message}`
+          : 'Error batch fetching albums';
+        this.logger?.debug(`[BATCH] getTracksForItems albums batch → ERROR: ${err instanceof Error ? err.message : String(err)}`);
+        errors.push(msg);
+      }
+    }
+
+    // Artists and playlists still fetched individually (no multi-item batch endpoint)
+    if (nonAlbumIds.length > 0) {
+      const results = await Promise.allSettled(
+        nonAlbumIds.map((itemId) =>
+          this.limiter.run(async () => {
+            const itemType = itemTypes.get(itemId);
+            this.logger?.debug(`[BATCH] getTracksForItems → fetching ${itemType} ${itemId}`);
+            if (!itemType) throw new Error(`Unknown item type for ID: ${itemId}`);
+            switch (itemType) {
+              case 'artist':
+                return await this.getArtistTracks(itemId);
+              case 'playlist':
+                return await this.getPlaylistTracks(itemId);
+              default:
+                throw new Error(`Unsupported item type: ${itemType}`);
+            }
+          }),
+        ),
+      );
+
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const itemId = nonAlbumIds[i];
+        const itemType = itemTypes.get(itemId) ?? 'unknown';
+        if (result.status === 'fulfilled') {
+          const taggedTracks = result.value.map((t) => ({ ...t, parentItemId: itemId }));
+          this.logger?.debug(`[BATCH] getTracksForItems ${itemType} ${itemId} → ${result.value.length} tracks`);
+          tracks.push(...taggedTracks);
+        } else {
+          const err = result.reason;
+          const msg = err instanceof ApiError
             ? `Failed to fetch ${itemType} ${itemId}: ${err.message}`
             : `Error processing ${itemType} ${itemId}`;
-        this.logger?.debug(`[BATCH] getTracksForItems ${itemType} ${itemId} → ERROR: ${err instanceof Error ? err.message : String(err)}`);
-        errors.push(msg);
+          this.logger?.debug(`[BATCH] getTracksForItems ${itemType} ${itemId} → ERROR: ${err instanceof Error ? err.message : String(err)}`);
+          errors.push(msg);
+        }
       }
     }
 
