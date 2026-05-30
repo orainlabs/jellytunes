@@ -546,6 +546,16 @@ export function useDeviceSelections() {
           const uncachedIds = opts.itemIds.filter(
             (id) => opts.itemTypes[id] && registry.getItemTrackIds(id).length === 0,
           );
+          if (uncachedIds.length === 0) return;
+
+          // Threshold guard: skip fetch if too many uncached items to prevent HTTP flood.
+          if (uncachedIds.length > MAX_UNCACHED_FETCH_COUNT) {
+            console.warn(
+              `[useDeviceSelections] Skipping fetch: ${uncachedIds.length} uncached items exceed threshold of ${MAX_UNCACHED_FETCH_COUNT}`,
+            );
+            return;
+          }
+
           if (uncachedIds.length > 0) {
             setSizeLoadingCount((c) => c + 1);
             void registry

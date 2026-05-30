@@ -523,6 +523,41 @@ describe('useDeviceSelections', () => {
       });
     });
 
+    it('skips fetch when uncached items exceed MAX_UNCACHED_FETCH_COUNT', async () => {
+      vi.useFakeTimers();
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      // Create 60 items (exceeds threshold of 50)
+      const largeItemIds = Array.from({ length: 60 }, (_, i) => `album-${i}`);
+      const largeItemTypes = Object.fromEntries(largeItemIds.map((id) => [id, 'album' as const]));
+      // Mock registry.getItemTrackIds to return empty (uncached)
+      mockRegistry.getItemTrackIds.mockReturnValue([]);
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      const { result } = renderHook(() => useDeviceSelections());
+
+      // Activate with convertToMp3=true first
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', {
+          ...defaultOptions,
+          itemIds: largeItemIds,
+          itemTypes: largeItemTypes,
+          convertToMp3: true,
+        });
+      });
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      // Switch to convertToMp3=false - should skip fetch due to threshold
+      await act(async () => {
+        result.current.updateConvertOptions(false, '320k');
+        vi.advanceTimersByTime(0); // flush microtasks
+      });
+
+      vi.useRealTimers();
+
+      // Verify fetch was NOT called (skipped due to threshold)
+      expect(mockRegistry.fetchTracksForItems).not.toHaveBeenCalled();
+    });
+
     it('persists coverArtMode change across revalidation', async () => {
       mockApi.getSyncedItems.mockResolvedValue([
         { id: 'artist-1', name: 'The Beatles', type: 'artist' as const },
