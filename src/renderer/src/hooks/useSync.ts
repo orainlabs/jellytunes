@@ -311,7 +311,7 @@ export function useSync({
         updatedTracksBytes: 0,
         alreadySyncedCount: 0,
         alreadySyncedBytes: 0,
-        willRemoveCount: toDeleteIds.length,
+        willRemoveCount: registry.countRemoveTracks(toDeleteIds, syncFolder),
         willRemoveBytes,
         willRemoveDurationSeconds,
       });
@@ -363,7 +363,6 @@ export function useSync({
       registry.calculateSize(updatedItemSet, syncFolder, convertToMp3, bitrate).total ?? 0;
     const alreadySyncedBytes =
       registry.calculateSize(alreadySyncedItemSet, syncFolder, convertToMp3, bitrate).total ?? 0;
-    const willRemoveCount = toDeleteIds.length;
     const willRemoveBytes = registry.countRemoveBytes(toDeleteIds, syncFolder);
 
     const getItemName = (id: string): string =>
@@ -408,6 +407,10 @@ export function useSync({
       0,
     );
     const alreadySyncedTracksCount = alreadySyncedItemIds.reduce(
+      (sum, id) => sum + (itemTrackMap.get(id)?.size ?? getItemTrackCount(id)),
+      0,
+    );
+    const willRemoveCount = toDeleteIds.reduce(
       (sum, id) => sum + (itemTrackMap.get(id)?.size ?? getItemTrackCount(id)),
       0,
     );

@@ -446,6 +446,17 @@ export function createTrackRegistry() {
     return total;
   };
 
+  const countRemoveTracks = (toDeleteIds: string[], devicePath: string): number => {
+    const syncedTracks = state.deviceSyncedTracks.get(devicePath);
+    if (!syncedTracks || toDeleteIds.length === 0) return 0;
+    const deleteSet = new Set(toDeleteIds);
+    let count = 0;
+    for (const { itemId } of syncedTracks.values()) {
+      if (deleteSet.has(itemId)) count++;
+    }
+    return count;
+  };
+
   /**
    * Get total size of already-synced tracks for a device
    */
@@ -595,6 +606,7 @@ export function createTrackRegistry() {
     calculateSize,
     countNewTracks,
     countRemoveBytes,
+    countRemoveTracks,
     countSyncedItemTracks,
     getSyncedMusicBytes,
     invalidateAll,
