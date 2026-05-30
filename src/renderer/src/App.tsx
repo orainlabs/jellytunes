@@ -375,13 +375,26 @@ function AppConnected({
     setIsSelectingAll(true);
     try {
       // Fetch all items from library via pagination
+      // Pass the item type so selectAllItems can register types BEFORE selection,
+      // fixing the threshold guard bypass (ORAIN-0494)
       await lib.selectAllWithCompleteSet(
         lib.activeLibrary,
         (allIds) => {
           // IDs come directly from Jellyfin — no need to validate against locally-loaded
           // lib.artists/albums/playlists (which is a stale closure capturing only the
           // first PAGE_SIZE items and would silently drop all unloaded pages).
-          deviceSelections.selectItems(allIds.map((id) => ({ Id: id })));
+          // Use selectAllItems to register types before selection so threshold guard works.
+          const itemType = (() => {
+            switch (lib.activeLibrary) {
+              case 'artists':
+                return 'artist' as const;
+              case 'albums':
+                return 'album' as const;
+              case 'playlists':
+                return 'playlist' as const;
+            }
+          })();
+          deviceSelections.selectAllItems(allIds, itemType);
         },
         (errors, selectedCount) => {
           // Notify user of partial errors

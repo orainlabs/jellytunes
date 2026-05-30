@@ -429,6 +429,21 @@ export function useDeviceSelections() {
     [activeDevicePath, deviceStates, fetchSelectedUncachedTracks],
   );
 
+  // Select All: registers item types in registry BEFORE selection so that
+  // fetchSelectedUncachedTracks threshold guard sees the full set of IDs.
+  // Without this, getItemType returns undefined for items not yet in the
+  // registry (only first ~50 items from initial load), causing the threshold
+  // guard to be bypassed (ORAIN-0494).
+  const selectAllItems = useCallback(
+    (ids: string[], type: 'artist' | 'album' | 'playlist') => {
+      // Register all item types FIRST, before selectItems triggers threshold check
+      registry.setItemTypes(ids.map((id) => ({ id, type })));
+      // Now selectItems will see all types registered and threshold guard works correctly
+      selectItems(ids.map((id) => ({ Id: id })));
+    },
+    [registry, selectItems],
+  );
+
   const clearSelection = useCallback(() => {
     if (!activeDevicePath) return;
     setDeviceStates((prev) => {
@@ -497,6 +512,7 @@ export function useDeviceSelections() {
     removeDevice,
     toggleItem,
     selectItems,
+    selectAllItems,
     clearSelection,
     invalidateCache,
     revalidateDevice,
