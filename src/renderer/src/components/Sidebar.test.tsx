@@ -41,6 +41,7 @@ afterEach(() => {
 
 const createPagination = (): PaginationState => ({
   artists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+  albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
@@ -53,6 +54,7 @@ const defaultProps = {
   stats: null as LibraryStats | null,
   pagination: createPagination(),
   artists: [],
+  albumArtists: [],
   albums: [],
   playlists: [],
   genres: [] as Genre[],
@@ -74,6 +76,16 @@ describe('Sidebar', () => {
     render(<Sidebar {...defaultProps} activeLibrary="artists" />);
     const artistsTab = screen.getByTestId('tab-artists');
     expect(artistsTab).toHaveClass(/bg-primary_container/);
+  });
+
+  // 1b. Album Artists tab is visible and clickable
+  it('shows Album Artists tab and calls onLibraryTab when clicked', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Sidebar {...defaultProps} />);
+    const albumArtistsTab = screen.getByTestId('tab-albumArtists');
+    expect(albumArtistsTab).toBeInTheDocument();
+    await user.click(albumArtistsTab);
+    expect(defaultProps.onLibraryTab).toHaveBeenCalledWith('albumArtists');
   });
 
   // 2. click Albums tab: onLibraryTab('albums') called

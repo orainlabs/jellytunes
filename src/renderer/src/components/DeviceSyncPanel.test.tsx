@@ -36,6 +36,7 @@ const defaultArtists: Artist[] = [
   { Id: 'artist-1', Name: 'Radiohead', AlbumCount: 9 },
   { Id: 'artist-2', Name: 'Pink Floyd', AlbumCount: 15 },
 ];
+const defaultAlbumArtists: Artist[] = [];
 
 const defaultAlbums: Album[] = [
   { Id: 'album-1', Name: 'OK Computer', AlbumArtist: 'Radiohead', ProductionYear: 1997 },
@@ -65,6 +66,7 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     artists: defaultArtists,
     albums: defaultAlbums,
     playlists: defaultPlaylists,
+    albumArtists: defaultAlbumArtists,
     showPreview: false,
     previewData: null,
     onToggleItem: vi.fn(),

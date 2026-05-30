@@ -3,6 +3,7 @@ import type { LibraryTab } from '../appTypes';
 import {
   jellyfinHeaders,
   normalizeArtist,
+  normalizeAlbumArtist,
   normalizeAlbum,
   normalizePlaylist,
 } from '../utils/jellyfin';
@@ -10,12 +11,14 @@ import { logger } from '../utils/logger';
 
 interface SearchResults {
   artists: Array<{ Id: string; Name: string }>;
+  albumArtists: Array<{ Id: string; Name: string }>;
   albums: Array<{ Id: string; Name: string }>;
   playlists: Array<{ Id: string; Name: string }>;
 }
 
 interface SearchQueries {
   artists: string;
+  albumArtists: string;
   albums: string;
   playlists: string;
 }
@@ -50,6 +53,7 @@ export function UseTabSearchProvider({
 }: UseTabSearchProviderProps) {
   const [searchQueries, setSearchQueriesState] = useState<SearchQueries>({
     artists: '',
+    albumArtists: '',
     albums: '',
     playlists: '',
   });
@@ -86,9 +90,14 @@ export function UseTabSearchProvider({
         const headers = jellyfinHeaders(jellyfinConfig.apiKey);
         const base = jellyfinConfig.url.replace(/\/$/, '');
         const q = encodeURIComponent(activeQuery);
-        const [artistsRes, albumsRes, playlistsRes] = await Promise.all([
+        // Fetch search results for all tabs in parallel
+        const [artistsRes, albumArtistsRes, albumsRes, playlistsRes] = await Promise.all([
           fetch(
             `${base}/Artists?SearchTerm=${q}&Limit=20&Fields=AlbumCount,ChildCount,RunTimeTicks`,
+            { headers },
+          ),
+          fetch(
+            `${base}/Artists/AlbumArtists?SearchTerm=${q}&Limit=20&Fields=AlbumCount,ChildCount,RunTimeTicks`,
             { headers },
           ),
           fetch(
@@ -100,14 +109,16 @@ export function UseTabSearchProvider({
             { headers },
           ),
         ]);
-        const [artistsData, albumsData, playlistsData] = await Promise.all([
+        const [artistsData, albumArtistsData, albumsData, playlistsData] = await Promise.all([
           artistsRes.ok ? artistsRes.json() : { Items: [] },
+          albumArtistsRes.ok ? albumArtistsRes.json() : { Items: [] },
           albumsRes.ok ? albumsRes.json() : { Items: [] },
           playlistsRes.ok ? playlistsRes.json() : { Items: [] },
         ]);
         setSearchError(null);
         setSearchResults({
           artists: (artistsData.Items ?? []).map(normalizeArtist),
+          albumArtists: (albumArtistsData.Items ?? []).map(normalizeAlbumArtist),
           albums: (albumsData.Items ?? []).map(normalizeAlbum),
           playlists: (playlistsData.Items ?? []).map(normalizePlaylist),
         });

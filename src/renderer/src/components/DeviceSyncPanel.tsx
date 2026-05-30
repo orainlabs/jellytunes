@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { HardDrive, Folder, Loader2, Trash2, Music, RefreshCw, X, AlertCircle } from 'lucide-react';
 import type {
   Artist,
+  AlbumArtist,
   Album,
   Playlist,
   Bitrate,
@@ -35,7 +36,7 @@ type ItemState = 'new' | 'synced' | 'outOfSync' | 'remove';
 interface SyncItem {
   id: string;
   name: string;
-  type: 'artist' | 'album' | 'playlist';
+  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
   state: ItemState;
 }
 
@@ -53,6 +54,7 @@ interface DeviceSyncPanelProps {
   syncedItemsInfo: SyncedItemInfo[];
   outOfSyncItems: Set<string>;
   artists: Artist[];
+  albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
   showPreview: boolean;
@@ -104,6 +106,7 @@ export function DeviceSyncPanel({
   syncedItemsInfo,
   outOfSyncItems,
   artists,
+  albumArtists,
   albums,
   playlists,
   showPreview,
@@ -195,6 +198,7 @@ export function DeviceSyncPanel({
     }
   };
   addNewItems(artists, 'artist');
+  addNewItems(albumArtists, 'albumArtist');
   addNewItems(albums, 'album');
   addNewItems(playlists, 'playlist');
 

@@ -85,7 +85,7 @@ const api = {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
     itemNames?: Record<string, string>;
     destinationPath: string;
     options?: {
@@ -212,15 +212,16 @@ const api = {
 
   getSyncedItems: (
     mountPoint: string,
-  ): Promise<Array<{ id: string; name: string; type: 'artist' | 'album' | 'playlist' }>> =>
-    ipcRenderer.invoke('sync:getSyncedItems', mountPoint),
+  ): Promise<
+    Array<{ id: string; name: string; type: 'artist' | 'albumArtist' | 'album' | 'playlist' }>
+  > => ipcRenderer.invoke('sync:getSyncedItems', mountPoint),
 
   analyzeDiff: (options: {
     serverUrl: string;
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
     destinationPath: string;
     options: {
       convertToMp3: boolean;
@@ -257,7 +258,7 @@ const api = {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
     destinationPath: string;
   }): Promise<{ removed: number; errors: string[] }> =>
     ipcRenderer.invoke('sync:removeItems', options),

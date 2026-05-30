@@ -24,7 +24,7 @@ export function shouldSkipUncachedFetch(uncachedIds: string[]): boolean {
 export interface SyncedItemInfo {
   id: string;
   name: string;
-  type: 'artist' | 'album' | 'playlist';
+  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
 }
 
 interface DeviceState {
@@ -50,7 +50,7 @@ function buildActivationKey(
   path: string,
   options?: {
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
     convertToMp3: boolean;
     bitrate: '128k' | '192k' | '320k';
     coverArtMode?: 'off' | 'embed' | 'companion';
@@ -129,7 +129,7 @@ export function useDeviceSelections() {
         apiKey: string;
         userId: string;
         itemIds: string[];
-        itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+        itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
         convertToMp3: boolean;
         bitrate: '128k' | '192k' | '320k';
         coverArtMode?: 'off' | 'embed' | 'companion';
@@ -180,11 +180,15 @@ export function useDeviceSelections() {
         const ticksArray: Array<{
           id: string;
           ticks: number;
-          type: 'artist' | 'album' | 'playlist';
+          type: 'artist' | 'albumArtist' | 'album' | 'playlist';
         }> = Object.entries(options.itemTicks).map(([id, ticks]) => ({
           id,
           ticks,
-          type: (options.itemTypes[id] ?? 'album') as 'artist' | 'album' | 'playlist',
+          type: (options.itemTypes[id] ?? 'album') as
+            | 'artist'
+            | 'albumArtist'
+            | 'album'
+            | 'playlist',
         }));
         registry.setItemTicks(ticksArray);
       }
@@ -433,7 +437,7 @@ export function useDeviceSelections() {
   // registry (only first ~50 items from initial load), causing the threshold
   // guard to be bypassed (ORAIN-0494).
   const selectAllItems = useCallback(
-    (ids: string[], type: 'artist' | 'album' | 'playlist') => {
+    (ids: string[], type: 'artist' | 'albumArtist' | 'album' | 'playlist') => {
       // Register all item types FIRST, before selectItems triggers threshold check
       registry.setItemTypes(ids.map((id) => ({ id, type })));
       // Now selectItems will see all types registered and threshold guard works correctly

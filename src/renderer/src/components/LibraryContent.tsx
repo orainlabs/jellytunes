@@ -4,6 +4,7 @@ import { LibraryItem } from './LibraryItem';
 import type {
   LibraryTab,
   Artist,
+  AlbumArtist,
   Album,
   Playlist,
   PaginationState,
@@ -14,6 +15,7 @@ type SyncFilter = 'all' | 'selected' | 'unselected';
 
 interface SearchResults {
   artists: Artist[];
+  albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
 }
@@ -73,6 +75,7 @@ function SelectAllConfirmDialog({
 interface LibraryContentProps {
   activeLibrary: LibraryTab;
   artists: Artist[];
+  albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
   pagination: PaginationState;
@@ -104,6 +107,7 @@ interface LibraryContentProps {
 export function LibraryContent({
   activeLibrary,
   artists,
+  albumArtists,
   albums,
   playlists,
   pagination,
@@ -193,6 +197,9 @@ export function LibraryContent({
   const displayArtists = isSearchActive
     ? applySyncFilter(searchResults?.artists ?? [])
     : applySyncFilter(artists);
+  const displayAlbumArtists = isSearchActive
+    ? applySyncFilter(searchResults?.albumArtists ?? [])
+    : applySyncFilter(albumArtists);
   const displayAlbums = isSearchActive
     ? applySyncFilter(searchResults?.albums ?? [])
     : applySyncFilter(albums);
@@ -201,30 +208,39 @@ export function LibraryContent({
     : applySyncFilter(playlists);
 
   const tabLabel =
-    activeLibrary === 'artists' ? 'artists' : activeLibrary === 'albums' ? 'albums' : 'playlists';
+    activeLibrary === 'artists'
+      ? 'artists'
+      : activeLibrary === 'albumArtists'
+        ? 'album artists'
+        : activeLibrary === 'albums'
+          ? 'albums'
+          : 'playlists';
   const currentItems =
     activeLibrary === 'artists'
       ? displayArtists
-      : activeLibrary === 'albums'
-        ? displayAlbums
-        : displayPlaylists;
+      : activeLibrary === 'albumArtists'
+        ? displayAlbumArtists
+        : activeLibrary === 'albums'
+          ? displayAlbums
+          : displayPlaylists;
   const hasResults = currentItems.length > 0;
   const currentPagination = pagination[activeLibrary];
 
   // Determine item count for confirmation dialog
   // Uses pagination.total as primary source, falls back to stats
   const getItemCount = (): number => {
+    // Primary: use pagination total
+    if (pagination[activeLibrary].total > 0) {
+      return pagination[activeLibrary].total;
+    }
+
+    // Fallback for artists/albums/playlists: use stats
     const tabCountKey =
       activeLibrary === 'artists'
         ? 'ArtistCount'
         : activeLibrary === 'albums'
           ? 'AlbumCount'
           : 'PlaylistCount';
-
-    // Primary: use pagination total
-    if (pagination[activeLibrary].total > 0) {
-      return pagination[activeLibrary].total;
-    }
 
     // Fallback: use stats (handles race condition where stats resolves before tab loads)
     if (stats && tabCountKey in stats) {
@@ -420,6 +436,20 @@ export function LibraryContent({
                     isSelected={selectedTracks.has(artist.Id)}
                     wasSynced={previouslySyncedItems.has(artist.Id)}
                     outOfSync={outOfSyncItems.has(artist.Id)}
+                    onToggle={handleToggle}
+                    serverUrl={serverUrl}
+                  />
+                ))}
+
+              {activeLibrary === 'albumArtists' &&
+                displayAlbumArtists.map((albumArtist, idx) => (
+                  <LibraryItem
+                    key={albumArtist.Id || `albumArtist-${idx}`}
+                    item={albumArtist}
+                    type="albumArtist"
+                    isSelected={selectedTracks.has(albumArtist.Id)}
+                    wasSynced={previouslySyncedItems.has(albumArtist.Id)}
+                    outOfSync={outOfSyncItems.has(albumArtist.Id)}
                     onToggle={handleToggle}
                     serverUrl={serverUrl}
                   />

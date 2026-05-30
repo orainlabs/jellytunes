@@ -29,6 +29,18 @@ export interface Artist {
   ImageTags?: { Primary?: string };
 }
 
+/** Album Artist — distinct from performing Artist (track-level).
+ *  Jellyfin endpoint: GET /Artists/AlbumArtists
+ *  Use this to browse discographies when tracks have varying performing artists. */
+export interface AlbumArtist {
+  Id: string;
+  Name: string;
+  AlbumCount?: number;
+  ChildCount?: number;
+  RunTimeTicks?: number;
+  ImageTags?: { Primary?: string };
+}
+
 export interface Album {
   Id: string;
   Name: string;
@@ -80,6 +92,7 @@ export interface PaginationEntry<T> {
 
 export interface PaginationState {
   artists: PaginationEntry<Artist>;
+  albumArtists: PaginationEntry<AlbumArtist>;
   albums: PaginationEntry<Album>;
   playlists: PaginationEntry<Playlist>;
   genres: PaginationEntry<Genre>;
@@ -97,7 +110,7 @@ export interface Track {
 }
 
 export type ActiveSection = 'library' | 'device';
-export type LibraryTab = 'artists' | 'albums' | 'playlists' | 'genres';
+export type LibraryTab = 'artists' | 'albumArtists' | 'albums' | 'playlists' | 'genres';
 // Re-export LyricsMode and LyricsModes from sync module to avoid duplication
 export type { LyricsMode } from '../../sync/types';
 export { LyricsModes } from '../../sync/types';
@@ -154,6 +167,7 @@ export interface PreviewData {
 
 export interface ItemTypeIndex {
   artists: Set<string>;
+  albumArtists: Set<string>;
   albums: Set<string>;
   playlists: Set<string>;
 }

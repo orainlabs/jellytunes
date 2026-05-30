@@ -16,6 +16,7 @@ import type {
   LibraryStats,
   PaginationState,
   Artist,
+  AlbumArtist,
   Album,
   Playlist,
   Genre,
@@ -31,6 +32,7 @@ interface SidebarProps {
   stats: LibraryStats | null;
   pagination: PaginationState;
   artists: Artist[];
+  albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
   genres: Genre[];
@@ -55,6 +57,7 @@ export function Sidebar({
   stats,
   pagination,
   artists,
+  albumArtists,
   albums,
   playlists,
   genres,
@@ -123,6 +126,19 @@ export function Sidebar({
                 : pagination.artists.total > 0
                   ? pagination.artists.total
                   : artists.length}
+            </span>
+          </button>
+          <button
+            data-testid="tab-albumArtists"
+            onClick={() => onLibraryTab('albumArtists')}
+            className={tabClass(activeSection === 'library' && activeLibrary === 'albumArtists')}
+          >
+            <Disc className="w-4 h-4 flex-shrink-0" />
+            Album Artists
+            <span className="ml-auto text-label-sm opacity-60">
+              {pagination.albumArtists.total > 0
+                ? pagination.albumArtists.total
+                : albumArtists.length}
             </span>
           </button>
           <button

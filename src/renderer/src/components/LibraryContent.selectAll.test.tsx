@@ -17,11 +17,13 @@ const defaultProps = {
   albums: [],
   playlists: [],
   genres: [],
+  albumArtists: [],
   pagination: {
     artists: { items: [], total: 50, startIndex: 50, hasMore: false, scrollPos: 0 },
     albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
     playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
     genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+    albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   } as PaginationState,
   selectedTracks: new Set<string>(),
   previouslySyncedItems: new Set<string>(),
@@ -86,6 +88,7 @@ describe('LibraryContent - Select All confirmation for large selections', () => 
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
       />,
@@ -117,6 +120,7 @@ describe('LibraryContent - Select All confirmation for large selections', () => 
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
       />,
@@ -147,6 +151,7 @@ describe('LibraryContent - Select All confirmation for large selections', () => 
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
       />,
@@ -177,6 +182,7 @@ describe('LibraryContent - Select All confirmation for large selections', () => 
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
       />,
@@ -207,6 +213,7 @@ describe('LibraryContent - Select All confirmation for large selections', () => 
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
       />,
@@ -242,6 +249,7 @@ describe('LibraryContent - Select All confirmation for large selections', () => 
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
       />,
@@ -274,9 +282,10 @@ describe('LibraryContent - Select All confirmation for large selections', () => 
         }))}
         pagination={{
           artists: { items: [], total: 50, startIndex: 50, hasMore: false, scrollPos: 0 },
-          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 }, // total = 0
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         searchQuery=""
         searchResults={null}
@@ -311,9 +320,10 @@ describe('LibraryContent - Select All with stats fallback', () => {
         }))}
         pagination={{
           artists: { items: [], total: 50, startIndex: 50, hasMore: false, scrollPos: 0 },
-          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 }, // 0 - needs stats fallback
+          albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         // Pass stats with AlbumCount = 600 to trigger confirmation dialog
         stats={{
@@ -360,6 +370,7 @@ describe('LibraryContent - Select All with pagination loading', () => {
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
         onLoadMore={onLoadMore}
@@ -392,6 +403,7 @@ describe('LibraryContent - Select All with pagination loading', () => {
           albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
           genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+          albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
         }}
         onSelectAll={onSelectAll}
         isLoadingMore={false}

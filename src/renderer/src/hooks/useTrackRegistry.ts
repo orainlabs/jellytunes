@@ -44,7 +44,7 @@ interface TrackRegistryState {
   // RunTimeTicks per item (from library fetch — no extra HTTP calls)
   itemTicks: Map<string, number>;
   // Item types by id (for batch fetch)
-  itemTypes: Map<string, 'artist' | 'album' | 'playlist'>;
+  itemTypes: Map<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
   // Whether background fetch is in-flight for a given device+selection key
   isBackgroundFetching: Map<string, boolean>;
   // AbortController for cancelling in-flight background fetches
@@ -165,7 +165,11 @@ export function createTrackRegistry() {
    * Also store item type for batch fetch lookup.
    */
   const setItemTicks = (
-    items: Array<{ id: string; ticks: number; type: 'artist' | 'album' | 'playlist' }>,
+    items: Array<{
+      id: string;
+      ticks: number;
+      type: 'artist' | 'albumArtist' | 'album' | 'playlist';
+    }>,
   ) => {
     for (const item of items) {
       state.itemTicks.set(item.id, item.ticks);
@@ -176,7 +180,9 @@ export function createTrackRegistry() {
   /**
    * Store item types for batch fetch lookup.
    */
-  const setItemTypes = (items: Array<{ id: string; type: 'artist' | 'album' | 'playlist' }>) => {
+  const setItemTypes = (
+    items: Array<{ id: string; type: 'artist' | 'albumArtist' | 'album' | 'playlist' }>,
+  ) => {
     for (const item of items) {
       state.itemTypes.set(item.id, item.type);
     }
@@ -308,13 +314,8 @@ export function createTrackRegistry() {
       return true;
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return false;
-<<<<<<< HEAD
       logger.warn(`fetchTracksForItems failed: ${err}`);
       // On failure, leave tick estimate; button will be enabled
-=======
-      console.warn('fetchTracksForItems failed:', err);
-      // On failure, button will be enabled
->>>>>>> 873eb3b (refactor: remove dead functions from useTrackRegistry [ORAIN-0479])
       return false;
     } finally {
       if (!controller.signal.aborted) {
@@ -510,7 +511,9 @@ export function createTrackRegistry() {
    * Get the registered type for an item (from setItemTicks/setItemTypes), if known.
    * Used to decide whether a newly-selected item can be batch-fetched.
    */
-  const getItemType = (itemId: string): 'artist' | 'album' | 'playlist' | undefined => {
+  const getItemType = (
+    itemId: string,
+  ): 'artist' | 'albumArtist' | 'album' | 'playlist' | undefined => {
     return state.itemTypes.get(itemId);
   };
 

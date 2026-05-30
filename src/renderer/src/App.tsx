@@ -1,5 +1,13 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import type { ActiveSection, LibraryTab, Artist, Album, Playlist, Bitrate } from './appTypes';
+import type {
+  ActiveSection,
+  LibraryTab,
+  Artist,
+  AlbumArtist,
+  Album,
+  Playlist,
+  Bitrate,
+} from './appTypes';
 import { assertExhaustive } from './utils/assertExhaustive';
 
 import { AppHeader } from './components/AppHeader';
@@ -78,14 +86,20 @@ function AppConnected({
   // Persistent cache of full item objects found via search
   const searchItemCacheRef = useRef<{
     artists: Map<string, Artist>;
+    albumArtists: Map<string, AlbumArtist>;
     albums: Map<string, Album>;
     playlists: Map<string, Playlist>;
-  }>({ artists: new Map(), albums: new Map(), playlists: new Map() });
+  }>({ artists: new Map(), albumArtists: new Map(), albums: new Map(), playlists: new Map() });
 
   // Clear cache on disconnect so stale data doesn't carry over to next server
   useEffect(() => {
     if (!connection.isConnected) {
-      searchItemCacheRef.current = { artists: new Map(), albums: new Map(), playlists: new Map() };
+      searchItemCacheRef.current = {
+        artists: new Map(),
+        albumArtists: new Map(),
+        albums: new Map(),
+        playlists: new Map(),
+      };
     }
   }, [connection.isConnected]);
 
@@ -93,6 +107,7 @@ function AppConnected({
   useEffect(() => {
     if (!searchResults) return;
     searchResults.artists.forEach((a) => searchItemCacheRef.current.artists.set(a.Id, a));
+    searchResults.albumArtists.forEach((a) => searchItemCacheRef.current.albumArtists.set(a.Id, a));
     searchResults.albums.forEach((a) => searchItemCacheRef.current.albums.set(a.Id, a));
     searchResults.playlists.forEach((p) => searchItemCacheRef.current.playlists.set(p.Id, p));
   }, [searchResults]);
@@ -106,6 +121,9 @@ function AppConnected({
     return [...map.values()];
   }
   const extArtists = mergeWithCache(lib.artists, [...searchItemCacheRef.current.artists.values()]);
+  const extAlbumArtists = mergeWithCache(lib.albumArtists, [
+    ...searchItemCacheRef.current.albumArtists.values(),
+  ]);
   const extAlbums = mergeWithCache(lib.albums, [...searchItemCacheRef.current.albums.values()]);
   const extPlaylists = mergeWithCache(lib.playlists, [
     ...searchItemCacheRef.current.playlists.values(),
@@ -119,6 +137,7 @@ function AppConnected({
     syncedItemsInfo: deviceSelections.syncedItemsInfo,
     outOfSyncItems: deviceSelections.outOfSyncItems,
     artists: extArtists,
+    albumArtists: extAlbumArtists,
     albums: extAlbums,
     playlists: extPlaylists,
     isTickEstimate: deviceSelections.isTickEstimate,
@@ -211,12 +230,16 @@ function AppConnected({
     // registry always has correct types for items selected after device activation.
     const selected = deviceSelections.selectedTracks;
     const itemIds: string[] = [];
-    const itemTypes: Record<string, 'artist' | 'album' | 'playlist'> = {
+    const itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {
       ...Object.fromEntries(extArtists.map((a) => [a.Id, 'artist' as const])),
+      ...Object.fromEntries(extAlbumArtists.map((a) => [a.Id, 'albumArtist' as const])),
       ...Object.fromEntries(extAlbums.map((a) => [a.Id, 'album' as const])),
       ...Object.fromEntries(extPlaylists.map((p) => [p.Id, 'playlist' as const])),
     };
     for (const a of extArtists) {
+      if (selected.has(a.Id)) itemIds.push(a.Id);
+    }
+    for (const a of extAlbumArtists) {
       if (selected.has(a.Id)) itemIds.push(a.Id);
     }
     for (const a of extAlbums) {
@@ -331,6 +354,9 @@ function AppConnected({
   const selectedArtistsCount = extArtists.filter((a) =>
     deviceSelections.selectedTracks.has(a.Id),
   ).length;
+  const selectedAlbumArtistsCount = extAlbumArtists.filter((a) =>
+    deviceSelections.selectedTracks.has(a.Id),
+  ).length;
   const selectedAlbumsCount = extAlbums.filter((a) =>
     deviceSelections.selectedTracks.has(a.Id),
   ).length;
@@ -344,6 +370,8 @@ function AppConnected({
     switch (lib.activeLibrary) {
       case 'artists':
         return selectedArtistsCount;
+      case 'albumArtists':
+        return selectedAlbumArtistsCount;
       case 'albums':
         return selectedAlbumsCount;
       case 'playlists':
@@ -357,6 +385,8 @@ function AppConnected({
     switch (lib.activeLibrary) {
       case 'artists':
         return selectedCount !== 1 ? 'artists' : 'artist';
+      case 'albumArtists':
+        return selectedCount !== 1 ? 'album artists' : 'album artist';
       case 'albums':
         return selectedCount !== 1 ? 'albums' : 'album';
       case 'playlists':
@@ -396,6 +426,8 @@ function AppConnected({
             switch (lib.activeLibrary) {
               case 'artists':
                 return 'artist' as const;
+              case 'albumArtists':
+                return 'albumArtist' as const;
               case 'albums':
               case 'genres':
                 return 'album' as const;
@@ -443,6 +475,7 @@ function AppConnected({
           stats={lib.stats}
           pagination={lib.pagination}
           artists={lib.artists}
+          albumArtists={lib.albumArtists}
           albums={lib.albums}
           playlists={lib.playlists}
           genres={lib.genres}
@@ -480,6 +513,7 @@ function AppConnected({
             <LibraryContent
               activeLibrary={lib.activeLibrary}
               artists={lib.artists}
+              albumArtists={lib.albumArtists}
               albums={lib.albums}
               playlists={lib.playlists}
               pagination={lib.pagination}
@@ -523,6 +557,7 @@ function AppConnected({
                 syncedItemsInfo={deviceSelections.syncedItemsInfo}
                 outOfSyncItems={deviceSelections.outOfSyncItems}
                 artists={extArtists}
+                albumArtists={extAlbumArtists}
                 albums={extAlbums}
                 playlists={extPlaylists}
                 showPreview={sync.showPreview}

@@ -36,6 +36,7 @@ const createPagination = (): PaginationState => ({
   albums: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   playlists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
   genres: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
+  albumArtists: { items: [], total: 0, startIndex: 0, hasMore: false, scrollPos: 0 },
 });
 
 const sampleArtists: Artist[] = [
@@ -49,6 +50,7 @@ const defaultProps = {
   albums: [] as Album[],
   playlists: [] as Playlist[],
   genres: [] as Genre[],
+  albumArtists: [] as Artist[],
   pagination: createPagination(),
   selectedTracks: new Set<string>(),
   previouslySyncedItems: new Set<string>(),
@@ -88,6 +90,7 @@ describe('LibraryContent', () => {
       artists: [{ Id: 'search-1', Name: 'Search Result Artist', ChildCount: 5 }] as Artist[],
       albums: [] as Album[],
       playlists: [] as Playlist[],
+      albumArtists: [] as Artist[],
     };
     render(<LibraryContent {...defaultProps} searchQuery="te" searchResults={searchResults} />);
     const content = screen.getByTestId('library-content');

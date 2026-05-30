@@ -1,13 +1,13 @@
 import type React from 'react';
 import { useState } from 'react';
 import { User, Disc, ListMusic } from 'lucide-react';
-import type { Artist, Album, Playlist } from '../appTypes';
+import type { Artist, AlbumArtist, Album, Playlist } from '../appTypes';
 import { formatRunTimeTicks } from '../utils/jellyfin';
 import { useIntersectionObserver } from '../hooks/useIntersectionObserver';
 
 interface LibraryItemProps {
-  item: Artist | Album | Playlist;
-  type: 'artist' | 'album' | 'playlist';
+  item: Artist | AlbumArtist | Album | Playlist;
+  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
   isSelected: boolean;
   wasSynced: boolean;
   outOfSync: boolean;
@@ -20,8 +20,8 @@ function ItemThumbnail({
   type,
   serverUrl,
 }: {
-  item: Artist | Album | Playlist;
-  type: 'artist' | 'album' | 'playlist';
+  item: Artist | AlbumArtist | Album | Playlist;
+  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
   serverUrl?: string;
 }) {
   const [imgError, setImgError] = useState(false);
@@ -37,8 +37,10 @@ function ItemThumbnail({
   // Decide whether to display the img element (once loaded, stay visible permanently)
   const hasLoaded = imgLoaded;
 
-  const Icon = type === 'artist' ? User : type === 'album' ? Disc : ListMusic;
-  const rounded = type === 'artist' ? 'rounded-full' : 'rounded';
+  // albumArtist uses the same icon as artist (User)
+  const Icon =
+    type === 'artist' || type === 'albumArtist' ? User : type === 'album' ? Disc : ListMusic;
+  const rounded = type === 'artist' || type === 'albumArtist' ? 'rounded-full' : 'rounded';
 
   // Show image once loaded, otherwise show placeholder
   if (hasLoaded) {
@@ -101,6 +103,7 @@ export function LibraryItem({
   const pendingSync = isSelected && !wasSynced;
 
   const artist = item as Artist;
+  const albumArtist = item as AlbumArtist;
   const album = item as Album;
   const playlist = item as Playlist;
 
@@ -108,6 +111,16 @@ export function LibraryItem({
     if (type === 'artist') {
       // AC: Never show album count — /Artists endpoint doesn't return ChildCount reliably
       const runtime = formatRunTimeTicks(artist.RunTimeTicks);
+      return runtime ?? null;
+    }
+
+    if (type === 'albumArtist') {
+      // Album Artists can show AlbumCount reliably via /Artists/AlbumArtists endpoint
+      const runtime = formatRunTimeTicks(albumArtist.RunTimeTicks);
+      if (albumArtist.AlbumCount && albumArtist.AlbumCount > 0 && runtime)
+        return `${albumArtist.AlbumCount} album${albumArtist.AlbumCount !== 1 ? 's' : ''} · ${runtime}`;
+      if (albumArtist.AlbumCount && albumArtist.AlbumCount > 0)
+        return `${albumArtist.AlbumCount} album${albumArtist.AlbumCount !== 1 ? 's' : ''}`;
       return runtime ?? null;
     }
 

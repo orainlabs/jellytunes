@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type {
   JellyfinConfig,
   Artist,
+  AlbumArtist,
   Album,
   Playlist,
   Bitrate,
@@ -23,6 +24,7 @@ interface UseSyncOptions {
   syncedItemsInfo: SyncedItemInfo[];
   outOfSyncItems: Set<string>;
   artists: Artist[];
+  albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
   /** True when size was estimated from ticks (fetch was skipped); track counts are unreliable */
@@ -45,6 +47,7 @@ export function useSync({
   syncedItemsInfo,
   outOfSyncItems,
   artists,
+  albumArtists,
   albums,
   playlists,
   isTickEstimate,
@@ -82,12 +85,16 @@ export function useSync({
 
   const buildItemTypesMap = () => {
     const artistIds = artists.filter((a) => selectedTracks.has(a.Id)).map((a) => a.Id);
+    const albumArtistIds = albumArtists.filter((a) => selectedTracks.has(a.Id)).map((a) => a.Id);
     const albumIds = albums.filter((a) => selectedTracks.has(a.Id)).map((a) => a.Id);
     const playlistIds = playlists.filter((p) => selectedTracks.has(p.Id)).map((p) => p.Id);
-    const map: Record<string, 'artist' | 'album' | 'playlist'> = {};
+    const map: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {};
     const names: Record<string, string> = {};
     artistIds.forEach((id) => {
       if (id) map[id] = 'artist';
+    });
+    albumArtistIds.forEach((id) => {
+      if (id) map[id] = 'albumArtist';
     });
     albumIds.forEach((id) => {
       if (id) map[id] = 'album';
@@ -96,6 +103,11 @@ export function useSync({
       if (id) map[id] = 'playlist';
     });
     artists
+      .filter((a) => selectedTracks.has(a.Id))
+      .forEach((a) => {
+        names[a.Id] = a.Name;
+      });
+    albumArtists
       .filter((a) => selectedTracks.has(a.Id))
       .forEach((a) => {
         names[a.Id] = a.Name;
@@ -110,7 +122,7 @@ export function useSync({
       .forEach((p) => {
         names[p.Id] = p.Name;
       });
-    return { artistIds, albumIds, playlistIds, map, names };
+    return { artistIds, albumArtistIds, albumIds, playlistIds, map, names };
   };
 
   // Items that are synced but user has deselected → will be removed from device
@@ -121,11 +133,12 @@ export function useSync({
   // Build a type map for items to delete, using in-memory arrays first then DB info as fallback
   const buildDeleteTypesMap = (
     toDeleteIds: string[],
-  ): Record<string, 'artist' | 'album' | 'playlist'> => {
+  ): Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> => {
     const syncedInfoMap = new Map(syncedItemsInfo.map((i) => [i.id, i]));
-    const map: Record<string, 'artist' | 'album' | 'playlist'> = {};
+    const map: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {};
     toDeleteIds.forEach((id) => {
       if (artists.find((a) => a.Id === id)) map[id] = 'artist';
+      else if (albumArtists.find((a) => a.Id === id)) map[id] = 'albumArtist';
       else if (albums.find((a) => a.Id === id)) map[id] = 'album';
       else if (playlists.find((p) => p.Id === id)) map[id] = 'playlist';
       else if (syncedInfoMap.has(id)) map[id] = syncedInfoMap.get(id)!.type;
@@ -165,8 +178,10 @@ export function useSync({
     });
 
     try {
-      const { artistIds, albumIds, playlistIds, map, names } = buildItemTypesMap();
-      const selectedIds = [...artistIds, ...albumIds, ...playlistIds].filter(Boolean);
+      const { artistIds, albumArtistIds, albumIds, playlistIds, map, names } = buildItemTypesMap();
+      const selectedIds = [...artistIds, ...albumArtistIds, ...albumIds, ...playlistIds].filter(
+        Boolean,
+      );
       const toDeleteIds = buildToDeleteIds();
 
       if (toDeleteIds.length > 0) {

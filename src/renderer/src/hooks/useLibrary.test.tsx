@@ -97,8 +97,8 @@ describe('useLibrary', () => {
         await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
       });
 
-      // artists, albums, playlists — all 3 tabs are loaded
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      // artists, albumArtists, albums, playlists — all 4 tabs are loaded
+      expect(mockFetch).toHaveBeenCalledTimes(4);
     });
   });
 

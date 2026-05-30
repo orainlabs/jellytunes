@@ -5,6 +5,7 @@ import type {
   Album,
   Playlist,
   Genre,
+  AlbumArtist,
   PaginationState,
   LibraryStats,
   LibraryTab,
@@ -18,11 +19,13 @@ import {
   normalizeAlbum,
   normalizePlaylist,
   normalizeGenre,
+  normalizeAlbumArtist,
 } from '../utils/jellyfin';
 import { logger } from '../utils/logger';
 
 export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string | null) {
   const [artists, setArtists] = useState<Artist[]>([]);
+  const [albumArtists, setAlbumArtists] = useState<AlbumArtist[]>([]);
   const [albums, setAlbums] = useState<Album[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [genres, setGenres] = useState<Genre[]>([]);
@@ -35,6 +38,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
 
   const [pagination, setPagination] = useState<PaginationState>({
     artists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
+    albumArtists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
     albums: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
     playlists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
     genres: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
@@ -42,12 +46,14 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
 
   const itemTypeIndexRef = useRef<ItemTypeIndex>({
     artists: new Set(),
+    albumArtists: new Set(),
     albums: new Set(),
     playlists: new Set(),
   });
 
   const [itemTypeIndex, setItemTypeIndex] = useState<ItemTypeIndex>({
     artists: new Set(),
+    albumArtists: new Set(),
     albums: new Set(),
     playlists: new Set(),
   });
@@ -90,6 +96,18 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     });
   };
 
+  const updateAlbumArtistIndex = (items: AlbumArtist[]) => {
+    itemTypeIndexRef.current.albumArtists = new Set([
+      ...itemTypeIndexRef.current.albumArtists,
+      ...items.map((a) => a.Id),
+    ]);
+    setItemTypeIndex((prev) => {
+      const s = new Set(prev.albumArtists);
+      items.forEach((a) => s.add(a.Id));
+      return { ...prev, albumArtists: s };
+    });
+  };
+
   const updateAlbumIndex = (items: Album[]) => {
     itemTypeIndexRef.current.albums = new Set([
       ...itemTypeIndexRef.current.albums,
@@ -120,12 +138,19 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
 
     setPagination({
       artists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
+      albumArtists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
       albums: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
       playlists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
       genres: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
     });
     setGenres([]);
-    itemTypeIndexRef.current = { artists: new Set(), albums: new Set(), playlists: new Set() };
+    itemTypeIndexRef.current = {
+      artists: new Set(),
+      albumArtists: new Set(),
+      albums: new Set(),
+      playlists: new Set(),
+      genres: new Set(),
+    };
 
     try {
       const res = await fetch(
@@ -156,6 +181,37 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       logger.error('Failed to load artists: ' + (e instanceof Error ? e.message : String(e)));
       setError('Error loading artists');
       setArtists([]);
+    }
+
+    // Fetch Album Artists (distinct from track-level Artists)
+    try {
+      const res = await fetch(
+        buildUrl(
+          baseUrl,
+          `/Artists/AlbumArtists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=AlbumCount,RunTimeTicks,ChildCount`,
+        ),
+        { headers },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const items: AlbumArtist[] = (data.Items ?? []).map(normalizeAlbumArtist);
+      setAlbumArtists(items);
+      itemTypeIndexRef.current.albumArtists = new Set(items.map((a) => a.Id));
+      updateAlbumArtistIndex(items);
+      const totalCount = data.TotalRecordCount ?? items.length;
+      setPagination((prev) => ({
+        ...prev,
+        albumArtists: {
+          items,
+          total: totalCount,
+          startIndex: items.length,
+          hasMore: items.length < totalCount,
+          scrollPos: 0,
+        },
+      }));
+    } catch (e) {
+      logger.error('Failed to load album artists: ' + (e instanceof Error ? e.message : String(e)));
+      setAlbumArtists([]);
     }
 
     try {
@@ -222,7 +278,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     // overwriting valid data with empty initial pagination state
     // Use Promise.resolve() to defer to next microtask so sync effect runs first
     void Promise.resolve().then(() => {
-      setLoadedTabs(new Set(['artists', 'albums', 'playlists']));
+      setLoadedTabs(new Set(['artists', 'albumArtists', 'albums', 'playlists']));
     });
   };
 
@@ -260,6 +316,30 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         setPagination((prev) => ({
           ...prev,
           artists: {
+            items,
+            total: totalCount,
+            startIndex: items.length,
+            hasMore: items.length < totalCount,
+            scrollPos: 0,
+          },
+        }));
+      } else if (tab === 'albumArtists') {
+        const res = await fetch(
+          buildUrl(
+            baseUrl,
+            `/Artists/AlbumArtists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=AlbumCount,RunTimeTicks,ChildCount`,
+          ),
+          { headers },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const items: AlbumArtist[] = (data.Items ?? []).map(normalizeAlbumArtist);
+        setAlbumArtists(items);
+        updateAlbumArtistIndex(items);
+        const totalCount = data.TotalRecordCount ?? items.length;
+        setPagination((prev) => ({
+          ...prev,
+          albumArtists: {
             items,
             total: totalCount,
             startIndex: items.length,
@@ -360,6 +440,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         let endpoint = '';
         if (type === 'artists')
           endpoint = `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
+        else if (type === 'albumArtists')
+          endpoint = `/Artists/AlbumArtists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else if (type === 'genres')
@@ -374,11 +456,13 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         const normalized =
           type === 'artists'
             ? rawItems.map(normalizeArtist)
-            : type === 'albums'
-              ? rawItems.map(normalizeAlbum)
-              : type === 'genres'
-                ? rawItems.map(normalizeGenre)
-                : rawItems.map(normalizePlaylist);
+            : type === 'albumArtists'
+              ? rawItems.map(normalizeAlbumArtist)
+              : type === 'albums'
+                ? rawItems.map(normalizeAlbum)
+                : type === 'genres'
+                  ? rawItems.map(normalizeGenre)
+                  : rawItems.map(normalizePlaylist);
         const existingIds = new Set(
           currentPagination.items.map((item) => ('Id' in item ? item.Id : (item as Genre).Name)),
         );
@@ -388,6 +472,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         });
 
         if (type === 'artists') updateArtistIndex(uniqueNewItems as Artist[]);
+        else if (type === 'albumArtists') updateAlbumArtistIndex(uniqueNewItems as AlbumArtist[]);
         else if (type === 'albums') updateAlbumIndex(uniqueNewItems as Album[]);
         else if (type === 'genres') {
           // Genres use Name as key, not Id — no index update needed
@@ -489,18 +574,23 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
   // Sync pagination items to state arrays
   useEffect(() => {
     if (loadedTabs.has('artists')) setArtists(pagination.artists.items);
+    if (loadedTabs.has('albumArtists')) setAlbumArtists(pagination.albumArtists.items);
     if (loadedTabs.has('albums')) setAlbums(pagination.albums.items);
     if (loadedTabs.has('playlists')) setPlaylists(pagination.playlists.items);
     if (loadedTabs.has('genres') && pagination.genres) setGenres(pagination.genres.items);
   }, [
     loadedTabs,
     pagination.artists.items,
+    pagination.albumArtists.items,
     pagination.albums.items,
     pagination.playlists.items,
     pagination.genres?.items,
   ]);
 
   const uniqueArtists = artists.filter(
+    (item, i, self) => i === self.findIndex((t) => t.Id === item.Id),
+  );
+  const uniqueAlbumArtists = albumArtists.filter(
     (item, i, self) => i === self.findIndex((t) => t.Id === item.Id),
   );
   const uniqueAlbums = albums.filter(
@@ -514,11 +604,13 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     if (!jellyfinConfig || !userId) return;
     setLoadedTabs(new Set());
     setArtists([]);
+    setAlbumArtists([]);
     setAlbums([]);
     setPlaylists([]);
     setGenres([]);
     setPagination({
       artists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
+      albumArtists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
       albums: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
       playlists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
       genres: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
@@ -571,6 +663,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         let endpoint = '';
         if (type === 'artists')
           endpoint = `/Artists?SortBy=Name&Limit=${pageLimit}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
+        else if (type === 'albumArtists')
+          endpoint = `/Artists/AlbumArtists?SortBy=Name&Limit=${pageLimit}&StartIndex=${startIndex}&Fields=AlbumCount,RunTimeTicks,ChildCount`;
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${pageLimit}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else if (type === 'genres')
@@ -590,10 +684,12 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
           const normalized =
             type === 'artists'
               ? rawItems.map(normalizeArtist)
-              : type === 'albums'
-                ? rawItems.map(normalizeAlbum)
-                : type === 'genres'
-                  ? rawItems.map(normalizeGenre)
+              : type === 'albumArtists'
+                ? rawItems.map(normalizeAlbumArtist)
+                : type === 'albums'
+                  ? rawItems.map(normalizeAlbum)
+                  : type === 'genres'
+                    ? rawItems.map(normalizeGenre)
                   : rawItems.map(normalizePlaylist);
           // Guard: if the server returns no items, stop — advancing startIndex by 0
           // would cause an infinite loop when totalCount > actual available items.
@@ -677,6 +773,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
 
   return {
     artists: uniqueArtists,
+    albumArtists: uniqueAlbumArtists,
     albums: uniqueAlbums,
     playlists: uniquePlaylists,
     genres,

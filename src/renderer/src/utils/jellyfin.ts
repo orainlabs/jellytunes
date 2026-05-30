@@ -1,4 +1,4 @@
-import type { Artist, Album, Playlist, Genre } from '../appTypes';
+import type { Artist, Album, Playlist, Genre, AlbumArtist } from '../appTypes';
 
 export const PAGE_SIZE = 50;
 
@@ -108,5 +108,22 @@ export function normalizeGenre(raw: Record<string, unknown>): Genre {
   return {
     Name: String(raw.Name ?? ''),
     LibraryItems: (raw.LibraryItems as number) ?? 0,
+  };
+}
+
+/**
+ * Normalize a raw Jellyfin album artist item from /Artists/AlbumArtists endpoint.
+ * Album Artists are distinct from Artists (performing artists at track level).
+ * Jellyfin endpoint: GET /Artists/AlbumArtists
+ * Note: Jellyfin requires `Fields=AlbumCount` in the API request to return AlbumCount.
+ */
+export function normalizeAlbumArtist(raw: Record<string, unknown>): AlbumArtist {
+  return {
+    Id: String(raw.Id ?? ''),
+    Name: String(raw.Name ?? ''),
+    AlbumCount: (raw.AlbumCount as number) ?? 0,
+    ChildCount: (raw.ChildCount as number) ?? undefined,
+    RunTimeTicks: (raw.RunTimeTicks as number) ?? undefined,
+    ImageTags: (raw.ImageTags as AlbumArtist['ImageTags']) ?? undefined,
   };
 }

@@ -32,6 +32,7 @@ const defaultProps = {
   artists: mockArtists,
   albums: mockAlbums,
   playlists: mockPlaylists,
+  albumArtists: [] as Artist[],
   isTickEstimate: false,
   setPreviouslySyncedItems: vi.fn(),
   revalidateDevice: vi.fn().mockResolvedValue(undefined),

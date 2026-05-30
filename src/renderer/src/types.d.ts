@@ -63,7 +63,7 @@ interface Api {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
     itemNames?: Record<string, string>;
     destinationPath: string;
     options?: {
@@ -167,13 +167,15 @@ interface Api {
   >;
   getSyncedItems: (
     mountPoint: string,
-  ) => Promise<Array<{ id: string; name: string; type: 'artist' | 'album' | 'playlist' }>>;
+  ) => Promise<
+    Array<{ id: string; name: string; type: 'artist' | 'albumArtist' | 'album' | 'playlist' }>
+  >;
   analyzeDiff: (options: {
     serverUrl: string;
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
     destinationPath: string;
     options: {
       convertToMp3: boolean;
@@ -209,7 +211,7 @@ interface Api {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
     destinationPath: string;
   }) => Promise<{ removed: number; errors: string[] }>;
   clearDestination: (options: {
