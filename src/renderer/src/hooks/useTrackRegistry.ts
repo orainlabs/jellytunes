@@ -56,11 +56,13 @@ const FALLBACK_LOSSLESS_BPS = 900000; // ~900kbps for lossless
 const FALLBACK_COMPRESSED_BPS = 192000; // ~192kbps for compressed audio
 
 /**
- * Estimation constant: bytes per tick for lossless (≈500 kbps).
+ * Estimation constant: bytes per tick for lossless (≈280 kbps).
+ * More optimistic than true lossless to avoid overestimation when
+ * the library contains non-lossless content (MP3, AAC, OGG, etc.).
  * 1 tick = 100 nanoseconds = 10_000_000 ticks per second.
- * 500 kbps = 62_500 bytes/s → 62_500 / 10_000_000 = 0.00625 bytes/tick.
+ * 280 kbps = 35_000 bytes/s → 35_000 / 10_000_000 = 0.0035 bytes/tick.
  */
-export const BYTES_PER_TICK_LOSSLESS = 0.00625;
+export const BYTES_PER_TICK_LOSSLESS = 0.0035;
 
 /**
  * Estimation constants: bytes per tick for MP3 conversion.
