@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { ActiveSection, LibraryTab, Artist, Album, Playlist, Bitrate } from './appTypes';
+import { assertExhaustive } from './utils/assertExhaustive';
 
 import { AppHeader } from './components/AppHeader';
 import { SyncSuccessModal } from './components/SyncSuccessModal';
@@ -395,6 +396,10 @@ function AppConnected({
                 return 'album' as const;
               case 'playlists':
                 return 'playlist' as const;
+              default:
+                // Compile-time safety: if a new library tab is added without updating this switch,
+                // TypeScript will error here because `lib.activeLibrary` is no longer `never`.
+                return assertExhaustive(lib.activeLibrary);
             }
           })();
           deviceSelections.selectAllItems(allIds, itemType);
