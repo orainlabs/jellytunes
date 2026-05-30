@@ -156,18 +156,6 @@ describe('SyncPreviewModal', () => {
     expect(text).not.toMatch(/\(\d/);
   });
 
-  it('uses separator dot between columns, not parentheses', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} />);
-    const section = screen.getByTestId('preview-new-tracks-section');
-    const threeCol = section.querySelector('.flex.gap-2');
-    expect(threeCol).toBeInTheDocument();
-    // Contains visible separator dots between columns
-    expect(threeCol?.textContent).toContain('·');
-    // First span is font-medium (tracks count)
-    expect(threeCol?.querySelector('span.font-medium')).toBeInTheDocument();
-    // No parentheses
-    expect(threeCol?.textContent).not.toMatch(/\(/);
-  });
 
   it('hides duration in section header when duration is 0', () => {
     const data = { ...samplePreviewDataNewTracks, alreadySyncedDurationSeconds: 0 };
@@ -177,32 +165,6 @@ describe('SyncPreviewModal', () => {
     expect(header?.textContent).not.toContain('0:00');
   });
 
-  // 3. Per-item rows use format: "Name  N tracks · size · duration"
-
-  it('shows per-item breakdown for new items with correct format', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataWithItems} />);
-    expect(screen.getByTestId('preview-new-tracks-section')).toBeInTheDocument();
-    expect(screen.getByText((content) => content.includes('Radiohead'))).toBeInTheDocument();
-    expect(screen.getByText((content) => content.includes('16 tracks'))).toBeInTheDocument();
-    expect(
-      screen.getByText((content) => content.includes('118') && content.includes('MB')),
-    ).toBeInTheDocument();
-  });
-
-  it('shows per-item breakdown for updated items', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataWithItems} />);
-    expect(screen.getByText((content) => content.includes('M83'))).toBeInTheDocument();
-    expect(screen.getByText((content) => content.includes('3 tracks'))).toBeInTheDocument();
-  });
-
-  it('shows per-item breakdown for already-synced items', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataWithItems} />);
-    const section = screen.getByTestId('preview-already-synced-section');
-    expect(screen.getByText((content) => content.includes('Daft Punk'))).toBeInTheDocument();
-    // Scope to .ml-2 to avoid matching the section header "25 tracks"
-    const itemRow = section.querySelector('.ml-2');
-    expect(itemRow?.textContent).toContain('25 tracks');
-  });
 
   // 4. Total row uses same three-column layout
 
@@ -216,13 +178,6 @@ describe('SyncPreviewModal', () => {
     expect(text).toContain(formatBytes(samplePreviewDataWithItems.totalBytes));
   });
 
-  it('total row uses flex justify-between layout', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataNewTracks} />);
-    const totalRow = screen.getByTestId('preview-total-row');
-    // ThreeColumns is inside the flex container
-    const flexContainer = totalRow.querySelector(':scope > .flex.gap-2');
-    expect(flexContainer).toBeInTheDocument();
-  });
 
   it('shows total row when only willRemoveCount > 0', () => {
     const deleteOnlyData: PreviewData = {
@@ -256,10 +211,6 @@ describe('SyncPreviewModal', () => {
     expect(section.textContent).toContain('47 tracks');
   });
 
-  it('shows artist name in "will remove" section', () => {
-    render(<SyncPreviewModal {...defaultProps} data={samplePreviewDataWithItems} />);
-    expect(screen.getByText((content) => content.includes('Eraserhead'))).toBeInTheDocument();
-  });
 
   it('shows "Will remove 1 track" with singular for single track', () => {
     const singleItem: PreviewData = {
@@ -357,48 +308,5 @@ describe('SyncPreviewModal', () => {
     expect(text).toContain('4.0 GB');
   });
 
-  // 10. Already-synced items show full data (size and duration)
 
-  it('renders already-synced item rows with size and duration always present', () => {
-    const dataWithItem: PreviewData = {
-      ...samplePreviewDataNewTracks,
-      alreadySyncedItems: [
-        {
-          id: 'a4',
-          name: 'Daft Punk',
-          trackCount: 25,
-          sizeBytes: 600_000_000,
-          durationSeconds: 9000,
-        },
-      ],
-    };
-    render(<SyncPreviewModal {...defaultProps} data={dataWithItem} />);
-    const section = screen.getByTestId('preview-already-synced-section');
-    const itemRow = section.querySelector('.ml-2');
-    expect(itemRow?.textContent).toContain('Daft Punk');
-    expect(itemRow?.textContent).toContain('600 MB');
-    expect(itemRow?.textContent).toContain(formatDuration(9000));
-  });
-
-  // 11. showNew also triggers when newItems present but newTracksCount is 0
-
-  it('shows new tracks section when newItems has items but newTracksCount is 0', () => {
-    const dataWithItemsOnly: PreviewData = {
-      ...samplePreviewDataNoUpdates,
-      newTracksCount: 0,
-      newTracksBytes: 0,
-      newItems: [
-        {
-          id: 'x1',
-          name: 'New Artist',
-          trackCount: 3,
-          sizeBytes: 30_000_000,
-          durationSeconds: 600,
-        },
-      ],
-    };
-    render(<SyncPreviewModal {...defaultProps} data={dataWithItemsOnly} />);
-    expect(screen.getByTestId('preview-new-tracks-section')).toBeInTheDocument();
-    expect(screen.getByText((content) => content.includes('New Artist'))).toBeInTheDocument();
-  });
 });

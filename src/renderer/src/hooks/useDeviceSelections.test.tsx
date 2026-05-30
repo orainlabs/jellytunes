@@ -21,6 +21,8 @@ const mockRegistry = {
   isBackgroundFetchingDevice: vi.fn().mockReturnValue(false),
   setTickEstimate: vi.fn(),
   isTickEstimateActive: vi.fn().mockReturnValue(false),
+  hasItemTracks: vi.fn().mockReturnValue(false),
+  countRemoveTracks: vi.fn().mockReturnValue(0),
 };
 
 vi.mock('./useTrackRegistry', () => ({
@@ -170,6 +172,7 @@ describe('useDeviceSelections', () => {
     });
 
     it('fetches real track data for a newly selected uncached item (convertToMp3=false)', async () => {
+      vi.useFakeTimers();
       mockApi.getSyncedItems.mockResolvedValue([]);
       mockRegistry.getItemTrackIds.mockReturnValue([]); // uncached
 
@@ -181,8 +184,10 @@ describe('useDeviceSelections', () => {
 
       await act(async () => {
         result.current.toggleItem('album-1');
+        vi.advanceTimersByTime(500);
       });
 
+      vi.useRealTimers();
       expect(mockRegistry.fetchTracksForItems).toHaveBeenCalledWith(
         ['album-1'],
         '/Volumes/USB',
@@ -271,6 +276,7 @@ describe('useDeviceSelections', () => {
     });
 
     it('fetches real track data for newly added uncached items', async () => {
+      vi.useFakeTimers();
       mockApi.getSyncedItems.mockResolvedValue([]);
       mockRegistry.getItemTrackIds.mockReturnValue([]); // uncached
 
@@ -282,8 +288,10 @@ describe('useDeviceSelections', () => {
 
       await act(async () => {
         result.current.selectItems([{ Id: 'artist-1' }, { Id: 'album-1' }]);
+        vi.advanceTimersByTime(500);
       });
 
+      vi.useRealTimers();
       expect(mockRegistry.fetchTracksForItems).toHaveBeenCalledTimes(1);
       const [ids, path] = mockRegistry.fetchTracksForItems.mock.calls[0];
       expect(new Set(ids)).toEqual(new Set(['artist-1', 'album-1']));

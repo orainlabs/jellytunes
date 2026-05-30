@@ -39,7 +39,7 @@ export function SyncPreviewModal({
   onCancel,
   onConfirm,
 }: SyncPreviewModalProps): JSX.Element {
-  const showNew = data.newTracksCount > 0 || Boolean(data.newItems?.length);
+  const showNew = data.newTracksCount > 0;
   const showUpdated = data.updatedTracksCount > 0;
   const showAlreadySynced = data.alreadySyncedCount > 0;
   const showRemove = data.willRemoveCount > 0;
