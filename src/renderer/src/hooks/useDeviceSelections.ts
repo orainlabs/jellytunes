@@ -1,6 +1,11 @@
 import { useState, useCallback, useRef, useMemo, useReducer } from 'react';
 import { getTrackRegistry } from './useTrackRegistry';
 
+/** Threshold to prevent HTTP flood when selecting large numbers of items.
+ *  Selecting >50 uncached items skips the batch fetch and relies on tick-based estimation.
+ *  Users can deselect items below this threshold to trigger a real fetch. */
+export const MAX_UNCACHED_FETCH_COUNT = 50;
+
 export interface SyncedItemInfo {
   id: string;
   name: string;
@@ -258,21 +263,29 @@ export function useDeviceSelections() {
           (id) => options.itemTypes[id] && !registry.hasItemTracks(id),
         );
         if (uncachedIds.length > 0) {
-          // Mark loading state — button stays disabled while background fetch runs
-          setSizeLoadingCount((c) => c + 1);
-          void registry
-            .fetchTracksForItems(uncachedIds, path, {
-              serverUrl: options.serverUrl,
-              apiKey: options.apiKey,
-              userId: options.userId,
-            })
-            .then((success) => {
-              if (success) {
-                bumpRegistryVersion();
-              }
-              // If fetch failed, button will be enabled with tick estimate (prefix ~)
-            })
-            .finally(() => setSizeLoadingCount((c) => c - 1));
+          // Threshold guard: skip fetch if too many uncached items to prevent HTTP flood.
+          // When skipped, button stays enabled immediately with tick-based estimate (prefix ~).
+          if (uncachedIds.length > MAX_UNCACHED_FETCH_COUNT) {
+            console.warn(
+              `[useDeviceSelections] Skipping fetch: ${uncachedIds.length} uncached items exceed threshold of ${MAX_UNCACHED_FETCH_COUNT}`,
+            );
+          } else {
+            // Mark loading state — button stays disabled while background fetch runs
+            setSizeLoadingCount((c) => c + 1);
+            void registry
+              .fetchTracksForItems(uncachedIds, path, {
+                serverUrl: options.serverUrl,
+                apiKey: options.apiKey,
+                userId: options.userId,
+              })
+              .then((success) => {
+                if (success) {
+                  bumpRegistryVersion();
+                }
+                // If fetch failed, button will be enabled with tick estimate (prefix ~)
+              })
+              .finally(() => setSizeLoadingCount((c) => c - 1));
+          }
         }
       }
 
@@ -342,6 +355,15 @@ export function useDeviceSelections() {
           (id) => registry.getItemType(id) && !registry.hasItemTracks(id),
         );
         if (uncachedIds.length === 0) return;
+
+        // Threshold guard: skip fetch if too many uncached items to prevent HTTP flood.
+        // When skipped, button stays enabled immediately with tick-based estimate (prefix ~).
+        if (uncachedIds.length > MAX_UNCACHED_FETCH_COUNT) {
+          console.warn(
+            `[useDeviceSelections] Skipping fetch: ${uncachedIds.length} uncached items exceed threshold of ${MAX_UNCACHED_FETCH_COUNT}`,
+          );
+          return;
+        }
 
         // Mark loading state — sync button stays disabled until real track data is cached
         setSizeLoadingCount((c) => c + 1);

@@ -5,7 +5,13 @@ import { afterEach } from 'vitest';
 // This avoids crashes when running with node environment
 if (typeof window !== 'undefined') {
   import('@testing-library/react').then(({ cleanup }) => {
-    afterEach(() => cleanup());
+    afterEach(() => {
+      try {
+        cleanup();
+      } catch {
+        // Ignore cleanup errors
+      }
+    });
   });
 }
 
@@ -37,9 +43,7 @@ class MockIntersectionObserver implements IntersectionObserver {
     }
   }
 
-  observe(): void {
-    // Do not auto-trigger on observe — tests control state via setIntersecting()
-  }
+  observe(): void {}
 
   unobserve(): void {}
 
@@ -51,7 +55,6 @@ class MockIntersectionObserver implements IntersectionObserver {
     return this._currentEntry ? [this._currentEntry] : [];
   }
 
-  // For testing: set whether the element is intersecting
   setIntersecting(value: boolean): void {
     if (!this._callback) return;
     this._currentEntry = {
@@ -63,12 +66,10 @@ class MockIntersectionObserver implements IntersectionObserver {
       target: {} as Element,
       time: Date.now(),
     };
-    // Synchronously call the callback for test predictability
     this._callback([this._currentEntry], this);
   }
 }
 
-// Expose mock globally for test customization
 const mockObserverInstances: MockIntersectionObserver[] = [];
 
 if (typeof window !== 'undefined') {
