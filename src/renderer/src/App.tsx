@@ -283,6 +283,7 @@ function AppConnected({
         ...Object.fromEntries(extArtists.map((a) => [a.Id, a.RunTimeTicks ?? 0])),
         ...Object.fromEntries(extAlbums.map((a) => [a.Id, a.RunTimeTicks ?? 0])),
         ...Object.fromEntries(extPlaylists.map((p) => [p.Id, p.RunTimeTicks ?? 0])),
+        ...Object.fromEntries(extAlbumArtists.map((a) => [a.Id, a.RunTimeTicks ?? 0])),
       },
     });
   };

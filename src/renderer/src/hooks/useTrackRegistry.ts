@@ -270,7 +270,7 @@ export function createTrackRegistry() {
     try {
       const itemTypesRecord = Object.fromEntries(state.itemTypes.entries()) as Record<
         string,
-        'artist' | 'album' | 'playlist'
+        'artist' | 'album' | 'playlist' | 'albumArtist'
       >;
       const result = await window.api.getTracksForItems({
         serverUrl: jellyfinConfig.serverUrl,

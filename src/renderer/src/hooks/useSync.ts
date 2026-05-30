@@ -385,6 +385,7 @@ export function useSync({
 
     const getItemName = (id: string): string =>
       artists.find((a) => a.Id === id)?.Name ??
+      albumArtists.find((a) => a.Id === id)?.Name ??
       albums.find((a) => a.Id === id)?.Name ??
       playlists.find((p) => p.Id === id)?.Name ??
       id;

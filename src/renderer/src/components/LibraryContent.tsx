@@ -157,7 +157,7 @@ export function LibraryContent({
     // Don't apply filter if the results would be empty
     if (f === 'selected' && selectedTracks.size === 0) return;
     if (f === 'unselected') {
-      const totalItems = artists.length + albums.length + playlists.length;
+      const totalItems = artists.length + albumArtists.length + albums.length + playlists.length;
       if (selectedTracks.size >= totalItems) return;
     }
     setSyncFilter(f);
@@ -238,9 +238,11 @@ export function LibraryContent({
     const tabCountKey =
       activeLibrary === 'artists'
         ? 'ArtistCount'
-        : activeLibrary === 'albums'
-          ? 'AlbumCount'
-          : 'PlaylistCount';
+        : activeLibrary === 'albumArtists'
+          ? 'AlbumArtistCount'
+          : activeLibrary === 'albums'
+            ? 'AlbumCount'
+            : 'PlaylistCount';
 
     // Fallback: use stats (handles race condition where stats resolves before tab loads)
     if (stats && tabCountKey in stats) {
@@ -304,7 +306,8 @@ export function LibraryContent({
                   const isDisabled =
                     (f === 'selected' && selectedTracks.size === 0) ||
                     (f === 'unselected' &&
-                      selectedTracks.size >= artists.length + albums.length + playlists.length);
+                      selectedTracks.size >=
+                        artists.length + albumArtists.length + albums.length + playlists.length);
                   return (
                     <button
                       key={f}

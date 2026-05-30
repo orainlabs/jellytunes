@@ -890,7 +890,9 @@ ipcMain.handle('sync:start2', async (_event, options) => {
     const syncedItems = syncedIds.map((id: string) => ({
       id,
       name: (itemNames as Record<string, string>)[id] ?? id,
-      type: (itemTypes as Record<string, 'artist' | 'album' | 'playlist'>)[id] ?? 'artist',
+      type:
+        (itemTypes as Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>)[id] ??
+        'artist',
     }));
     try {
       recordSyncCompleted(
@@ -941,7 +943,7 @@ ipcMain.handle(
       apiKey: string;
       userId: string;
       itemIds: string[];
-      itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+      itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
       destinationPath: string;
       options: {
         coverArtMode: CoverArtMode;
@@ -991,7 +993,7 @@ ipcMain.handle(
         });
         const cacheMissTypesMap = new Map(
           cacheMisses.map((id) => [id, itemTypes[id] ?? 'album']),
-        ) as Map<string, 'artist' | 'album' | 'playlist'>;
+        ) as Map<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
         const { tracks: fetchedTracks } = await api.getTracksForItems(
           cacheMisses,
           cacheMissTypesMap,
@@ -1142,7 +1144,7 @@ ipcMain.handle(
       apiKey: string;
       userId: string;
       itemIds: string[];
-      itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+      itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
     },
   ) => {
     try {
@@ -1150,7 +1152,7 @@ ipcMain.handle(
       const normalizedUrl = serverUrl.replace(/\/$/, '');
       const itemTypesMap = new Map(Object.entries(itemTypes)) as Map<
         string,
-        'artist' | 'album' | 'playlist'
+        'artist' | 'album' | 'playlist' | 'albumArtist'
       >;
 
       // Check cache for each itemId; collect cache misses
@@ -1257,7 +1259,7 @@ ipcMain.handle(
       apiKey: string;
       userId: string;
       itemIds: string[];
-      itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+      itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
       destinationPath: string;
     },
   ) => {
@@ -1277,7 +1279,7 @@ ipcMain.handle(
       );
       const itemTypesMap = new Map(Object.entries(itemTypes)) as Map<
         string,
-        'artist' | 'album' | 'playlist'
+        'artist' | 'album' | 'playlist' | 'albumArtist'
       >;
       const result = await core.removeItems(itemIds, itemTypesMap, destinationPath);
       log.info(`Removed ${result.removed} tracks, ${result.errors.length} errors`);

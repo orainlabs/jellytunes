@@ -368,6 +368,7 @@ class SyncApiImpl implements SyncApi {
             if (!itemType) throw new Error(`Unknown item type for ID: ${itemId}`);
             switch (itemType) {
               case 'artist':
+              case 'albumArtist':
                 return await this.getArtistTracks(itemId);
               case 'playlist':
                 return await this.getPlaylistTracks(itemId);

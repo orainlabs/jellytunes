@@ -130,7 +130,7 @@ interface Api {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
   }) => Promise<{
     tracks: Array<{
       id: string;
