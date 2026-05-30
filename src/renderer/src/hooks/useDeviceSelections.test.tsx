@@ -17,6 +17,7 @@ const mockRegistry = {
   invalidateDevice: vi.fn(),
   isDeviceLoading: vi.fn().mockReturnValue(false),
   getItemTrackIds: vi.fn().mockReturnValue([]),
+  getItemType: vi.fn().mockReturnValue('artist'),
   isBackgroundFetchingDevice: vi.fn().mockReturnValue(false),
   setTickEstimate: vi.fn(),
   isTickEstimateActive: vi.fn().mockReturnValue(false),
@@ -67,6 +68,7 @@ beforeEach(() => {
   mockRegistry.countNewTracks.mockReturnValue(0);
   mockRegistry.getSyncedMusicBytes.mockReturnValue(0);
   mockRegistry.getItemTrackIds.mockReturnValue([]);
+  mockRegistry.getItemType.mockReturnValue('artist');
   mockRegistry.isBackgroundFetchingDevice.mockReturnValue(false);
   mockRegistry.setTickEstimate.mockClear();
   mockRegistry.isTickEstimateActive.mockReturnValue(false);
@@ -166,6 +168,87 @@ describe('useDeviceSelections', () => {
       });
       expect(result.current.selectedTracks.has('album-1')).toBe(false);
     });
+
+    it('fetches real track data for a newly selected uncached item (convertToMp3=false)', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      mockRegistry.getItemTrackIds.mockReturnValue([]); // uncached
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      await act(async () => {
+        result.current.toggleItem('album-1');
+      });
+
+      expect(mockRegistry.fetchTracksForItems).toHaveBeenCalledWith(
+        ['album-1'],
+        '/Volumes/USB',
+        expect.objectContaining({
+          serverUrl: defaultOptions.serverUrl,
+          apiKey: defaultOptions.apiKey,
+          userId: defaultOptions.userId,
+        }),
+      );
+    });
+
+    it('does NOT fetch when deselecting an item', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      await act(async () => {
+        result.current.toggleItem('album-1'); // select
+      });
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      await act(async () => {
+        result.current.toggleItem('album-1'); // deselect
+      });
+
+      expect(mockRegistry.fetchTracksForItems).not.toHaveBeenCalled();
+    });
+
+    it('does NOT fetch when convertToMp3=true (tick estimation only)', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', {
+          ...defaultOptions,
+          convertToMp3: true,
+        });
+      });
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      await act(async () => {
+        result.current.toggleItem('album-1');
+      });
+
+      expect(mockRegistry.fetchTracksForItems).not.toHaveBeenCalled();
+    });
+
+    it('does NOT fetch for an already-cached item', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      mockRegistry.getItemTrackIds.mockReturnValue(['track-1']); // already cached
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      await act(async () => {
+        result.current.toggleItem('album-1');
+      });
+
+      expect(mockRegistry.fetchTracksForItems).not.toHaveBeenCalled();
+    });
   });
 
   describe('selectItems', () => {
@@ -185,6 +268,26 @@ describe('useDeviceSelections', () => {
       expect(result.current.selectedTracks.has('artist-1')).toBe(true);
       expect(result.current.selectedTracks.has('album-2')).toBe(true);
       expect(result.current.selectedTracks.has('playlist-1')).toBe(true);
+    });
+
+    it('fetches real track data for newly added uncached items', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      mockRegistry.getItemTrackIds.mockReturnValue([]); // uncached
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      await act(async () => {
+        result.current.selectItems([{ Id: 'artist-1' }, { Id: 'album-1' }]);
+      });
+
+      expect(mockRegistry.fetchTracksForItems).toHaveBeenCalledTimes(1);
+      const [ids, path] = mockRegistry.fetchTracksForItems.mock.calls[0];
+      expect(new Set(ids)).toEqual(new Set(['artist-1', 'album-1']));
+      expect(path).toBe('/Volumes/USB');
     });
   });
 

@@ -204,27 +204,23 @@ function AppConnected({
 
     setActiveSection('device');
     sync.setSyncFolder(path);
-    // Build itemIds/itemTypes from selected library items
+    // Build itemIds from selected items; itemTypes covers all library items so the
+    // registry always has correct types for items selected after device activation.
     const selected = deviceSelections.selectedTracks;
     const itemIds: string[] = [];
-    const itemTypes: Record<string, 'artist' | 'album' | 'playlist'> = {};
+    const itemTypes: Record<string, 'artist' | 'album' | 'playlist'> = {
+      ...Object.fromEntries(extArtists.map((a) => [a.Id, 'artist' as const])),
+      ...Object.fromEntries(extAlbums.map((a) => [a.Id, 'album' as const])),
+      ...Object.fromEntries(extPlaylists.map((p) => [p.Id, 'playlist' as const])),
+    };
     for (const a of extArtists) {
-      if (selected.has(a.Id)) {
-        itemIds.push(a.Id);
-        itemTypes[a.Id] = 'artist';
-      }
+      if (selected.has(a.Id)) itemIds.push(a.Id);
     }
     for (const a of extAlbums) {
-      if (selected.has(a.Id)) {
-        itemIds.push(a.Id);
-        itemTypes[a.Id] = 'album';
-      }
+      if (selected.has(a.Id)) itemIds.push(a.Id);
     }
     for (const p of extPlaylists) {
-      if (selected.has(p.Id)) {
-        itemIds.push(p.Id);
-        itemTypes[p.Id] = 'playlist';
-      }
+      if (selected.has(p.Id)) itemIds.push(p.Id);
     }
 
     // Load saved prefs for this destination (or use global defaults)

@@ -299,6 +299,11 @@ export function createTrackRegistry() {
         state.itemTracks.set(itemId, trackIds);
       }
 
+      // Mark items with 0 tracks as fetched so they aren't re-fetched on next selection
+      for (const itemId of itemIds) {
+        if (!state.itemTracks.has(itemId)) state.itemTracks.set(itemId, []);
+      }
+
       state.isTickEstimate.delete(selectionKey);
       return true;
     } catch (err) {
@@ -360,10 +365,9 @@ export function createTrackRegistry() {
     let usedTicks = false;
 
     for (const itemId of selectedItems) {
-      const trackIds = state.itemTracks.get(itemId);
-
-      if (trackIds && trackIds.length > 0) {
-        // Tracks cached — use real sizes
+      if (state.itemTracks.has(itemId)) {
+        // Tracks fetched from server — use real sizes (may be 0 if artist has no indexed albums)
+        const trackIds = state.itemTracks.get(itemId)!;
         for (const trackId of trackIds) {
           const synced = syncedTracks.get(trackId);
           const info = state.trackMap.get(trackId);
@@ -381,7 +385,7 @@ export function createTrackRegistry() {
           }
         }
       } else {
-        // No cached tracks — use tick-based estimation
+        // Not yet fetched — use tick-based estimation
         const ticks = state.itemTicks.get(itemId) ?? 0;
         total += estimateSizeFromTicks(ticks, convertToMp3, bitrate);
         if (ticks > 0) usedTicks = true;
@@ -408,6 +412,21 @@ export function createTrackRegistry() {
           count++;
         }
       }
+    }
+    return count;
+  };
+
+  /**
+   * Count synced tracks for a specific item from deviceSyncedTracks.
+   * Needed for artist-type items whose tracks are stored under albumId (parentItemId),
+   * not under artistId, so getItemTrackIds(artistId) returns [].
+   */
+  const countSyncedItemTracks = (itemId: string, devicePath: string): number => {
+    const syncedTracks = state.deviceSyncedTracks.get(devicePath);
+    if (!syncedTracks) return 0;
+    let count = 0;
+    for (const { itemId: trackedItemId } of syncedTracks.values()) {
+      if (trackedItemId === itemId) count++;
     }
     return count;
   };
@@ -497,6 +516,17 @@ export function createTrackRegistry() {
     return state.itemTracks.get(itemId) ?? [];
   };
 
+  /** Returns true if tracks for this item have been fetched (even if 0 tracks). */
+  const hasItemTracks = (itemId: string): boolean => state.itemTracks.has(itemId);
+
+  /**
+   * Get the registered type for an item (from setItemTicks/setItemTypes), if known.
+   * Used to decide whether a newly-selected item can be batch-fetched.
+   */
+  const getItemType = (itemId: string): 'artist' | 'album' | 'playlist' | undefined => {
+    return state.itemTypes.get(itemId);
+  };
+
   /**
    * Check if any selected item has at least one FLAC or M4A track.
    * Returns true when lyricsMode='embed' would embed plain text (no timestamps).
@@ -516,8 +546,13 @@ export function createTrackRegistry() {
     return false;
   };
 
+  const TICKS_PER_SECOND = 10_000_000;
+
   /**
    * Calculate total duration for selected items, deduplicating shared tracks.
+   * Falls back to RunTimeTicks in two cases (same pattern as calculateSize):
+   * 1. No tracks cached at all for the item
+   * 2. Tracks cached but none have durationSeconds (loaded from device DB without duration)
    * Returns total duration in seconds.
    */
   const calculateDuration = (selectedItems: Set<string>): number => {
@@ -526,16 +561,26 @@ export function createTrackRegistry() {
 
     for (const itemId of selectedItems) {
       const trackIds = state.itemTracks.get(itemId);
-      if (!trackIds) continue;
 
-      for (const trackId of trackIds) {
-        if (seenTrackIds.has(trackId)) continue;
-        seenTrackIds.add(trackId);
-
-        const info = state.trackMap.get(trackId);
-        if (info?.durationSeconds) {
-          totalSeconds += info.durationSeconds;
+      if (trackIds && trackIds.length > 0) {
+        let itemSeconds = 0;
+        for (const trackId of trackIds) {
+          if (seenTrackIds.has(trackId)) continue;
+          seenTrackIds.add(trackId);
+          const info = state.trackMap.get(trackId);
+          if (info?.durationSeconds) itemSeconds += info.durationSeconds;
         }
+        if (itemSeconds > 0) {
+          totalSeconds += itemSeconds;
+        } else {
+          // Tracks present but no durationSeconds — fall back to item ticks
+          const ticks = state.itemTicks.get(itemId) ?? 0;
+          if (ticks > 0) totalSeconds += ticks / TICKS_PER_SECOND;
+        }
+      } else {
+        // No cached tracks — fall back to item-level RunTimeTicks
+        const ticks = state.itemTicks.get(itemId) ?? 0;
+        if (ticks > 0) totalSeconds += ticks / TICKS_PER_SECOND;
       }
     }
     return totalSeconds;
@@ -550,12 +595,15 @@ export function createTrackRegistry() {
     calculateSize,
     countNewTracks,
     countRemoveBytes,
+    countSyncedItemTracks,
     getSyncedMusicBytes,
     invalidateAll,
     invalidateItem,
     invalidateDevice,
     isDeviceLoading,
     getItemTrackIds,
+    hasItemTracks,
+    getItemType,
     hasFlacOrM4a,
     isBackgroundFetchingDevice,
     setTickEstimate,

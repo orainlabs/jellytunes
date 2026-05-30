@@ -1176,6 +1176,12 @@ ipcMain.handle(
           const cacheKey = _buildTrackCacheKey(normalizedUrl, userId, itemId);
           _setInTrackCache(cacheKey, tracks);
         }
+        // Cache empty result for items with 0 tracks to prevent repeated fetches
+        for (const itemId of cacheMisses) {
+          if (!tracksByItem.has(itemId)) {
+            _setInTrackCache(_buildTrackCacheKey(normalizedUrl, userId, itemId), []);
+          }
+        }
 
         // Merge cached + fetched results
         cachedResults.push(...fetchedTracks);

@@ -58,6 +58,8 @@ export function useDeviceSelections() {
   const lastOptionsRef = useRef<Parameters<typeof activateDevice>[1] | null>(null);
   // Track previous convertToMp3 value to detect true→false transitions (launch background fetch)
   const prevConvertToMp3Ref = useRef<boolean | null>(null);
+  // Debounce timer for fetchSelectedUncachedTracks — prevents HTTP flood on rapid selection
+  const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeState = activeDevicePath ? (deviceStates.get(activeDevicePath) ?? EMPTY) : EMPTY;
 
@@ -253,7 +255,7 @@ export function useDeviceSelections() {
       // Estimation is already showing ~X GB from ticks immediately.
       if (options && !options.convertToMp3) {
         const uncachedIds = options.itemIds.filter(
-          (id) => options.itemTypes[id] && registry.getItemTrackIds(id).length === 0,
+          (id) => options.itemTypes[id] && !registry.hasItemTracks(id),
         );
         if (uncachedIds.length > 0) {
           // Mark loading state — button stays disabled while background fetch runs
@@ -319,41 +321,90 @@ export function useDeviceSelections() {
     lastActivationKeyRef.current = null;
   }, []);
 
+  // Fetch + cache real track data for the currently-selected uncached items, so every
+  // consumer (size bar, per-group size, duration, and track count in the sync preview)
+  // reads real server data instead of tick estimates. Selecting items in the library used
+  // to skip this — only activateDevice fetched — leaving newly-selected items with no
+  // cached tracks (track count showed 0 while size/duration fell back to ticks).
+  // No fetch when convertToMp3=true: estimation is always tick-based there.
+  // fetchTracksForItems aborts any prior in-flight fetch for this device and refetches the
+  // full uncached set, so rapid selection changes self-heal to the latest selection.
+  const fetchSelectedUncachedTracks = useCallback(
+    (selectedIds: Set<string>, path: string) => {
+      const opts = lastOptionsRef.current;
+      if (!opts || opts.convertToMp3) return;
+
+      if (fetchDebounceRef.current !== null) clearTimeout(fetchDebounceRef.current);
+
+      fetchDebounceRef.current = setTimeout(() => {
+        fetchDebounceRef.current = null;
+        const uncachedIds = [...selectedIds].filter(
+          (id) => registry.getItemType(id) && !registry.hasItemTracks(id),
+        );
+        if (uncachedIds.length === 0) return;
+
+        // Mark loading state — sync button stays disabled until real track data is cached
+        setSizeLoadingCount((c) => c + 1);
+        void registry
+          .fetchTracksForItems(uncachedIds, path, {
+            serverUrl: opts.serverUrl,
+            apiKey: opts.apiKey,
+            userId: opts.userId,
+          })
+          .then((success) => {
+            if (success) bumpRegistryVersion();
+          })
+          .finally(() => setSizeLoadingCount((c) => c - 1));
+      }, 500);
+    },
+    [registry],
+  );
+
   const toggleItem = useCallback(
     (id: string) => {
       if (!activeDevicePath) return;
 
+      const current = deviceStates.get(activeDevicePath) ?? EMPTY;
+      const wasSelected = current.selectedItems.has(id);
+      const next = new Set(current.selectedItems);
+      if (wasSelected) next.delete(id);
+      else next.add(id);
+
       setDeviceStates((prev) => {
         const state = prev.get(activeDevicePath) ?? EMPTY;
-        const next = new Set(state.selectedItems);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        return new Map(prev).set(activeDevicePath, { ...state, selectedItems: next });
+        const ns = new Set(state.selectedItems);
+        if (ns.has(id)) ns.delete(id);
+        else ns.add(id);
+        return new Map(prev).set(activeDevicePath, { ...state, selectedItems: ns });
       });
 
-      // Estimation is now instant from RunTimeTicks — no ensureItemTracks needed.
-      // Background fetch will refine if convertToMp3=false.
+      // On add, fetch real track data for any uncached selected items.
+      if (!wasSelected) fetchSelectedUncachedTracks(next, activeDevicePath);
       bumpRegistryVersion();
     },
-    [activeDevicePath],
+    [activeDevicePath, deviceStates, fetchSelectedUncachedTracks],
   );
 
   const selectItems = useCallback(
     (items: Array<{ Id: string }>) => {
       if (!activeDevicePath) return;
 
+      const current = deviceStates.get(activeDevicePath) ?? EMPTY;
+      const next = new Set(current.selectedItems);
+      items.forEach((i) => next.add(i.Id));
+
       setDeviceStates((prev) => {
         const state = prev.get(activeDevicePath) ?? EMPTY;
-        const next = new Set(state.selectedItems);
-        items.forEach((i) => next.add(i.Id));
-        return new Map(prev).set(activeDevicePath, { ...state, selectedItems: next });
+        const ns = new Set(state.selectedItems);
+        items.forEach((i) => ns.add(i.Id));
+        return new Map(prev).set(activeDevicePath, { ...state, selectedItems: ns });
       });
 
-      // Estimation is now instant from RunTimeTicks — no ensureItemTracks needed.
-      // Background fetch will refine if convertToMp3=false.
+      // Fetch real track data for any uncached selected items.
+      fetchSelectedUncachedTracks(next, activeDevicePath);
       bumpRegistryVersion();
     },
-    [activeDevicePath],
+    [activeDevicePath, deviceStates, fetchSelectedUncachedTracks],
   );
 
   const clearSelection = useCallback(() => {

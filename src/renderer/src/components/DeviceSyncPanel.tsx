@@ -354,7 +354,6 @@ export function DeviceSyncPanel({
                         ? '—'
                         : '0 B'}{' '}
                     Audio
-                    {showTildePrefix && !convertToMp3 ? ' (estimated)' : ''}
                   </span>
                 </span>
                 <span className="flex items-center gap-1">
