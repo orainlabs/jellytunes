@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react';
-import type { PreviewData, Bitrate, ItemPreview } from '../appTypes';
+import type { PreviewData, Bitrate } from '../appTypes';
 import { formatBytes, formatDuration } from '../utils/format';
 
 interface SyncPreviewModalProps {
@@ -35,10 +35,6 @@ function ThreeColumns({ tracks, duration, size }: {
   );
 }
 
-/** Format a single item row: "Name  N tracks · size · duration" */
-function formatItemRow(item: ItemPreview, convertToMp3: boolean): string {
-  return `${item.name}  ${item.trackCount} track${item.trackCount !== 1 ? 's' : ''} · ${convertToMp3 ? '~' : ''}${formatBytes(item.sizeBytes)} · ${formatDuration(item.durationSeconds)}`;
-}
 
 export function SyncPreviewModal({
   data,
@@ -68,12 +64,11 @@ export function SyncPreviewModal({
           Sync Preview
         </h2>
 
-        {/* Scrollable items list */}
-        <div className="flex-1 overflow-y-auto space-y-2 mb-4">
+        <div className="space-y-2 mb-4">
           {/* Will remove */}
           {showRemove && (
             <div data-testid="preview-will-remove-section">
-              <div className="text-body-md text-error font-medium flex justify-between items-baseline mb-1">
+              <div className="text-body-md text-error font-medium flex justify-between items-baseline">
                 <span>Will remove</span>
                 <ThreeColumns
                   tracks={`${data.willRemoveCount.toLocaleString()} tracks`}
@@ -81,22 +76,13 @@ export function SyncPreviewModal({
                   size={data.willRemoveBytes > 0 ? `−${formatBytes(data.willRemoveBytes)}` : ''}
                 />
               </div>
-              {data.removedItems && data.removedItems.length > 0 && (
-                <div className="ml-2 space-y-1">
-                  {data.removedItems.map((item) => (
-                    <div key={item.id} className="text-body-sm text-error">
-                      {formatItemRow(item, convertToMp3)}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
           {/* New tracks */}
           {showNew && (
             <div data-testid="preview-new-tracks-section">
-              <div className="text-body-md text-primary font-medium flex justify-between items-baseline mb-1">
+              <div className="text-body-md text-primary font-medium flex justify-between items-baseline">
                 <span>New tracks</span>
                 <ThreeColumns
                   tracks={`${data.newTracksCount.toLocaleString()} tracks`}
@@ -104,22 +90,13 @@ export function SyncPreviewModal({
                   size={`${convertToMp3 ? '~' : ''}${formatBytes(data.newTracksBytes)}`}
                 />
               </div>
-              {data.newItems && data.newItems.length > 0 && (
-                <div className="ml-2 space-y-1">
-                  {data.newItems.map((item) => (
-                    <div key={item.id} className="text-body-sm text-primary">
-                      {formatItemRow(item, convertToMp3)}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
           {/* Updated tracks */}
           {showUpdated && (
             <div data-testid="preview-updated-tracks-section">
-              <div className="text-body-md text-warning font-medium flex justify-between items-baseline mb-1">
+              <div className="text-body-md text-warning font-medium flex justify-between items-baseline">
                 <span>Will update</span>
                 <ThreeColumns
                   tracks={`${data.updatedTracksCount.toLocaleString()} tracks`}
@@ -127,22 +104,13 @@ export function SyncPreviewModal({
                   size={`${convertToMp3 ? '~' : ''}${formatBytes(data.updatedTracksBytes)}`}
                 />
               </div>
-              {data.updatedItems && data.updatedItems.length > 0 && (
-                <div className="ml-2 space-y-1">
-                  {data.updatedItems.map((item) => (
-                    <div key={item.id} className="text-body-sm text-warning">
-                      {formatItemRow(item, convertToMp3)}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
           {/* Already synced */}
           {showAlreadySynced && (
             <div data-testid="preview-already-synced-section">
-              <div className="text-body-md text-success font-medium flex justify-between items-baseline mb-1">
+              <div className="text-body-md text-success font-medium flex justify-between items-baseline">
                 <span>Already on device</span>
                 <ThreeColumns
                   tracks={`${data.alreadySyncedCount.toLocaleString()} tracks`}
@@ -150,15 +118,6 @@ export function SyncPreviewModal({
                   size={`${convertToMp3 ? '~' : ''}${formatBytes(data.alreadySyncedBytes)}`}
                 />
               </div>
-              {data.alreadySyncedItems && data.alreadySyncedItems.length > 0 && (
-                <div className="ml-2 space-y-1">
-                  {data.alreadySyncedItems.map((item) => (
-                    <div key={item.id} className="text-body-sm text-success">
-                      {formatItemRow(item, convertToMp3)}
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
