@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Test the threshold constant and guard logic independently
 // without full React hook rendering which has timing conflicts
@@ -32,20 +32,22 @@ vi.mock('./useTrackRegistry', () => ({
   getTrackRegistry: () => mockRegistry,
 }));
 
+// Mock logger to test warning emission
+vi.mock('@/utils/logger', () => ({
+  logger: {
+    warn: vi.fn(),
+ error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
 import { MAX_UNCACHED_FETCH_COUNT, shouldSkipUncachedFetch } from './useDeviceSelections';
+import { logger } from '@/utils/logger';
 
 describe('MAX_UNCACHED_FETCH_COUNT threshold guard', () => {
-  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
-    vi.useFakeTimers();
-    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    consoleWarnSpy.mockRestore();
   });
 
   describe('threshold constant', () => {
@@ -64,13 +66,10 @@ describe('MAX_UNCACHED_FETCH_COUNT threshold guard', () => {
       // Should skip fetch
       expect(shouldSkip).toBe(true);
 
-      // Console.warn should have been called
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
+      // Should emit warning
+      expect(logger.warn).toHaveBeenCalledWith(
         '[useDeviceSelections] Skipping fetch: 51 uncached items exceed threshold of 50',
       );
-
-      // Registry fetchTracksForItems should NOT have been called
-      expect(mockRegistry.fetchTracksForItems).not.toHaveBeenCalled();
     });
 
     it('(b) selecting 49 items allows fetch to proceed', () => {
@@ -83,7 +82,7 @@ describe('MAX_UNCACHED_FETCH_COUNT threshold guard', () => {
       expect(shouldSkip).toBe(false);
 
       // No warning should be emitted
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
     });
 
     it('(c) selecting 51 then deselecting to 45 allows fetch on second call', () => {
@@ -91,12 +90,12 @@ describe('MAX_UNCACHED_FETCH_COUNT threshold guard', () => {
       let shouldSkip = shouldSkipUncachedFetch(Array.from({ length: 51 }, (_, i) => `item-${i}`));
 
       expect(shouldSkip).toBe(true);
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect(logger.warn).toHaveBeenCalledWith(
         '[useDeviceSelections] Skipping fetch: 51 uncached items exceed threshold of 50',
       );
 
       // Reset warning spy
-      consoleWarnSpy.mockClear();
+      vi.clearAllMocks();
 
       // Deselect 6 items → 45 items (below threshold)
       shouldSkip = shouldSkipUncachedFetch(Array.from({ length: 45 }, (_, i) => `item-${i}`));
@@ -105,7 +104,7 @@ describe('MAX_UNCACHED_FETCH_COUNT threshold guard', () => {
       expect(shouldSkip).toBe(false);
 
       // No warning about exceeding threshold
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
     });
 
     it('exactly 50 items allows fetch (threshold is exclusive)', () => {
@@ -113,14 +112,14 @@ describe('MAX_UNCACHED_FETCH_COUNT threshold guard', () => {
       const shouldSkip = shouldSkipUncachedFetch(uncachedIds);
 
       expect(shouldSkip).toBe(false);
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
     });
 
     it('empty array returns true without warning', () => {
       const shouldSkip = shouldSkipUncachedFetch([]);
 
       expect(shouldSkip).toBe(true);
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
     });
   });
 });

@@ -55,6 +55,7 @@ const mockApi = {
     items: [],
     totals: { newTracks: 0, metadataChanged: 0, removed: 0, pathChanged: 0, unchanged: 0 },
   }),
+  logWarn: vi.fn(),
 };
 
 beforeEach(() => {

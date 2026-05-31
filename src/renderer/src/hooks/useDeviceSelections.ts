@@ -8,12 +8,12 @@ import { logger } from '@/utils/logger';
 export const MAX_UNCACHED_FETCH_COUNT = 50;
 
 /** Check if uncached fetch should be skipped due to exceeding threshold.
- *  Emits a console.warn when threshold is exceeded.
+ *  Emits a logger.warn when threshold is exceeded.
  *  @returns true if fetch should be skipped, false if it should proceed */
 export function shouldSkipUncachedFetch(uncachedIds: string[]): boolean {
   if (uncachedIds.length === 0) return true;
   if (uncachedIds.length > MAX_UNCACHED_FETCH_COUNT) {
-    console.warn(
+    logger.warn(
       `[useDeviceSelections] Skipping fetch: ${uncachedIds.length} uncached items exceed threshold of ${MAX_UNCACHED_FETCH_COUNT}`,
     );
     return true;
@@ -277,28 +277,22 @@ export function useDeviceSelections() {
         const uncachedIds = options.itemIds.filter(
           (id) => options.itemTypes[id] && !registry.hasItemTracks(id),
         );
-        if (uncachedIds.length > 0) {
-          // Threshold guard: skip fetch if too many uncached items to prevent HTTP flood.
-          // When skipped, button stays enabled immediately with tick-based estimate (prefix ~).
-          if (shouldSkipUncachedFetch(uncachedIds)) {
-            // Skip: warning already emitted by helper
-          } else {
-            // Mark loading state — button stays disabled while background fetch runs
-            setSizeLoadingCount((c) => c + 1);
-            void registry
-              .fetchTracksForItems(uncachedIds, path, {
-                serverUrl: options.serverUrl,
-                apiKey: options.apiKey,
-                userId: options.userId,
-              })
-              .then((success) => {
-                if (success) {
-                  bumpRegistryVersion();
-                }
-                // If fetch failed, button will be enabled with tick estimate (prefix ~)
-              })
-              .finally(() => setSizeLoadingCount((c) => c - 1));
-          }
+        if (uncachedIds.length > 0 && !shouldSkipUncachedFetch(uncachedIds)) {
+          // Mark loading state — button stays disabled while background fetch runs
+          setSizeLoadingCount((c) => c + 1);
+          void registry
+            .fetchTracksForItems(uncachedIds, path, {
+              serverUrl: options.serverUrl,
+              apiKey: options.apiKey,
+              userId: options.userId,
+            })
+            .then((success) => {
+              if (success) {
+                bumpRegistryVersion();
+              }
+              // If fetch failed, button will be enabled with tick estimate (prefix ~)
+            })
+            .finally(() => setSizeLoadingCount((c) => c - 1));
         }
       }
 
@@ -549,19 +543,19 @@ export function useDeviceSelections() {
           const uncachedIds = opts.itemIds.filter(
             (id) => opts.itemTypes[id] && registry.getItemTrackIds(id).length === 0,
           );
-          if (uncachedIds.length > 0 && !shouldSkipUncachedFetch(uncachedIds)) {
-            setSizeLoadingCount((c) => c + 1);
-            void registry
-              .fetchTracksForItems(uncachedIds, activeDevicePath, {
-                serverUrl: opts.serverUrl,
-                apiKey: opts.apiKey,
-                userId: opts.userId,
-              })
-              .then((success) => {
-                if (success) bumpRegistryVersion();
-              })
-              .finally(() => setSizeLoadingCount((c) => c - 1));
-          }
+          if (shouldSkipUncachedFetch(uncachedIds)) return;
+
+          setSizeLoadingCount((c) => c + 1);
+          void registry
+            .fetchTracksForItems(uncachedIds, activeDevicePath, {
+              serverUrl: opts.serverUrl,
+              apiKey: opts.apiKey,
+              userId: opts.userId,
+            })
+            .then((success) => {
+              if (success) bumpRegistryVersion();
+            })
+            .finally(() => setSizeLoadingCount((c) => c - 1));
         }
         prevConvertToMp3Ref.current = convertToMp3;
       },
