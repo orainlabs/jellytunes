@@ -36,7 +36,7 @@ vi.mock('./useTrackRegistry', () => ({
 vi.mock('@/utils/logger', () => ({
   logger: {
     warn: vi.fn(),
- error: vi.fn(),
+    error: vi.fn(),
     info: vi.fn(),
     debug: vi.fn(),
   },

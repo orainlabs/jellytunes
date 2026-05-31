@@ -703,7 +703,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
           // against servers that ignore the Limit parameter and always return a fixed
           // page size (e.g., PAGE_SIZE=50 instead of the requested 1000 items).
           if (normalized.length < pageLimit) {
-            hasMore = false;
+            break;
           }
           // Genres use Name as key, all other types use Id
           normalized.forEach((item) => {
@@ -740,7 +740,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         }
 
         // Break when we've fetched all items (startIndex >= totalCount)
-        // A partial page doesn't mean end of results — we must check against totalCount
+        // Note: a partial page DOES mean end of results when the server ignores Limit —
+        // the guard above catches that case via normalized.length < pageLimit.
         if (startIndex >= totalCount) break;
       }
 
