@@ -32,7 +32,7 @@ export interface DeviceSyncInfo {
 export interface SyncedItemInfo {
   id: string;
   name: string;
-  type: 'artist' | 'album' | 'playlist';
+  type: 'artist' | 'album' | 'albumArtist' | 'playlist';
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ export function getSyncedItems(mountPoint: string): SyncedItemInfo[] {
   return rows.map((r) => ({
     id: r.item_id,
     name: r.item_name ?? r.item_id,
-    type: (r.item_type ?? 'artist') as 'artist' | 'album' | 'playlist',
+    type: (r.item_type ?? 'artist') as 'artist' | 'album' | 'albumArtist' | 'playlist',
   }));
 }
 

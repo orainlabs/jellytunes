@@ -63,7 +63,7 @@ export const mockPlaylists: Playlist[] = [
 export const mockSyncedItems: Array<{
   id: string;
   name: string;
-  type: 'artist' | 'album' | 'playlist';
+  type: 'artist' | 'album' | 'albumArtist' | 'playlist';
 }> = [
   { id: 'artist-1', name: 'The Beatles', type: 'artist' },
   { id: 'album-2', name: 'The Dark Side of the Moon', type: 'album' },

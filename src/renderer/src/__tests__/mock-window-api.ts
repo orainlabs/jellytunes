@@ -27,7 +27,7 @@ export interface MockWindowApi {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'album' | 'albumArtist' | 'playlist'>;
     itemNames?: Record<string, string>;
     destinationPath: string;
     options?: {
@@ -70,7 +70,7 @@ export interface MockWindowApi {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'album' | 'albumArtist' | 'playlist'>;
   }) => Promise<{
     trackCount: number;
     totalBytes: number;
@@ -95,13 +95,15 @@ export interface MockWindowApi {
   >;
   getSyncedItems: (
     mountPoint: string,
-  ) => Promise<Array<{ id: string; name: string; type: 'artist' | 'album' | 'playlist' }>>;
+  ) => Promise<
+    Array<{ id: string; name: string; type: 'artist' | 'album' | 'albumArtist' | 'playlist' }>
+  >;
   analyzeDiff: (options: {
     serverUrl: string;
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'album' | 'albumArtist' | 'playlist'>;
     destinationPath: string;
     options: {
       convertToMp3: boolean;
@@ -137,7 +139,7 @@ export interface MockWindowApi {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'album' | 'albumArtist' | 'playlist'>;
     destinationPath: string;
   }) => Promise<{ removed: number; errors: string[] }>;
   clearDestination: (options: {
