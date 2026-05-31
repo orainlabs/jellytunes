@@ -49,6 +49,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     albumArtists: new Set(),
     albums: new Set(),
     playlists: new Set(),
+    genres: new Set(),
   });
 
   const [itemTypeIndex, setItemTypeIndex] = useState<ItemTypeIndex>({
@@ -56,6 +57,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     albumArtists: new Set(),
     albums: new Set(),
     playlists: new Set(),
+    genres: new Set(),
   });
 
   const contentScrollRef = useRef<HTMLDivElement>(null);
@@ -691,7 +693,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
                   ? rawItems.map(normalizeAlbum)
                   : type === 'genres'
                     ? rawItems.map(normalizeGenre)
-                  : rawItems.map(normalizePlaylist);
+                    : rawItems.map(normalizePlaylist);
           // Guard: if the server returns no items, stop — advancing startIndex by 0
           // would cause an infinite loop when totalCount > actual available items.
           if (normalized.length === 0) break;

@@ -171,6 +171,7 @@ export interface ItemTypeIndex {
   albumArtists: Set<string>;
   albums: Set<string>;
   playlists: Set<string>;
+  genres: Set<string>;
 }
 
 export interface SavedDestination {

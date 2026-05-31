@@ -21,10 +21,14 @@ describe('assertExhaustive utility', () => {
       switch (tab) {
         case 'artists':
           return 'artist';
+        case 'albumArtists':
+          return 'albumArtist';
         case 'albums':
           return 'album';
         case 'playlists':
           return 'playlist';
+        case 'genres':
+          return 'genre';
         default:
           // When exhaustive, `tab` is `never` here — compile error if not handled
           return assertExhaustive(tab);
@@ -32,39 +36,44 @@ describe('assertExhaustive utility', () => {
     }
 
     expect(getItemType('artists')).toBe('artist');
+    expect(getItemType('albumArtists')).toBe('albumArtist');
     expect(getItemType('albums')).toBe('album');
     expect(getItemType('playlists')).toBe('playlist');
+    expect(getItemType('genres')).toBe('genre');
   });
 
   it('throws with default message for unhandled value', () => {
-    // Cast an unknown value to LibraryTab to simulate an unhandled case
-    const unknownTab = 'genres' as unknown as LibraryTab;
+    // Use a synthetic exhaustive switch over a 3-member type, then
+    // cast a runtime value that isn't handled to test the throw behavior.
+    type SmallTab = 'x' | 'y' | 'z';
+
+    const unhandled = 'unhandled' as unknown as SmallTab;
 
     expect(() => {
-      // Simulate a switch that doesn't handle 'genres'
-      switch (unknownTab) {
-        case 'artists':
-        case 'albums':
-        case 'playlists':
+      switch (unhandled as SmallTab) {
+        case 'x':
+        case 'y':
+        case 'z':
           break;
         default:
-          assertExhaustive(unknownTab);
+          assertExhaustive(unhandled as never);
       }
-    }).toThrow('Unhandled case: "genres"');
+    }).toThrow(/Unhandled case/);
   });
 
   it('throws with custom message when provided', () => {
-    const unknownTab = 'genres' as unknown as LibraryTab;
+    type SmallTab = 'x' | 'y' | 'z';
+    const unhandled = 'unhandled' as unknown as SmallTab;
 
     expect(() => {
-      switch (unknownTab) {
-        case 'artists':
-        case 'albums':
-        case 'playlists':
+      switch (unhandled as SmallTab) {
+        case 'x':
+        case 'y':
+        case 'z':
           break;
         default:
-          assertExhaustive(unknownTab, `Unsupported library tab: ${unknownTab}`);
+          assertExhaustive(unhandled as never, `Unsupported tab: ${unhandled}`);
       }
-    }).toThrow('Unsupported library tab: genres');
+    }).toThrow('Unsupported tab: unhandled');
   });
 });
