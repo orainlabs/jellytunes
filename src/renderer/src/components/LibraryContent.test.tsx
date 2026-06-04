@@ -99,6 +99,7 @@ describe('LibraryContent', () => {
       albums: [] as Album[],
       playlists: [] as Playlist[],
       albumArtists: [] as Artist[],
+      genres: [],
     };
     render(<LibraryContent {...defaultProps} searchQuery="te" searchResults={searchResults} />);
     const content = screen.getByTestId('library-content');

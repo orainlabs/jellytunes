@@ -103,11 +103,13 @@ export function normalizePlaylist(raw: Record<string, unknown>): Playlist {
 /**
  * Normalize a raw Jellyfin genre item from /MusicGenres endpoint.
  * LibraryItems indicates how many items belong to this genre in Jellyfin's library.
+ * Count is resolved as: modern `ItemCount` → older `ChildCount` → 0.
  */
 export function normalizeGenre(raw: Record<string, unknown>): Genre {
   return {
+    Id: String(raw.Id ?? ''),
     Name: String(raw.Name ?? ''),
-    LibraryItems: (raw.LibraryItems as number) ?? 0,
+    LibraryItems: (raw.ItemCount as number) ?? (raw.ChildCount as number) ?? 0,
   };
 }
 

@@ -61,6 +61,7 @@ export interface Playlist {
 }
 
 export interface Genre {
+  Id: string;
   Name: string;
   LibraryItems?: number;
 }

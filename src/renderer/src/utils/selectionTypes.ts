@@ -1,6 +1,6 @@
 import type { Artist, AlbumArtist, Album, Playlist } from '../appTypes';
 
-export type ItemType = 'artist' | 'albumArtist' | 'album' | 'playlist';
+export type ItemType = 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
 
 export interface BuildItemTypesInput {
   selectedArtists: Set<string>;

@@ -63,7 +63,7 @@ interface Api {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
     itemNames?: Record<string, string>;
     destinationPath: string;
     options?: {
@@ -107,7 +107,7 @@ interface Api {
     apiKey: string;
     userId: string;
     itemId: string;
-    itemType: 'artist' | 'album' | 'playlist' | 'albumArtist';
+    itemType: 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre';
   }) => Promise<{
     tracks: Array<{
       id: string;
@@ -130,7 +130,7 @@ interface Api {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
+    itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'>;
   }) => Promise<{
     tracks: Array<{
       id: string;
@@ -165,17 +165,19 @@ interface Api {
       status: string;
     }>
   >;
-  getSyncedItems: (
-    mountPoint: string,
-  ) => Promise<
-    Array<{ id: string; name: string; type: 'artist' | 'albumArtist' | 'album' | 'playlist' }>
+  getSyncedItems: (mountPoint: string) => Promise<
+    Array<{
+      id: string;
+      name: string;
+      type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
+    }>
   >;
   analyzeDiff: (options: {
     serverUrl: string;
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
     destinationPath: string;
     options: {
       convertToMp3: boolean;
@@ -211,7 +213,7 @@ interface Api {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
     destinationPath: string;
   }) => Promise<{ removed: number; errors: string[] }>;
   clearDestination: (options: {

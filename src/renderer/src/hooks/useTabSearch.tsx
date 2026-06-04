@@ -14,6 +14,7 @@ interface SearchResults {
   albumArtists: Array<{ Id: string; Name: string; AlbumCount?: number; ChildCount?: number }>;
   albums: Array<{ Id: string; Name: string; AlbumArtist?: string; ChildCount?: number }>;
   playlists: Array<{ Id: string; Name: string; ChildCount?: number }>;
+  genres: Array<{ Id: string; Name: string; LibraryItems?: number }>;
 }
 
 interface SearchQueries {
@@ -121,6 +122,7 @@ export function UseTabSearchProvider({
           albumArtists: (albumArtistsData.Items ?? []).map(normalizeAlbumArtist),
           albums: (albumsData.Items ?? []).map(normalizeAlbum),
           playlists: (playlistsData.Items ?? []).map(normalizePlaylist),
+          genres: [],
         });
       } catch (e) {
         logger.error('Search error: ' + (e instanceof Error ? e.message : String(e)));

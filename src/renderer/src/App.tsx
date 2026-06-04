@@ -6,6 +6,7 @@ import type {
   AlbumArtist,
   Album,
   Playlist,
+  Genre,
   Bitrate,
 } from './appTypes';
 import { assertExhaustive } from './utils/assertExhaustive';
@@ -90,7 +91,14 @@ function AppConnected({
     albumArtists: Map<string, AlbumArtist>;
     albums: Map<string, Album>;
     playlists: Map<string, Playlist>;
-  }>({ artists: new Map(), albumArtists: new Map(), albums: new Map(), playlists: new Map() });
+    genres: Map<string, Genre>;
+  }>({
+    artists: new Map(),
+    albumArtists: new Map(),
+    albums: new Map(),
+    playlists: new Map(),
+    genres: new Map(),
+  });
 
   // Clear cache on disconnect so stale data doesn't carry over to next server
   useEffect(() => {
@@ -100,6 +108,7 @@ function AppConnected({
         albumArtists: new Map(),
         albums: new Map(),
         playlists: new Map(),
+        genres: new Map(),
       };
     }
   }, [connection.isConnected]);
@@ -111,6 +120,7 @@ function AppConnected({
     searchResults.albumArtists.forEach((a) => searchItemCacheRef.current.albumArtists.set(a.Id, a));
     searchResults.albums.forEach((a) => searchItemCacheRef.current.albums.set(a.Id, a));
     searchResults.playlists.forEach((p) => searchItemCacheRef.current.playlists.set(p.Id, p));
+    searchResults.genres.forEach((g) => searchItemCacheRef.current.genres.set(g.Id, g));
   }, [searchResults]);
 
   // Merge paginated arrays with cached search objects (dedup by Id)
@@ -129,6 +139,7 @@ function AppConnected({
   const extPlaylists = mergeWithCache(lib.playlists, [
     ...searchItemCacheRef.current.playlists.values(),
   ]);
+  const extGenres = mergeWithCache(lib.genres, [...searchItemCacheRef.current.genres.values()]);
 
   const sync = useSync({
     jellyfinConfig: connection.jellyfinConfig,
@@ -143,6 +154,7 @@ function AppConnected({
     albumArtists: extAlbumArtists,
     albums: extAlbums,
     playlists: extPlaylists,
+    genres: extGenres,
     isTickEstimate: deviceSelections.isTickEstimate,
     revalidateDevice: deviceSelections.revalidateDevice,
     setPreviouslySyncedItems: (items) => {
@@ -275,6 +287,15 @@ function AppConnected({
       extAlbums,
       extPlaylists,
     });
+    // ORAIN-0535: append genres. Genres live in `selectedTracks` (the union) and
+    // share ids with nothing else in this codebase, so no typed set is required —
+    // typing + ordering are applied directly against `extGenres`.
+    for (const g of extGenres) {
+      if (deviceSelections.selectedTracks.has(g.Id)) {
+        itemIds.push(g.Id);
+        itemTypes[g.Id] = 'genre';
+      }
+    }
 
     // Load saved prefs for this destination (or use global defaults)
     // forced* params come from handleAddFolder where state hasn't flushed yet;
@@ -391,6 +412,9 @@ function AppConnected({
   const selectedPlaylistsCount = extPlaylists.filter((p) =>
     deviceSelections.selectedTracks.has(p.Id),
   ).length;
+  const selectedGenresCount = extGenres.filter((g) =>
+    deviceSelections.selectedTracks.has(g.Id),
+  ).length;
 
   // ORAIN-0384: Selection summary only for the currently active tab (not mixed types)
   // ORAIN-0399: Refactored to eliminate unreachable guard in countForTab closure
@@ -404,6 +428,8 @@ function AppConnected({
         return selectedAlbumsCount;
       case 'playlists':
         return selectedPlaylistsCount;
+      case 'genres':
+        return selectedGenresCount;
       default:
         return 0;
     }
@@ -419,6 +445,8 @@ function AppConnected({
         return selectedCount !== 1 ? 'albums' : 'album';
       case 'playlists':
         return selectedCount !== 1 ? 'playlists' : 'playlist';
+      case 'genres':
+        return selectedCount !== 1 ? 'genres' : 'genre';
       default:
         return '';
     }
@@ -457,10 +485,11 @@ function AppConnected({
               case 'albumArtists':
                 return 'albumArtist' as const;
               case 'albums':
-              case 'genres':
                 return 'album' as const;
               case 'playlists':
                 return 'playlist' as const;
+              case 'genres':
+                return 'genre' as const;
               default:
                 // Compile-time safety: if a new library tab is added without updating this switch,
                 // TypeScript will error here because `lib.activeLibrary` is no longer `never`.
@@ -507,9 +536,7 @@ function AppConnected({
           albums={lib.albums}
           playlists={lib.playlists}
           genres={lib.genres}
-          selectedGenre={lib.selectedGenre}
           onLibraryTab={handleLibraryTab}
-          onSelectGenre={lib.selectGenre}
           usbDevices={usbDevices}
           savedDestinations={savedDestinations}
           onDestinationClick={handleDestinationClick}
@@ -544,6 +571,7 @@ function AppConnected({
               albumArtists={lib.albumArtists}
               albums={lib.albums}
               playlists={lib.playlists}
+              genres={lib.genres}
               pagination={lib.pagination}
               selectedTracks={deviceSelections.selectedTracks}
               selectedArtists={deviceSelections.selectedArtists}
@@ -594,6 +622,7 @@ function AppConnected({
                 albumArtists={extAlbumArtists}
                 albums={extAlbums}
                 playlists={extPlaylists}
+                genres={extGenres}
                 showPreview={sync.showPreview}
                 previewData={sync.previewData}
                 syncedMusicBytes={deviceSelections.syncedMusicBytes ?? undefined}

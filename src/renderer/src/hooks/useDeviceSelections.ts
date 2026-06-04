@@ -24,7 +24,7 @@ export function shouldSkipUncachedFetch(uncachedIds: string[]): boolean {
 export interface SyncedItemInfo {
   id: string;
   name: string;
-  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
+  type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
 }
 
 interface DeviceState {
@@ -70,7 +70,7 @@ function buildActivationKey(
   path: string,
   options?: {
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
     convertToMp3: boolean;
     bitrate: '128k' | '192k' | '320k';
     coverArtMode?: 'off' | 'embed' | 'companion';
@@ -178,7 +178,7 @@ export function useDeviceSelections() {
         apiKey: string;
         userId: string;
         itemIds: string[];
-        itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+        itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
         convertToMp3: boolean;
         bitrate: '128k' | '192k' | '320k';
         coverArtMode?: 'off' | 'embed' | 'companion';
@@ -231,7 +231,7 @@ export function useDeviceSelections() {
         const ticksArray: Array<{
           id: string;
           ticks: number;
-          type: 'artist' | 'albumArtist' | 'album' | 'playlist';
+          type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
         }> = Object.entries(options.itemTicks).map(([id, ticks]) => ({
           id,
           ticks,
@@ -239,7 +239,8 @@ export function useDeviceSelections() {
             | 'artist'
             | 'albumArtist'
             | 'album'
-            | 'playlist',
+            | 'playlist'
+            | 'genre',
         }));
         registry.setItemTicks(ticksArray);
       }
@@ -463,7 +464,7 @@ export function useDeviceSelections() {
   );
 
   const toggleItem = useCallback(
-    (id: string, viewType?: 'artist' | 'albumArtist' | 'album' | 'playlist') => {
+    (id: string, viewType?: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre') => {
       if (!activeDevicePath) return;
 
       const current = deviceStates.get(activeDevicePath) ?? EMPTY;
@@ -472,6 +473,7 @@ export function useDeviceSelections() {
         | 'albumArtist'
         | 'album'
         | 'playlist'
+        | 'genre'
         | undefined;
 
       // ORAIN-0551: when the caller supplies the view type (e.g., LibraryContent
@@ -480,8 +482,8 @@ export function useDeviceSelections() {
       // overwrites the type of a shared id to 'albumArtist' (because the album-artist
       // list was registered second) and a click in the Artists view then routes to
       // the wrong set.
-      const effectiveType: 'artist' | 'albumArtist' | 'album' | 'playlist' | undefined =
-        (viewType as 'artist' | 'albumArtist' | 'album' | 'playlist' | undefined) ?? itemType;
+      const effectiveType: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre' | undefined =
+        viewType ?? itemType;
 
       const inArtists = current.selectedArtists.has(id);
       const inAlbumArtists = current.selectedAlbumArtists.has(id);
@@ -596,7 +598,7 @@ export function useDeviceSelections() {
   // registry (only first ~50 items from initial load), causing the threshold
   // guard to be bypassed (ORAIN-0494).
   const selectAllItems = useCallback(
-    (ids: string[], type: 'artist' | 'albumArtist' | 'album' | 'playlist') => {
+    (ids: string[], type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre') => {
       // Register all item types FIRST, before selectItems triggers threshold check
       registry.setItemTypes(ids.map((id) => ({ id, type })));
       // Now selectItems will see all types registered and threshold guard works correctly

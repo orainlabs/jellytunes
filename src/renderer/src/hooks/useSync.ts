@@ -5,6 +5,7 @@ import type {
   AlbumArtist,
   Album,
   Playlist,
+  Genre,
   Bitrate,
   SyncProgressInfo,
   PreviewData,
@@ -29,6 +30,7 @@ interface UseSyncOptions {
   albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
+  genres: Genre[];
   /** True when size was estimated from ticks (fetch was skipped); track counts are unreliable */
   isTickEstimate: boolean;
   setPreviouslySyncedItems: (items: SyncedItemInfo[]) => void;
@@ -54,6 +56,7 @@ export function useSync({
   albumArtists,
   albums,
   playlists,
+  genres,
   isTickEstimate,
   setPreviouslySyncedItems,
   revalidateDevice,
@@ -94,7 +97,8 @@ export function useSync({
       .map((a) => a.Id);
     const albumIds = albums.filter((a) => selectedTracks.has(a.Id)).map((a) => a.Id);
     const playlistIds = playlists.filter((p) => selectedTracks.has(p.Id)).map((p) => p.Id);
-    const map: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {};
+    const genreIds = genres.filter((g) => selectedTracks.has(g.Id)).map((g) => g.Id);
+    const map: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'> = {};
     const names: Record<string, string> = {};
     artistIds.forEach((id) => {
       if (id) map[id] = 'artist';
@@ -107,6 +111,9 @@ export function useSync({
     });
     playlistIds.forEach((id) => {
       if (id) map[id] = 'playlist';
+    });
+    genreIds.forEach((id) => {
+      if (id) map[id] = 'genre';
     });
     artists
       .filter((a) => selectedTracks.has(a.Id))
@@ -128,7 +135,12 @@ export function useSync({
       .forEach((p) => {
         names[p.Id] = p.Name;
       });
-    return { artistIds, albumArtistIds, albumIds, playlistIds, map, names };
+    genres
+      .filter((g) => selectedTracks.has(g.Id))
+      .forEach((g) => {
+        names[g.Id] = g.Name;
+      });
+    return { artistIds, albumArtistIds, albumIds, playlistIds, genreIds, map, names };
   };
 
   // Items that are synced but user has deselected → will be removed from device
@@ -139,14 +151,15 @@ export function useSync({
   // Build a type map for items to delete, using in-memory arrays first then DB info as fallback
   const buildDeleteTypesMap = (
     toDeleteIds: string[],
-  ): Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> => {
+  ): Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'> => {
     const syncedInfoMap = new Map(syncedItemsInfo.map((i) => [i.id, i]));
-    const map: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {};
+    const map: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'> = {};
     toDeleteIds.forEach((id) => {
       if (artists.find((a) => a.Id === id)) map[id] = 'artist';
       else if (albumArtists.find((a) => a.Id === id)) map[id] = 'albumArtist';
       else if (albums.find((a) => a.Id === id)) map[id] = 'album';
       else if (playlists.find((p) => p.Id === id)) map[id] = 'playlist';
+      else if (genres.find((g) => g.Id === id)) map[id] = 'genre';
       else if (syncedInfoMap.has(id)) map[id] = syncedInfoMap.get(id)!.type;
     });
     return map;
@@ -184,10 +197,15 @@ export function useSync({
     });
 
     try {
-      const { artistIds, albumArtistIds, albumIds, playlistIds, map, names } = buildItemTypesMap();
-      const selectedIds = [...artistIds, ...albumArtistIds, ...albumIds, ...playlistIds].filter(
-        Boolean,
-      );
+      const { artistIds, albumArtistIds, albumIds, playlistIds, genreIds, map, names } =
+        buildItemTypesMap();
+      const selectedIds = [
+        ...artistIds,
+        ...albumArtistIds,
+        ...albumIds,
+        ...playlistIds,
+        ...genreIds,
+      ].filter(Boolean);
       const toDeleteIds = buildToDeleteIds();
 
       if (toDeleteIds.length > 0) {
@@ -394,6 +412,7 @@ export function useSync({
       albumArtists.find((a) => a.Id === id)?.Name ??
       albums.find((a) => a.Id === id)?.Name ??
       playlists.find((p) => p.Id === id)?.Name ??
+      genres.find((g) => g.Id === id)?.Name ??
       id;
 
     const getItemTrackCount = (id: string): number => {

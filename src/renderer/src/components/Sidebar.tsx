@@ -37,9 +37,7 @@ interface SidebarProps {
   albums: Album[];
   playlists: Playlist[];
   genres: Genre[];
-  selectedGenre: Genre | null;
   onLibraryTab: (tab: LibraryTab) => void;
-  onSelectGenre: (genre: Genre | null) => void;
   onDestinationClick: (path: string) => void;
   onAddFolder: () => void;
   onRefreshDevices: () => void;
@@ -62,9 +60,7 @@ export function Sidebar({
   albums,
   playlists,
   genres,
-  selectedGenre,
   onLibraryTab,
-  onSelectGenre,
   onDestinationClick,
   onAddFolder,
   onRefreshDevices,
@@ -174,7 +170,7 @@ export function Sidebar({
           </button>
           <button
             data-testid="tab-genres"
-            onClick={() => onSelectGenre(null)}
+            onClick={() => onLibraryTab('genres')}
             className={tabClass(activeSection === 'library' && activeLibrary === 'genres')}
           >
             <Tag className="w-4 h-4 flex-shrink-0" />
@@ -184,39 +180,6 @@ export function Sidebar({
             </span>
           </button>
         </nav>
-
-        {/* Genre list - shown when genres tab is active and no genre is selected */}
-        {activeSection === 'library' && activeLibrary === 'genres' && !selectedGenre && (
-          <nav className="mt-2 space-y-1 pl-2">
-            {genres.map((genre) => (
-              <button
-                key={genre.Name}
-                data-testid={`genre-item-${genre.Name.toLowerCase().replace(/\s+/g, '-')}`}
-                onClick={() => onSelectGenre(genre)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-body-sm transition-colors hover:bg-surface_container_high text-on_surface"
-              >
-                <span className="truncate">{genre.Name}</span>
-                <span className="ml-auto text-label-sm opacity-50">{genre.LibraryItems ?? 0}</span>
-              </button>
-            ))}
-          </nav>
-        )}
-
-        {/* Back to genres list - shown when a genre is selected */}
-        {activeSection === 'library' && activeLibrary === 'genres' && selectedGenre && (
-          <div className="mt-2 pl-2">
-            <button
-              data-testid="back-to-genres"
-              onClick={() => onSelectGenre(null)}
-              className="flex items-center gap-1 text-body-sm text-primary hover:text-primary transition-colors mb-1"
-            >
-              ← Back to Genres
-            </button>
-            <p className="text-label-sm text-on_surface_variant px-3 truncate">
-              {selectedGenre.Name}
-            </p>
-          </div>
-        )}
       </div>
 
       {/* Devices + Folders */}

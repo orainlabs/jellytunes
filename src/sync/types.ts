@@ -39,7 +39,7 @@ export interface ConfigValidationResult {
 /**
  * Item type classification for sync operations
  */
-export type ItemType = 'artist' | 'album' | 'playlist' | 'albumArtist';
+export type ItemType = 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre';
 
 /**
  * Input for sync operation

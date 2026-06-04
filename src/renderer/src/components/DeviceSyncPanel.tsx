@@ -5,6 +5,7 @@ import type {
   AlbumArtist,
   Album,
   Playlist,
+  Genre,
   Bitrate,
   SyncProgressInfo,
   PreviewData,
@@ -36,7 +37,7 @@ type ItemState = 'new' | 'synced' | 'outOfSync' | 'remove';
 interface SyncItem {
   id: string;
   name: string;
-  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
+  type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
   state: ItemState;
 }
 
@@ -66,6 +67,7 @@ interface DeviceSyncPanelProps {
   albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
+  genres: Genre[];
   showPreview: boolean;
   previewData: PreviewData | null;
   syncedMusicBytes?: number;
@@ -82,7 +84,10 @@ interface DeviceSyncPanelProps {
   coverArtMode: CoverArtMode;
   lyricsMode: LyricsMode;
   hasFlacOrM4a: boolean;
-  onToggleItem: (id: string, type?: 'artist' | 'albumArtist' | 'album' | 'playlist') => void;
+  onToggleItem: (
+    id: string,
+    type?: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre',
+  ) => void;
   onToggleConvert: () => void;
   onBitrateChange: (b: Bitrate) => void;
   onCoverArtModeChange: (m: CoverArtMode) => void;
@@ -127,6 +132,7 @@ export function DeviceSyncPanel({
   albumArtists,
   albums,
   playlists,
+  genres,
   showPreview,
   previewData,
   syncedMusicBytes,
@@ -225,6 +231,8 @@ export function DeviceSyncPanel({
   addNewItems(albumArtists, 'albumArtist', selectedAlbumArtists);
   addNewItems(albums, 'album', selectedTracks);
   addNewItems(playlists, 'playlist', selectedTracks);
+  // ORAIN-0535: genres use the unified set (no shared-id risk with artists/albumArtists).
+  addNewItems(genres, 'genre', selectedTracks);
 
   const groups: [ItemState, string][] = [
     ['new', 'New'],

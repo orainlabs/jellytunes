@@ -7,6 +7,7 @@ import type {
   AlbumArtist,
   Album,
   Playlist,
+  Genre,
   PaginationState,
   LibraryStats,
 } from '../appTypes';
@@ -18,6 +19,7 @@ interface SearchResults {
   albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
+  genres: Genre[];
 }
 
 interface SelectAllConfirmDialogProps {
@@ -78,6 +80,7 @@ interface LibraryContentProps {
   albumArtists: AlbumArtist[];
   albums: Album[];
   playlists: Playlist[];
+  genres: Genre[];
   pagination: PaginationState;
   selectedTracks: Set<string>;
   selectedArtists?: Set<string>;
@@ -114,6 +117,7 @@ export function LibraryContent({
   albumArtists,
   albums,
   playlists,
+  genres,
   pagination,
   selectedTracks,
   selectedArtists,
@@ -165,7 +169,8 @@ export function LibraryContent({
     // Don't apply filter if the results would be empty
     if (f === 'selected' && selectedTracks.size === 0) return;
     if (f === 'unselected') {
-      const totalItems = artists.length + albumArtists.length + albums.length + playlists.length;
+      const totalItems =
+        artists.length + albumArtists.length + albums.length + playlists.length + genres.length;
       if (selectedTracks.size >= totalItems) return;
     }
     setSyncFilter(f);
@@ -225,6 +230,9 @@ export function LibraryContent({
   const displayPlaylists = isSearchActive
     ? applySyncFilter(searchResults?.playlists ?? [])
     : applySyncFilter(playlists);
+  const displayGenres = isSearchActive
+    ? applySyncFilter(searchResults?.genres ?? [])
+    : applySyncFilter(genres);
 
   const tabLabel =
     activeLibrary === 'artists'
@@ -233,7 +241,9 @@ export function LibraryContent({
         ? 'album artists'
         : activeLibrary === 'albums'
           ? 'albums'
-          : 'playlists';
+          : activeLibrary === 'genres'
+            ? 'genres'
+            : 'playlists';
   const currentItems =
     activeLibrary === 'artists'
       ? displayArtists
@@ -241,7 +251,9 @@ export function LibraryContent({
         ? displayAlbumArtists
         : activeLibrary === 'albums'
           ? displayAlbums
-          : displayPlaylists;
+          : activeLibrary === 'genres'
+            ? displayGenres
+            : displayPlaylists;
   const hasResults = currentItems.length > 0;
   const currentPagination = pagination[activeLibrary];
 
@@ -261,10 +273,12 @@ export function LibraryContent({
           ? 'AlbumArtistCount'
           : activeLibrary === 'albums'
             ? 'AlbumCount'
-            : 'PlaylistCount';
+            : activeLibrary === 'genres'
+              ? null
+              : 'PlaylistCount';
 
     // Fallback: use stats (handles race condition where stats resolves before tab loads)
-    if (stats && tabCountKey in stats) {
+    if (tabCountKey && stats && tabCountKey in stats) {
       return stats[tabCountKey as keyof LibraryStats] as number;
     }
 
@@ -326,7 +340,11 @@ export function LibraryContent({
                     (f === 'selected' && selectedTracks.size === 0) ||
                     (f === 'unselected' &&
                       selectedTracks.size >=
-                        artists.length + albumArtists.length + albums.length + playlists.length);
+                        artists.length +
+                          albumArtists.length +
+                          albums.length +
+                          playlists.length +
+                          genres.length);
                   return (
                     <button
                       key={f}
@@ -501,6 +519,20 @@ export function LibraryContent({
                     isSelected={selectedTracks.has(playlist.Id)}
                     wasSynced={previouslySyncedItems.has(playlist.Id)}
                     outOfSync={outOfSyncItems.has(playlist.Id)}
+                    onToggle={handleToggle}
+                    serverUrl={serverUrl}
+                  />
+                ))}
+
+              {activeLibrary === 'genres' &&
+                displayGenres.map((genre, idx) => (
+                  <LibraryItem
+                    key={genre.Id || `genre-${idx}`}
+                    item={genre}
+                    type="genre"
+                    isSelected={selectedTracks.has(genre.Id)}
+                    wasSynced={previouslySyncedItems.has(genre.Id)}
+                    outOfSync={outOfSyncItems.has(genre.Id)}
                     onToggle={handleToggle}
                     serverUrl={serverUrl}
                   />

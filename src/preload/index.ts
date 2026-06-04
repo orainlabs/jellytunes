@@ -85,7 +85,7 @@ const api = {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
     itemNames?: Record<string, string>;
     destinationPath: string;
     options?: {
@@ -148,7 +148,7 @@ const api = {
     apiKey: string;
     userId: string;
     itemId: string;
-    itemType: 'artist' | 'album' | 'playlist' | 'albumArtist';
+    itemType: 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre';
   }): Promise<{
     tracks: Array<{
       id: string;
@@ -171,7 +171,7 @@ const api = {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
+    itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'>;
   }): Promise<{
     tracks: Array<{
       id: string;
@@ -213,7 +213,11 @@ const api = {
   getSyncedItems: (
     mountPoint: string,
   ): Promise<
-    Array<{ id: string; name: string; type: 'artist' | 'albumArtist' | 'album' | 'playlist' }>
+    Array<{
+      id: string;
+      name: string;
+      type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
+    }>
   > => ipcRenderer.invoke('sync:getSyncedItems', mountPoint),
 
   analyzeDiff: (options: {
@@ -221,7 +225,7 @@ const api = {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
     destinationPath: string;
     options: {
       convertToMp3: boolean;
@@ -258,7 +262,7 @@ const api = {
     apiKey: string;
     userId: string;
     itemIds: string[];
-    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+    itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
     destinationPath: string;
   }): Promise<{ removed: number; errors: string[] }> =>
     ipcRenderer.invoke('sync:removeItems', options),

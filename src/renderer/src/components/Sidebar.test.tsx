@@ -187,12 +187,12 @@ describe('Sidebar', () => {
       expect(screen.getByTestId('tab-genres')).toBeInTheDocument();
     });
 
-    it('calls onSelectGenre with null when Genres tab is clicked', async () => {
+    it('calls onLibraryTab with genres when Genres tab is clicked', async () => {
       const user = userEvent.setup({ delay: null });
       render(<Sidebar {...defaultProps} />);
       const genresTab = screen.getByTestId('tab-genres');
       await user.click(genresTab);
-      expect(defaultProps.onSelectGenre).toHaveBeenCalledWith(null);
+      expect(defaultProps.onLibraryTab).toHaveBeenCalledWith('genres');
     });
 
     it('shows correct highlight style when Genres tab is active', () => {

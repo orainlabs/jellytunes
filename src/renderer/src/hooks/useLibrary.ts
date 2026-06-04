@@ -29,7 +29,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
   const [albums, setAlbums] = useState<Album[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [genres, setGenres] = useState<Genre[]>([]);
-  const [selectedGenre, setSelectedGenre] = useState<Genre | null>(null);
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [activeLibrary, setActiveLibrary] = useState<LibraryTab>('artists');
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -378,7 +377,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         const res = await fetch(
           buildUrl(
             baseUrl,
-            `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=LibraryItems`,
+            `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=ItemCount,ChildCount`,
           ),
           { headers },
         );
@@ -448,7 +447,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else if (type === 'genres')
-          endpoint = `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=LibraryItems`;
+          endpoint = `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=ItemCount,ChildCount`;
         else
           endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
@@ -466,19 +465,23 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
                 : type === 'genres'
                   ? rawItems.map(normalizeGenre)
                   : rawItems.map(normalizePlaylist);
-        const existingIds = new Set(
-          currentPagination.items.map((item) => ('Id' in item ? item.Id : (item as Genre).Name)),
-        );
-        const uniqueNewItems = normalized.filter((item) => {
-          const id = 'Id' in item ? item.Id : (item as Genre).Name;
-          return !existingIds.has(id);
-        });
+        const existingIds = new Set(currentPagination.items.map((item) => item.Id));
+        const uniqueNewItems = normalized.filter((item) => !existingIds.has(item.Id));
 
         if (type === 'artists') updateArtistIndex(uniqueNewItems as Artist[]);
         else if (type === 'albumArtists') updateAlbumArtistIndex(uniqueNewItems as AlbumArtist[]);
         else if (type === 'albums') updateAlbumIndex(uniqueNewItems as Album[]);
         else if (type === 'genres') {
-          // Genres use Name as key, not Id — no index update needed
+          // No separate index for genres (itemTypeIndex.genres Set still useful for batch fetch)
+          itemTypeIndexRef.current.genres = new Set([
+            ...itemTypeIndexRef.current.genres,
+            ...(uniqueNewItems as Genre[]).map((g) => g.Id),
+          ]);
+          setItemTypeIndex((prev) => {
+            const s = new Set(prev.genres);
+            (uniqueNewItems as Genre[]).forEach((g) => s.add(g.Id));
+            return { ...prev, genres: s };
+          });
         } else updatePlaylistIndex(uniqueNewItems as Playlist[]);
 
         setPagination((prev) => ({
@@ -515,64 +518,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       // outgoing tab's scroll position when it re-attaches for the new tab
       contentScrollRef.current.scrollTop = 0;
     }
-    // Clear selected genre when leaving genres tab
-    if (newTab !== 'genres') {
-      setSelectedGenre(null);
-    }
     setActiveLibrary(newTab);
   };
-
-  const selectGenre = (genre: Genre | null): void => {
-    setSelectedGenre(genre);
-    if (genre) {
-      setActiveLibrary('genres');
-    }
-  };
-
-  // Fetch albums filtered by selected genre
-  useEffect(() => {
-    if (!selectedGenre || !jellyfinConfig || !userId) return;
-
-    const headers = jellyfinHeaders(jellyfinConfig.apiKey);
-    const baseUrl = jellyfinConfig.url.replace(/\/$/, '');
-
-    const fetchGenreAlbums = async () => {
-      try {
-        const res = await fetch(
-          buildUrl(
-            baseUrl,
-            `/Items?IncludeItemTypes=MusicAlbum&Genres=${encodeURIComponent(selectedGenre.Name)}&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`,
-          ),
-          { headers },
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const items: Album[] = (data.Items ?? []).map(normalizeAlbum);
-        setAlbums(items);
-        updateAlbumIndex(items);
-        const totalCount = data.TotalRecordCount ?? items.length;
-        setPagination((prev) => ({
-          ...prev,
-          albums: {
-            items,
-            total: totalCount,
-            startIndex: items.length,
-            hasMore: items.length < totalCount,
-            scrollPos: 0,
-          },
-        }));
-      } catch (e) {
-        logger.error(
-          `Failed to load genre albums: ${selectedGenre.Name}: ` +
-            (e instanceof Error ? e.message : String(e)),
-        );
-        setError(`Error loading albums for ${selectedGenre.Name}`);
-        setAlbums([]);
-      }
-    };
-
-    void fetchGenreAlbums();
-  }, [selectedGenre, jellyfinConfig, userId]);
 
   // Sync pagination items to state arrays
   useEffect(() => {
@@ -640,18 +587,13 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
 
       // If all items already loaded, return current IDs
       if (!currentPagination.hasMore) {
-        // For genres, use Name instead of Id (genres don't have Id)
         return {
-          ids: currentPagination.items.map((item) =>
-            'Id' in item ? item.Id : (item as Genre).Name,
-          ),
+          ids: currentPagination.items.map((item) => item.Id),
           errors: [],
         };
       }
 
-      const allIds = new Set(
-        currentPagination.items.map((item) => ('Id' in item ? item.Id : (item as Genre).Name)),
-      );
+      const allIds = new Set(currentPagination.items.map((item) => item.Id));
       let startIndex = currentPagination.startIndex;
       let totalCount = currentPagination.total;
       let hasMore: boolean = currentPagination.hasMore;
@@ -671,7 +613,7 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${pageLimit}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else if (type === 'genres')
-          endpoint = `/MusicGenres?SortBy=Name&Limit=${pageLimit}&StartIndex=${startIndex}&Fields=LibraryItems`;
+          endpoint = `/MusicGenres?SortBy=Name&Limit=${pageLimit}&StartIndex=${startIndex}&Fields=ItemCount,ChildCount`;
         else
           endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${pageLimit}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
@@ -705,10 +647,9 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
           if (normalized.length < pageLimit) {
             break;
           }
-          // Genres use Name as key, all other types use Id
+          // All item types now use Id (genres gained Id in ORAIN-0535)
           normalized.forEach((item) => {
-            const id = 'Id' in item ? item.Id : (item as Genre).Name;
-            allIds.add(id);
+            allIds.add(item.Id);
           });
           startIndex += normalized.length;
           // Never chase an upward-oscillating TotalRecordCount: only update totalCount
@@ -789,7 +730,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     albums: uniqueAlbums,
     playlists: uniquePlaylists,
     genres,
-    selectedGenre,
     stats,
     activeLibrary,
     pagination,
@@ -805,7 +745,6 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     loadTab,
     loadMore,
     handleTabChange,
-    selectGenre,
     refreshLibrary,
     fetchAllIds,
     selectAllWithCompleteSet,

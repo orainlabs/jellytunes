@@ -189,36 +189,63 @@ describe('jellyfin normalizers', () => {
   });
 
   describe('normalizeGenre', () => {
-    it('extracts Name and LibraryItems from raw genre', () => {
-      const raw = { Name: 'Rock', LibraryItems: 42 };
+    it('extracts Id, Name and ItemCount from raw genre', () => {
+      const raw = { Id: 'g-rock', Name: 'Rock', ItemCount: 42 };
       const result = normalizeGenre(raw);
+      expect(result.Id).toBe('g-rock');
       expect(result.Name).toBe('Rock');
       expect(result.LibraryItems).toBe(42);
     });
 
+    it('falls back to ChildCount when ItemCount is absent (older Jellyfin)', () => {
+      const raw = { Id: 'g-jazz', Name: 'Jazz', ChildCount: 17 };
+      const result = normalizeGenre(raw);
+      expect(result.Id).toBe('g-jazz');
+      expect(result.LibraryItems).toBe(17);
+    });
+
+    it('prefers ItemCount over ChildCount when both are present', () => {
+      const raw = { Id: 'g-pop', Name: 'Pop', ItemCount: 30, ChildCount: 5 };
+      const result = normalizeGenre(raw);
+      expect(result.LibraryItems).toBe(30);
+    });
+
+    it('returns 0 when neither ItemCount nor ChildCount is present', () => {
+      const raw = { Id: 'g-1', Name: 'Classical' };
+      const result = normalizeGenre(raw);
+      expect(result.LibraryItems).toBe(0);
+    });
+
     it('extracts Name from raw genre with default LibraryItems', () => {
-      const raw = { Name: 'Jazz' };
+      const raw = { Id: 'g-2', Name: 'Jazz' };
       const result = normalizeGenre(raw);
       expect(result.Name).toBe('Jazz');
       expect(result.LibraryItems).toBe(0);
     });
 
     it('handles empty Name gracefully', () => {
-      const raw = { Name: '' };
+      const raw = { Id: 'g-3', Name: '' };
       const result = normalizeGenre(raw);
       expect(result.Name).toBe('');
       expect(result.LibraryItems).toBe(0);
     });
 
     it('handles missing Name gracefully', () => {
-      const raw = { LibraryItems: 5 };
+      const raw = { Id: 'g-4', ItemCount: 5 };
       const result = normalizeGenre(raw);
       expect(result.Name).toBe('');
       expect(result.LibraryItems).toBe(5);
     });
 
+    it('handles missing Id gracefully (empty string fallback)', () => {
+      const raw = { Name: 'Reggae', ItemCount: 7 };
+      const result = normalizeGenre(raw);
+      expect(result.Id).toBe('');
+      expect(result.Name).toBe('Reggae');
+    });
+
     it('returns a plain object, not the raw input', () => {
-      const raw = { Name: 'Pop', LibraryItems: 10 };
+      const raw = { Id: 'g-5', Name: 'Pop', ItemCount: 10 };
       const result = normalizeGenre(raw);
       expect(result).not.toBe(raw);
     });

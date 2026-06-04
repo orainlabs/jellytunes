@@ -41,9 +41,9 @@ function createGenresFetch() {
     json: () =>
       Promise.resolve({
         Items: [
-          { Name: 'Rock', LibraryItems: 10 },
-          { Name: 'Jazz', LibraryItems: 5 },
-          { Name: 'Electronic', LibraryItems: 8 },
+          { Id: 'rock-id', Name: 'Rock', ItemCount: 10 },
+          { Id: 'jazz-id', Name: 'Jazz', ItemCount: 5 },
+          { Id: 'electronic-id', Name: 'Electronic', ItemCount: 8 },
         ],
         TotalRecordCount: 3,
       }),
@@ -363,7 +363,7 @@ describe('useLibrary', () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              Items: [{ Name: 'Electronic', LibraryItems: 8 }],
+              Items: [{ Id: 'electronic-id', Name: 'Electronic', ItemCount: 8 }],
               TotalRecordCount: 5,
             }),
         });
@@ -393,7 +393,7 @@ describe('useLibrary', () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            Items: [{ Name: 'Rock', LibraryItems: 10 }],
+            Items: [{ Id: 'rock-id', Name: 'Rock', ItemCount: 10 }],
             TotalRecordCount: 1,
           }),
       });
@@ -410,86 +410,8 @@ describe('useLibrary', () => {
         fetchedIds = res.ids;
       });
 
-      // Verify genres use Name as ID (not Id field)
-      expect(fetchedIds).toContain('Rock');
-    });
-  });
-
-  describe('genre selection', () => {
-    it('fetches albums filtered by selected genre when genre is selected', async () => {
-      const fetchCalls: string[] = [];
-      mockFetch.mockImplementation((url: string) => {
-        fetchCalls.push(url);
-        if (url.includes('MusicGenres')) {
-          return Promise.resolve({
-            ok: true,
-            json: () =>
-              Promise.resolve({
-                Items: [{ Name: 'Rock', LibraryItems: 10 }],
-                TotalRecordCount: 1,
-              }),
-          });
-        }
-        if (url.includes('Genres=Rock')) {
-          return Promise.resolve({
-            ok: true,
-            json: () =>
-              Promise.resolve({
-                Items: [
-                  { Id: 'album-1', Name: 'Rock Album 1', Type: 'MusicAlbum', ImageTags: {} },
-                  { Id: 'album-2', Name: 'Rock Album 2', Type: 'MusicAlbum', ImageTags: {} },
-                ],
-                TotalRecordCount: 2,
-              }),
-          });
-        }
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
-      });
-
-      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
-
-      // Load genres tab first
-      await act(async () => {
-        await result.current.loadTab('genres');
-      });
-
-      // Select Rock genre
-      await act(async () => {
-        result.current.selectGenre({ Name: 'Rock', LibraryItems: 10 } as any);
-      });
-
-      // Wait for the useEffect to trigger
-      await act(async () => {
-        // Small delay to let useEffect settle
-        await new Promise((r) => setTimeout(r, 50));
-      });
-
-      // Verify album fetch was triggered with Genres filter
-      const albumFetchCall = fetchCalls.find((url) => url.includes('Genres=Rock'));
-      expect(albumFetchCall).toBeDefined();
-      expect(albumFetchCall).toContain('IncludeItemTypes=MusicAlbum');
-      expect(result.current.albums.length).toBeGreaterThan(0);
-    });
-
-    it('clears selected genre when switching to non-genres tab', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
-      });
-
-      const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
-
-      await act(async () => {
-        result.current.selectGenre({ Name: 'Rock', LibraryItems: 10 } as any);
-      });
-
-      expect(result.current.selectedGenre).not.toBeNull();
-
-      act(() => {
-        result.current.handleTabChange('artists');
-      });
-
-      expect(result.current.selectedGenre).toBeNull();
+      // Verify genres use Id as ID (not Name field)
+      expect(fetchedIds).toContain('rock-id');
     });
   });
 });

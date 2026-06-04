@@ -125,6 +125,104 @@ describe('sync-api', () => {
     });
   });
 
+  describe('getGenreTracks', () => {
+    it('returns tracks for a given genre id (ORAIN-0535)', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            Items: [
+              makeTrackItem({ Id: 't1', Name: 'So What', Genres: ['Jazz'] }),
+              makeTrackItem({ Id: 't2', Name: 'Take Five', Genres: ['Jazz'] }),
+            ],
+          }),
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getGenreTracks('genre-jazz');
+      expect(tracks).toHaveLength(2);
+      expect(tracks[0].id).toBe('t1');
+      expect(tracks[1].id).toBe('t2');
+    });
+
+    it('queries /Items with GenreIds and IncludeItemTypes=Audio (ORAIN-0535)', async () => {
+      let capturedUrl = '';
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ Items: [] }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getGenreTracks('genre-jazz');
+
+      expect(capturedUrl).toContain('/Items?');
+      expect(capturedUrl).toContain('GenreIds=genre-jazz');
+      expect(capturedUrl).toContain('IncludeItemTypes=Audio');
+      expect(capturedUrl).toContain('Recursive=true');
+    });
+
+    it('returns empty array when no tracks match the genre', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ Items: [] }),
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getGenreTracks('genre-empty');
+      expect(tracks).toEqual([]);
+    });
+
+    it('skips tracks without a MediaSources path', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            Items: [
+              makeTrackItem({ Id: 't1', Name: 'Good' }),
+              makeTrackItem({
+                Id: 't2',
+                Name: 'Bad (no source)',
+                MediaSources: undefined,
+                Path: undefined,
+              }),
+            ],
+          }),
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getGenreTracks('genre-jazz');
+      expect(tracks).toHaveLength(1);
+      expect(tracks[0].id).toBe('t1');
+    });
+  });
+
   describe('getTracksForItems', () => {
     it('with empty array: returns { tracks: [], errors: [] } with 0 HTTP calls', async () => {
       const mockFetch = vi.fn();
@@ -194,6 +292,65 @@ describe('sync-api', () => {
       // Bare ArtistIds= would be wrong — AlbumArtistIds already contains "ArtistIds" as a substring,
       // so check the param name with the [?&] boundary
       expect(aaCall).not.toMatch(/[?&]ArtistIds=aa-1/);
+    });
+
+    it("dispatches 'genre' type to getGenreTracks (ORAIN-0535)", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            Items: [
+              makeTrackItem({ Id: 't1', Name: 'So What', Genres: ['Jazz'] }),
+              makeTrackItem({ Id: 't2', Name: 'Take Five', Genres: ['Jazz'] }),
+            ],
+          }),
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const result = await api.getTracksForItems(
+        ['genre-jazz'],
+        new Map<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>([
+          ['genre-jazz', 'genre'],
+        ]),
+      );
+
+      expect(result.tracks).toHaveLength(2);
+      expect(result.errors).toEqual([]);
+      // Verify the request was made with GenreIds
+      const calls = mockFetch.mock.calls as Array<[string]>;
+      expect(calls[0][0]).toContain('GenreIds=genre-jazz');
+    });
+
+    it("tags 'genre' tracks with parentItemId (ORAIN-0535)", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            Items: [makeTrackItem({ Id: 't1', Name: 'So What' })],
+          }),
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const result = await api.getTracksForItems(
+        ['genre-jazz'],
+        new Map<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>([
+          ['genre-jazz', 'genre'],
+        ]),
+      );
+
+      expect(result.tracks[0].parentItemId).toBe('genre-jazz');
     });
   });
 
@@ -333,6 +490,16 @@ describe('sync-api', () => {
 
       const tracks = await api.getArtistTracks('artist-1', 'artist');
       expect(tracks).toHaveLength(5);
+    });
+  });
+
+  describe('createMockApiClient', () => {
+    it('includes a getGenreTracks mock method (ORAIN-0535)', async () => {
+      const { createMockApiClient } = await import('./sync-api');
+      const mock = createMockApiClient();
+      expect(typeof mock.getGenreTracks).toBe('function');
+      const tracks = await mock.getGenreTracks('genre-jazz');
+      expect(tracks).toEqual([]);
     });
   });
 

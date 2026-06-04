@@ -68,6 +68,9 @@ export interface SyncApi {
   /** Get tracks in a playlist */
   getPlaylistTracks(playlistId: string): Promise<TrackInfo[]>;
 
+  /** Get tracks for a genre (all Audio items with matching GenreIds) */
+  getGenreTracks(genreId: string): Promise<TrackInfo[]>;
+
   /** Get tracks for multiple items (batch) */
   getTracksForItems(
     itemIds: string[],
@@ -338,6 +341,24 @@ class SyncApiImpl implements SyncApi {
     return tracks;
   }
 
+  async getGenreTracks(genreId: string): Promise<TrackInfo[]> {
+    const startTime = Date.now();
+    this.logger?.debug(`[BATCH] getGenreTracks START genreId=${genreId}`);
+
+    const endpoint = `/Items?IncludeItemTypes=Audio&GenreIds=${encodeURIComponent(genreId)}&Recursive=true&Fields=Path,MediaSources,AlbumId,ParentId,Genres,Artists,AlbumArtist,Album`;
+    const data = await this.request<{ Items: JellyfinTrackItem[] }>(endpoint);
+
+    const tracks = (data.Items ?? [])
+      .filter((item) => item.MediaSources?.[0]?.Path)
+      .map((item) => this.trackItemToInfo(item));
+
+    this.logger?.debug(
+      `[BATCH] getGenreTracks ${genreId} → ${tracks.length} tracks in ${Date.now() - startTime}ms`,
+    );
+
+    return tracks;
+  }
+
   private async getAlbumTracksBatch(
     albumIds: string[],
   ): Promise<Array<TrackInfo & { _albumId: string }>> {
@@ -407,6 +428,8 @@ class SyncApiImpl implements SyncApi {
                 return await this.getArtistTracks(itemId, itemType);
               case 'playlist':
                 return await this.getPlaylistTracks(itemId);
+              case 'genre':
+                return await this.getGenreTracks(itemId);
               default:
                 throw new Error(`Unsupported item type: ${itemType}`);
             }
@@ -812,6 +835,7 @@ export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
     getArtistTracks: async () => [],
     getAlbumTracks: async () => [],
     getPlaylistTracks: async () => [],
+    getGenreTracks: async () => [],
     getTracksForItems: async () => ({ tracks: [], errors: [] }),
     getItem: async () => null,
     getLibraryStats: async () => ({ artists: 0, albums: 0, tracks: 0 }),

@@ -1,13 +1,16 @@
 import type React from 'react';
 import { useState } from 'react';
-import { User, Disc, ListMusic } from 'lucide-react';
-import type { Artist, AlbumArtist, Album, Playlist } from '../appTypes';
+import { User, Disc, ListMusic, Tag } from 'lucide-react';
+import type { Artist, AlbumArtist, Album, Playlist, Genre } from '../appTypes';
 import { formatRunTimeTicks } from '../utils/jellyfin';
 import { useIntersectionObserver } from '../hooks/useIntersectionObserver';
 
+type LibraryItemType = 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
+type LibraryItemShape = Artist | AlbumArtist | Album | Playlist | Genre;
+
 interface LibraryItemProps {
-  item: Artist | AlbumArtist | Album | Playlist;
-  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
+  item: LibraryItemShape;
+  type: LibraryItemType;
   isSelected: boolean;
   wasSynced: boolean;
   outOfSync: boolean;
@@ -21,13 +24,14 @@ function ItemThumbnail({
   type,
   serverUrl,
 }: {
-  item: Artist | AlbumArtist | Album | Playlist;
-  type: 'artist' | 'albumArtist' | 'album' | 'playlist';
+  item: LibraryItemShape;
+  type: LibraryItemType;
   serverUrl?: string;
 }) {
   const [imgError, setImgError] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
-  const tag = item.ImageTags?.Primary;
+  // Genres don't have ImageTags — only Artist/AlbumArtist/Album/Playlist do
+  const tag = (item as Artist | AlbumArtist | Album | Playlist).ImageTags?.Primary;
   const { ref, isIntersecting } = useIntersectionObserver<HTMLDivElement>({
     rootMargin: '100px',
     triggerOnce: true,
@@ -40,7 +44,13 @@ function ItemThumbnail({
 
   // albumArtist uses the same icon as artist (User)
   const Icon =
-    type === 'artist' || type === 'albumArtist' ? User : type === 'album' ? Disc : ListMusic;
+    type === 'artist' || type === 'albumArtist'
+      ? User
+      : type === 'album'
+        ? Disc
+        : type === 'genre'
+          ? Tag
+          : ListMusic;
   const rounded = type === 'artist' || type === 'albumArtist' ? 'rounded-full' : 'rounded';
 
   // Show image once loaded, otherwise show placeholder
@@ -109,6 +119,7 @@ export function LibraryItem({
   const albumArtist = item as AlbumArtist;
   const album = item as Album;
   const playlist = item as Playlist;
+  const genre = item as Genre;
 
   const subtitle = (() => {
     if (type === 'artist') {
@@ -149,6 +160,13 @@ export function LibraryItem({
     return null;
   })();
 
+  // Genres get their own subtitle derived from `LibraryItems` (item count)
+  const genreSubtitle =
+    type === 'genre' && genre.LibraryItems && genre.LibraryItems > 0
+      ? `${genre.LibraryItems} item${genre.LibraryItems !== 1 ? 's' : ''}`
+      : null;
+  const finalSubtitle = type === 'genre' ? genreSubtitle : subtitle;
+
   return (
     <div
       data-testid="library-item"
@@ -179,7 +197,7 @@ export function LibraryItem({
           {item.Name}
         </p>
         <p className="text-caption text-on_surface_variant flex items-center gap-1.5 h-4">
-          {subtitle && <span className="truncate">{subtitle}</span>}
+          {finalSubtitle && <span className="truncate">{finalSubtitle}</span>}
           {coveredByArtist && (
             <span className="px-1.5 py-0.5 rounded-md text-caption flex-shrink-0 bg-surface_container text-on_surface_variant">
               covered by artist

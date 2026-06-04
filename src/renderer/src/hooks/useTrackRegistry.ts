@@ -44,7 +44,7 @@ interface TrackRegistryState {
   // RunTimeTicks per item (from library fetch — no extra HTTP calls)
   itemTicks: Map<string, number>;
   // Item types by id (for batch fetch)
-  itemTypes: Map<string, 'artist' | 'albumArtist' | 'album' | 'playlist'>;
+  itemTypes: Map<string, 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre'>;
   // Whether background fetch is in-flight for a given device+selection key
   isBackgroundFetching: Map<string, boolean>;
   // AbortController for cancelling in-flight background fetches
@@ -168,7 +168,7 @@ export function createTrackRegistry() {
     items: Array<{
       id: string;
       ticks: number;
-      type: 'artist' | 'albumArtist' | 'album' | 'playlist';
+      type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
     }>,
   ) => {
     for (const item of items) {
@@ -181,7 +181,10 @@ export function createTrackRegistry() {
    * Store item types for batch fetch lookup.
    */
   const setItemTypes = (
-    items: Array<{ id: string; type: 'artist' | 'albumArtist' | 'album' | 'playlist' }>,
+    items: Array<{
+      id: string;
+      type: 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre';
+    }>,
   ) => {
     for (const item of items) {
       state.itemTypes.set(item.id, item.type);
@@ -270,7 +273,7 @@ export function createTrackRegistry() {
     try {
       const itemTypesRecord = Object.fromEntries(state.itemTypes.entries()) as Record<
         string,
-        'artist' | 'album' | 'playlist' | 'albumArtist'
+        'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'
       >;
       const result = await window.api.getTracksForItems({
         serverUrl: jellyfinConfig.serverUrl,
@@ -513,7 +516,7 @@ export function createTrackRegistry() {
    */
   const getItemType = (
     itemId: string,
-  ): 'artist' | 'albumArtist' | 'album' | 'playlist' | undefined => {
+  ): 'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre' | undefined => {
     return state.itemTypes.get(itemId);
   };
 

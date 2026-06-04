@@ -72,6 +72,7 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     albums: defaultAlbums,
     playlists: defaultPlaylists,
     albumArtists: defaultAlbumArtists,
+    genres: [],
     showPreview: false,
     previewData: null,
     onToggleItem: vi.fn(),
