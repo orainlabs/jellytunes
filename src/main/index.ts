@@ -574,6 +574,35 @@ function createWindow(): void {
           { role: 'selectAll' },
         ],
       },
+      {
+        label: 'View',
+        submenu: [
+          {
+            label: 'Toggle Developer Tools',
+            accelerator: 'CmdOrCtrl+Alt+I',
+            visible: is.dev,
+            click: () => mainWindow?.webContents.toggleDevTools(),
+          },
+        ],
+      },
+    ];
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  } else if (process.platform === 'win32' || process.platform === 'linux') {
+    // Windows/Linux have no custom menu (auto-hidden on win32), but we still need
+    // a registered MenuItem so the DevTools accelerator is wired up.
+    const template: Electron.MenuItemConstructorOptions[] = [
+      { role: 'editMenu' },
+      {
+        label: 'View',
+        submenu: [
+          {
+            label: 'Toggle Developer Tools',
+            accelerator: 'CmdOrCtrl+Alt+I',
+            visible: is.dev,
+            click: () => mainWindow?.webContents.toggleDevTools(),
+          },
+        ],
+      },
     ];
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   }
@@ -589,6 +618,7 @@ function createWindow(): void {
     void shell.openExternal(details.url);
     return { action: 'deny' };
   });
+
   const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
   if (is.dev && rendererUrl) {
     void mainWindow.loadURL(rendererUrl);
