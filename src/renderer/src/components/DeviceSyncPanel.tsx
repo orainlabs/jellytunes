@@ -51,6 +51,15 @@ interface DeviceSyncPanelProps {
   isActivatingDevice: boolean;
   syncProgress: SyncProgressInfo | null;
   selectedTracks: Set<string>;
+  /**
+   * Typed selection sets for artists and album artists (ORAIN-0551).
+   * The same Jellyfin ID can appear in both `artists[]` and `albumArtists[]`,
+   * so we cannot use the unified `selectedTracks` to decide whether a given
+   * id should appear in the "New" section. Instead, the caller passes each
+   * typed set and we use the right one per view.
+   */
+  selectedArtists: Set<string>;
+  selectedAlbumArtists: Set<string>;
   syncedItemsInfo: SyncedItemInfo[];
   outOfSyncItems: Set<string>;
   artists: Artist[];
@@ -110,6 +119,8 @@ export function DeviceSyncPanel({
   isActivatingDevice,
   syncProgress,
   selectedTracks,
+  selectedArtists,
+  selectedAlbumArtists,
   syncedItemsInfo,
   outOfSyncItems,
   artists,
@@ -195,20 +206,25 @@ export function DeviceSyncPanel({
   }
 
   // New: selected but not yet synced — only available if loaded from library
+  // ORAIN-0551: for artist and albumArtist we route through the typed sets so that
+  // a shared id only appears once, with the type that matches the set the user
+  // actually selected from. For album and playlist (no shared-id issue) the
+  // unified `selectedTracks` is sufficient.
   const addNewItems = <T extends { Id: string; Name: string }>(
     items: T[],
     type: SyncItem['type'],
+    selected: Set<string>,
   ) => {
     for (const item of items) {
-      if (selectedTracks.has(item.Id) && !syncedIds.has(item.Id)) {
+      if (selected.has(item.Id) && !syncedIds.has(item.Id)) {
         syncItems.push({ id: item.Id, name: item.Name, type, state: 'new' });
       }
     }
   };
-  addNewItems(artists, 'artist');
-  addNewItems(albumArtists, 'albumArtist');
-  addNewItems(albums, 'album');
-  addNewItems(playlists, 'playlist');
+  addNewItems(artists, 'artist', selectedArtists);
+  addNewItems(albumArtists, 'albumArtist', selectedAlbumArtists);
+  addNewItems(albums, 'album', selectedTracks);
+  addNewItems(playlists, 'playlist', selectedTracks);
 
   const groups: [ItemState, string][] = [
     ['new', 'New'],

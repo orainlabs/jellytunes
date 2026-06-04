@@ -228,7 +228,16 @@ function AppConnected({
     sync.setSyncFolder(path);
     // Build itemIds from selected items; itemTypes covers all library items so the
     // registry always has correct types for items selected after device activation.
-    const selected = deviceSelections.selectedTracks;
+    // ORAIN-0551: iterate the typed sets instead of the union `selectedTracks` so
+    // a shared id (present in both extArtists and extAlbumArtists) is only added
+    // once. The id's "intended" type comes from the typed set it was selected in,
+    // not from whichever list happened to register last in the registry.
+    const selectedArtists = deviceSelections.selectedArtists;
+    const selectedAlbumArtists = deviceSelections.selectedAlbumArtists;
+    const selectedOthers = new Set<string>();
+    for (const id of deviceSelections.selectedTracks) {
+      if (!selectedArtists.has(id) && !selectedAlbumArtists.has(id)) selectedOthers.add(id);
+    }
     const itemIds: string[] = [];
     const itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {
       ...Object.fromEntries(extArtists.map((a) => [a.Id, 'artist' as const])),
@@ -237,16 +246,16 @@ function AppConnected({
       ...Object.fromEntries(extPlaylists.map((p) => [p.Id, 'playlist' as const])),
     };
     for (const a of extArtists) {
-      if (selected.has(a.Id)) itemIds.push(a.Id);
+      if (selectedArtists.has(a.Id)) itemIds.push(a.Id);
     }
     for (const a of extAlbumArtists) {
-      if (selected.has(a.Id)) itemIds.push(a.Id);
+      if (selectedAlbumArtists.has(a.Id)) itemIds.push(a.Id);
     }
     for (const a of extAlbums) {
-      if (selected.has(a.Id)) itemIds.push(a.Id);
+      if (selectedOthers.has(a.Id)) itemIds.push(a.Id);
     }
     for (const p of extPlaylists) {
-      if (selected.has(p.Id)) itemIds.push(p.Id);
+      if (selectedOthers.has(p.Id)) itemIds.push(p.Id);
     }
 
     // Load saved prefs for this destination (or use global defaults)
@@ -555,6 +564,8 @@ function AppConnected({
                 isActivatingDevice={deviceSelections.isActivatingDevice}
                 syncProgress={sync.syncProgress}
                 selectedTracks={deviceSelections.selectedTracks}
+                selectedArtists={deviceSelections.selectedArtists}
+                selectedAlbumArtists={deviceSelections.selectedAlbumArtists}
                 syncedItemsInfo={deviceSelections.syncedItemsInfo}
                 outOfSyncItems={deviceSelections.outOfSyncItems}
                 artists={extArtists}

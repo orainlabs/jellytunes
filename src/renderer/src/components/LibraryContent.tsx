@@ -84,7 +84,7 @@ interface LibraryContentProps {
   outOfSyncItems: Set<string>;
   isLoadingMore: boolean;
   error: string | null;
-  onToggle: (id: string) => void;
+  onToggle: (id: string, viewType?: 'artist' | 'albumArtist') => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
   onClearError: () => void;

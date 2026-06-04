@@ -253,6 +253,93 @@ describe('useDeviceSelections', () => {
     });
   });
 
+  describe('ORAIN-0551: viewType overrides registry last-write-wins routing', () => {
+    it('routes a shared id to selectedArtists when viewType="artist" even if registry says albumArtist', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      // Simulate the bug condition: the registry says the id is an albumArtist
+      // (because the album-artist list was registered after the artist list).
+      mockRegistry.getItemType.mockImplementation((id: string) =>
+        id === 'shared-id' ? 'albumArtist' : 'artist',
+      );
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      // User clicks the id from the Artists view — caller passes viewType='artist'.
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'artist');
+      });
+
+      // Must land in selectedArtists, not selectedAlbumArtists.
+      expect(result.current.selectedArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(false);
+      expect(result.current.selectedTracks.has('shared-id')).toBe(true);
+    });
+
+    it('routes a shared id to selectedAlbumArtists when viewType="albumArtist" even if registry says artist', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      mockRegistry.getItemType.mockImplementation((id: string) =>
+        id === 'shared-id' ? 'artist' : 'albumArtist',
+      );
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'albumArtist');
+      });
+
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedArtists.has('shared-id')).toBe(false);
+    });
+
+    it('falls back to the registry type when viewType is omitted (back-compat)', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      mockRegistry.getItemType.mockReturnValue('albumArtist');
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      await act(async () => {
+        result.current.toggleItem('artist-1');
+      });
+
+      expect(result.current.selectedAlbumArtists.has('artist-1')).toBe(true);
+      expect(result.current.selectedArtists.has('artist-1')).toBe(false);
+    });
+
+    it('deselects a shared id from BOTH typed sets when toggled off, even if viewType is provided', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      mockRegistry.getItemType.mockReturnValue('albumArtist');
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      // First add via the albumArtist view.
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'albumArtist');
+      });
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
+
+      // Then deselect from the artist view — should remove from albumArtist
+      // because we always deselect from all typed sets on toggle-off.
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'artist');
+      });
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(false);
+      expect(result.current.selectedArtists.has('shared-id')).toBe(false);
+      expect(result.current.selectedTracks.has('shared-id')).toBe(false);
+    });
+  });
+
   describe('selectItems', () => {
     it('adds multiple items to selectedItems', async () => {
       mockApi.getSyncedItems.mockResolvedValue([]);

@@ -61,6 +61,11 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     isActivatingDevice: false,
     syncProgress: null,
     selectedTracks: new Set<string>(),
+    // ORAIN-0551: default the typed sets to empty so existing tests that only
+    // set `selectedTracks` get an explicit "no artist typed selection" baseline.
+    // Tests that need to exercise the shared-id path pass these explicitly.
+    selectedArtists: new Set<string>(),
+    selectedAlbumArtists: new Set<string>(),
     syncedItemsInfo: [] as SyncedItemInfo[],
     outOfSyncItems: new Set<string>(),
     artists: defaultArtists,
@@ -146,7 +151,8 @@ describe('DeviceSyncPanel', () => {
 
     it('shows "New" badge for newly selected items not yet synced', async () => {
       await renderPanelAndSettle({
-        selectedTracks: new Set(['artist-2']),
+        // ORAIN-0551: artist selections now live in the typed set, not the union.
+        selectedArtists: new Set(['artist-2']),
         syncedItemsInfo: [],
         artists: defaultArtists,
       });
@@ -182,7 +188,10 @@ describe('DeviceSyncPanel', () => {
         const sharedId = 'shared-id';
         // Both lists include the same id — must not cause React duplicate-key warning
         await renderPanelAndSettle({
-          selectedTracks: new Set([sharedId]),
+          // ORAIN-0551: id is "selected as artist" only. The duplicate-key
+          // test focuses on the rendering path; routing correctness is
+          // covered by the new ORAIN-0551 describe block below.
+          selectedArtists: new Set([sharedId]),
           syncedItemsInfo: [],
           artists: [{ Id: sharedId, Name: 'As Artist', AlbumCount: 5 }],
           albumArtists: [{ Id: sharedId, Name: 'As AlbumArtist', AlbumCount: 7 }],
@@ -287,13 +296,20 @@ describe('DeviceSyncPanel', () => {
     });
 
     it('is enabled when items are selected', async () => {
-      await renderPanelAndSettle({ selectedTracks: new Set(['artist-1']) });
+      await renderPanelAndSettle({
+        // ORAIN-0551: artist selections live in the typed set.
+        selectedArtists: new Set(['artist-1']),
+      });
       expect(screen.getByTestId('sync-button')).toBeEnabled();
     });
 
     it('calls onStartSync when clicked', async () => {
       const onStartSync = vi.fn();
-      await renderPanelAndSettle({ selectedTracks: new Set(['artist-1']), onStartSync });
+      await renderPanelAndSettle({
+        // ORAIN-0551: artist selections live in the typed set.
+        selectedArtists: new Set(['artist-1']),
+        onStartSync,
+      });
       await userEvent.click(screen.getByTestId('sync-button'));
       expect(onStartSync).toHaveBeenCalled();
     });
@@ -631,6 +647,68 @@ describe('DeviceSyncPanel', () => {
       await waitFor(() => {
         expect(screen.getByText('Calculating sync state…')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('ORAIN-0551: shared id between artists and albumArtists appears once', () => {
+    it('shows the shared id exactly once in the New section even when present in both lists', async () => {
+      const sharedId = 'shared-id';
+      await renderPanelAndSettle({
+        // User selected the id from the Artists view — it lives in the
+        // selectedArtists set only. The fact that it ALSO exists in
+        // extAlbumArtists must NOT cause it to be rendered twice.
+        selectedArtists: new Set([sharedId]),
+        selectedAlbumArtists: new Set(),
+        selectedTracks: new Set([sharedId]),
+        syncedItemsInfo: [],
+        artists: [{ Id: sharedId, Name: 'As Artist', AlbumCount: 5 }],
+        albumArtists: [{ Id: sharedId, Name: 'As AlbumArtist', AlbumCount: 7 }],
+      });
+      // The New section should show the artist's display name (from the
+      // selectedArtists set, not the album-artist set) exactly once.
+      const artistEntries = screen.getAllByText('As Artist');
+      expect(artistEntries).toHaveLength(1);
+      // And the album-artist display name must not appear at all.
+      expect(screen.queryByText('As AlbumArtist')).not.toBeInTheDocument();
+    });
+
+    it('shows the shared id with the albumArtist type when only selectedAlbumArtists has it', async () => {
+      const sharedId = 'shared-id';
+      await renderPanelAndSettle({
+        selectedArtists: new Set(),
+        selectedAlbumArtists: new Set([sharedId]),
+        selectedTracks: new Set([sharedId]),
+        syncedItemsInfo: [],
+        artists: [{ Id: sharedId, Name: 'As Artist', AlbumCount: 5 }],
+        albumArtists: [{ Id: sharedId, Name: 'As AlbumArtist', AlbumCount: 7 }],
+      });
+      const albumArtistEntries = screen.getAllByText('As AlbumArtist');
+      expect(albumArtistEntries).toHaveLength(1);
+      expect(screen.queryByText('As Artist')).not.toBeInTheDocument();
+      // The type chip ("albumArtist") is rendered as a span next to the name.
+      // The whole sync panel must contain at least one "albumArtist" text node.
+      expect(document.body.textContent).toMatch(/albumArtist/);
+      // And the albumArtist name must appear exactly once (no duplicate from
+      // the artists list — that would be the regression we're fixing).
+      expect(screen.getAllByText('As AlbumArtist')).toHaveLength(1);
+    });
+
+    it('shows the shared id twice if the user actually selected it from BOTH views (intentional)', async () => {
+      const sharedId = 'shared-id';
+      await renderPanelAndSettle({
+        // The user explicitly clicked the id in BOTH views (which is now
+        // a no-op toggle-off + toggle-on, but for the test we simulate the
+        // intermediate state where both sets contain it).
+        selectedArtists: new Set([sharedId]),
+        selectedAlbumArtists: new Set([sharedId]),
+        selectedTracks: new Set([sharedId]),
+        syncedItemsInfo: [],
+        artists: [{ Id: sharedId, Name: 'As Artist', AlbumCount: 5 }],
+        albumArtists: [{ Id: sharedId, Name: 'As AlbumArtist', AlbumCount: 7 }],
+      });
+      // In this contrived state, both names show once each — i.e., 2 rows.
+      expect(screen.getAllByText('As Artist')).toHaveLength(1);
+      expect(screen.getAllByText('As AlbumArtist')).toHaveLength(1);
     });
   });
 });

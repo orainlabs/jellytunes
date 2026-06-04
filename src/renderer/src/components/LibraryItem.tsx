@@ -11,7 +11,7 @@ interface LibraryItemProps {
   isSelected: boolean;
   wasSynced: boolean;
   outOfSync: boolean;
-  onToggle: (id: string) => void;
+  onToggle: (id: string, viewType?: 'artist' | 'albumArtist') => void;
   serverUrl?: string;
 }
 
@@ -151,13 +151,20 @@ export function LibraryItem({
       data-testid="library-item"
       data-item-id={item.Id}
       data-item-type={type}
-      onClick={() => onToggle(item.Id)}
+      // ORAIN-0551: pass the item's `type` as viewType so the toggle handler can
+      // route the id to the correct typed set (selectedArtists vs
+      // selectedAlbumArtists) even when the same id exists in both Jellyfin lists.
+      onClick={() =>
+        onToggle(item.Id, type === 'artist' || type === 'albumArtist' ? type : undefined)
+      }
       className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${isSelected ? 'bg-primary_container/15 border border-primary_container/30 hover:bg-primary_container/20 border-l-4 border-primary' : willDelete ? 'border border-error/40 hover:bg-surface_container_low border-l-4 border-transparent' : 'border border-transparent hover:bg-surface_container_low border-l-4 border-transparent'}`}
     >
       <input
         type="checkbox"
         checked={isSelected}
-        onChange={() => onToggle(item.Id)}
+        onChange={() =>
+          onToggle(item.Id, type === 'artist' || type === 'albumArtist' ? type : undefined)
+        }
         onClick={(e) => e.stopPropagation()}
         className="w-4 h-4 rounded border-outline_variant bg-surface_container_high text-primary focus-visible:ring-primary flex-shrink-0"
       />

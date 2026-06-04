@@ -463,7 +463,7 @@ export function useDeviceSelections() {
   );
 
   const toggleItem = useCallback(
-    (id: string) => {
+    (id: string, viewType?: 'artist' | 'albumArtist') => {
       if (!activeDevicePath) return;
 
       const current = deviceStates.get(activeDevicePath) ?? EMPTY;
@@ -473,6 +473,15 @@ export function useDeviceSelections() {
         | 'album'
         | 'playlist'
         | undefined;
+
+      // ORAIN-0551: when the caller supplies the view type (e.g., LibraryContent
+      // invoking toggle from the Artists or AlbumArtists tab), prefer that as the
+      // routing target. This avoids the "last write wins" issue where the registry
+      // overwrites the type of a shared id to 'albumArtist' (because the album-artist
+      // list was registered second) and a click in the Artists view then routes to
+      // the wrong set.
+      const effectiveType: 'artist' | 'albumArtist' | 'album' | 'playlist' | undefined =
+        viewType ?? itemType;
 
       // ORAIN-0534: determine "is selected" by checking the union — if the id is in
       // ANY of the three sets (selectedArtists, selectedAlbumArtists, selectedItems)
@@ -491,9 +500,9 @@ export function useDeviceSelections() {
         newArtists.delete(id);
         newAlbumArtists.delete(id);
         newItems.delete(id);
-      } else if (itemType === 'artist') {
+      } else if (effectiveType === 'artist') {
         newArtists.add(id);
-      } else if (itemType === 'albumArtist') {
+      } else if (effectiveType === 'albumArtist') {
         newAlbumArtists.add(id);
       } else {
         // album / playlist / unknown — use the un-typed set
