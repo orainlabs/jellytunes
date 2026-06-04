@@ -564,6 +564,7 @@ function AppConnected({
                 showPreview={sync.showPreview}
                 previewData={sync.previewData}
                 syncedMusicBytes={deviceSelections.syncedMusicBytes ?? undefined}
+                projectedAudioBytes={deviceSelections.projectedAudioBytes}
                 estimatedSizeBytes={deviceSelections.estimatedSizeBytes}
                 isTickEstimate={deviceSelections.isTickEstimate}
                 isLoadingSize={deviceSelections.isLoadingSize}

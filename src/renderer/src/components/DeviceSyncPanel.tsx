@@ -60,6 +60,13 @@ interface DeviceSyncPanelProps {
   showPreview: boolean;
   previewData: PreviewData | null;
   syncedMusicBytes?: number;
+  /**
+   * Audio bytes that will exist on the device post-sync, accounting for both
+   * new selections and items in `remove` state. Use this (not syncedMusicBytes)
+   * for storage bar segments so the bar reflects reality, not disk state.
+   * ORAIN-0528.
+   */
+  projectedAudioBytes?: number | null;
   estimatedSizeBytes?: number | null;
   isTickEstimate?: boolean;
   isLoadingSize?: boolean;
@@ -112,6 +119,7 @@ export function DeviceSyncPanel({
   showPreview,
   previewData,
   syncedMusicBytes,
+  projectedAudioBytes,
   estimatedSizeBytes,
   isTickEstimate,
   isLoadingSize,
@@ -209,7 +217,16 @@ export function DeviceSyncPanel({
     ['remove', 'Will remove'],
   ];
 
-  const audioBytes = estimatedSizeBytes ?? syncedMusicBytes ?? 0;
+  // Audio segment: what will exist on the device post-sync.
+  // Prefer projectedAudioBytes (already accounts for items in 'remove' state).
+  // Fall back to estimatedSizeBytes or syncedMusicBytes for backward compat.
+  // ORAIN-0528: previously fell back to syncedMusicBytes without excluding
+  // 'remove' items, leaving an inflated Audio segment when the user
+  // deselected every previously-synced item.
+  const audioBytes = projectedAudioBytes ?? estimatedSizeBytes ?? syncedMusicBytes ?? 0;
+  // "Other" = device usage that is NOT our synced music. This must reflect
+  // what is currently on disk (so the bar segments add up to total usage),
+  // not the projected post-sync state.
   const otherFiles = deviceInfo ? Math.max(0, deviceInfo.used - (syncedMusicBytes ?? 0)) : null;
   const otherPct = deviceInfo ? Math.round(((otherFiles ?? 0) / deviceInfo.total) * 100) : null;
   // rawAudioPct is the true proportion — no cap so overflow is detectable
@@ -227,7 +244,7 @@ export function DeviceSyncPanel({
   const freeColorClass =
     isOverCapacity || freeBarPct < 5 ? 'bg-error' : freeBarPct < 10 ? 'bg-warning' : 'bg-success';
   const isAudioLoading = !!isLoadingSize;
-  const audioDisplayBytes = estimatedSizeBytes ?? syncedMusicBytes;
+  const audioDisplayBytes = projectedAudioBytes ?? estimatedSizeBytes ?? syncedMusicBytes;
   // Show "~" prefix when size is approximate: tick-based estimate (including while loading)
   // or MP3 conversion (size derived from bitrate, never exact)
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- boolean OR is intentional

@@ -520,6 +520,64 @@ describe('DeviceSyncPanel', () => {
     });
   });
 
+  describe('storage bar audio segment (ORAIN-0528)', () => {
+    const findAudioRow = () => {
+      const bar = screen.getByTestId('storage-bar');
+      // Audio row is the one with the primary_container swatch
+      const audioSpan = within(bar).getByText(/Audio$/);
+      return audioSpan.parentElement as HTMLElement;
+    };
+
+    it('shows 0 B Audio when all synced items are deselected (WILL REMOVE) and no new items selected', async () => {
+      // Repro: 133 MB worth of synced audio on device, no new items selected,
+      // all previously-synced items are in WILL REMOVE state.
+      // projectedAudioBytes represents what will exist on device post-sync.
+      await renderPanelAndSettle({
+        syncedMusicBytes: 133 * 1024 * 1024,
+        projectedAudioBytes: 0,
+        estimatedSizeBytes: null,
+        selectedTracks: new Set<string>(),
+        syncedItemsInfo: defaultSyncedItemsInfo,
+      });
+      const audioRow = findAudioRow();
+      // Audio row must NOT show the inflated 133 MB — items in WILL REMOVE
+      // will be deleted, so post-sync the device has 0 audio from us.
+      // formatBytes(0) renders as "0 KB" (see src/renderer/src/utils/format.ts).
+      expect(audioRow).toHaveTextContent('0 KB');
+      expect(audioRow).toHaveTextContent(/Audio$/);
+    });
+
+    it('shows projected audio when some synced items are kept and new items are selected', async () => {
+      // 200 MB total synced; user kept some + selected new — projected
+      // total is 150 MB. The bar must show 150 MB, not the inflated 200 MB.
+      await renderPanelAndSettle({
+        syncedMusicBytes: 200 * 1024 * 1024,
+        projectedAudioBytes: 150 * 1024 * 1024,
+        estimatedSizeBytes: 150 * 1024 * 1024,
+        selectedTracks: new Set(['artist-1', 'artist-2']),
+        syncedItemsInfo: defaultSyncedItemsInfo,
+      });
+      const audioRow = findAudioRow();
+      // formatBytes(157286400) = "157 MB"
+      expect(audioRow).toHaveTextContent('157');
+      expect(audioRow).toHaveTextContent(/Audio$/);
+    });
+
+    it('shows kept audio bytes when only synced items are selected (no new)', async () => {
+      // 200 MB total synced; user kept all of it. Audio = 200 MB.
+      await renderPanelAndSettle({
+        syncedMusicBytes: 200 * 1024 * 1024,
+        projectedAudioBytes: 200 * 1024 * 1024,
+        estimatedSizeBytes: 200 * 1024 * 1024,
+        selectedTracks: new Set(['artist-1', 'album-1']),
+        syncedItemsInfo: defaultSyncedItemsInfo,
+      });
+      const audioRow = findAudioRow();
+      // formatBytes(209715200) ≈ "200 MB" or "210 MB" (binary units).
+      expect(audioRow).toHaveTextContent(/200|210/);
+    });
+  });
+
   describe('isActivatingDevice', () => {
     it('skeleton is hidden after device info loads when isActivatingDevice is false', async () => {
       // renderPanelAndSettle waits for skeleton to disappear

@@ -20,6 +20,7 @@ const mockRegistry = {
   getItemType: vi.fn().mockReturnValue('artist'),
   hasItemTracks: vi.fn().mockReturnValue(false),
   countRemoveTracks: vi.fn().mockReturnValue(0),
+  countRemoveBytes: vi.fn().mockReturnValue(0),
 };
 
 vi.mock('./useTrackRegistry', () => ({
@@ -69,6 +70,7 @@ beforeEach(() => {
   mockRegistry.getSyncedMusicBytes.mockReturnValue(0);
   mockRegistry.getItemTrackIds.mockReturnValue([]);
   mockRegistry.getItemType.mockReturnValue('artist');
+  mockRegistry.countRemoveBytes.mockReturnValue(0);
 });
 
 afterEach(() => {
@@ -584,6 +586,83 @@ describe('useDeviceSelections', () => {
 
       expect(mockApi.analyzeDiff).toHaveBeenCalledTimes(2);
       expect(mockApi.analyzeDiff.mock.calls[1][0].options.coverArtMode).toBe('companion');
+    });
+  });
+
+  describe('projectedAudioBytes (ORAIN-0528)', () => {
+    it('returns 0 when all synced items are deselected (WILL REMOVE) and no new selected', async () => {
+      // Set up: device has 200 MB synced across two items.
+      mockApi.getSyncedItems.mockResolvedValue([
+        { id: 'artist-1', name: 'The Beatles', type: 'artist' as const },
+        { id: 'album-1', name: 'Abbey Road', type: 'album' as const },
+      ]);
+      mockApi.analyzeDiff.mockResolvedValue({
+        success: true,
+        items: [],
+        totals: { newTracks: 0, metadataChanged: 0, removed: 0, pathChanged: 0, unchanged: 0 },
+      });
+      // After activation, scheduleSyncedMusicRecalc calls getSyncedMusicBytes → 200 MB
+      mockRegistry.getSyncedMusicBytes.mockReturnValue(200 * 1024 * 1024);
+      // Removing BOTH items accounts for the full 200 MB
+      mockRegistry.countRemoveBytes.mockReturnValue(200 * 1024 * 1024);
+      // calculateSize returns null when nothing is selected
+      mockRegistry.calculateSize.mockReturnValue({ total: null, isTickEstimate: false });
+
+      const { result } = renderHook(() => useDeviceSelections());
+
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      // Wait for scheduleSyncedMusicRecalc's setTimeout(0) to fire
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      // Default selection is all synced items — deselect all of them.
+      await act(async () => {
+        result.current.toggleItem('artist-1');
+        result.current.toggleItem('album-1');
+      });
+
+      // With nothing selected, projectedAudioBytes should be 0 (synced 200 MB - 200 MB removed).
+      expect(result.current.projectedAudioBytes).toBe(0);
+    });
+
+    it('returns calculateSize total when at least one item is selected', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([
+        { id: 'artist-1', name: 'The Beatles', type: 'artist' as const },
+      ]);
+      mockApi.analyzeDiff.mockResolvedValue({
+        success: true,
+        items: [],
+        totals: { newTracks: 0, metadataChanged: 0, removed: 0, pathChanged: 0, unchanged: 0 },
+      });
+      mockRegistry.getSyncedMusicBytes.mockReturnValue(100 * 1024 * 1024);
+      // calculateSize returns 80 MB (e.g., one item selected with partial size)
+      mockRegistry.calculateSize.mockReturnValue({
+        total: 80 * 1024 * 1024,
+        isTickEstimate: false,
+      });
+
+      const { result } = renderHook(() => useDeviceSelections());
+
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      // When calculateSize returns a total, projectedAudioBytes == that total.
+      expect(result.current.projectedAudioBytes).toBe(80 * 1024 * 1024);
+      // countRemoveBytes should NOT have been called — short-circuit on calculateSize.
+      expect(mockRegistry.countRemoveBytes).not.toHaveBeenCalled();
+    });
+
+    it('returns null when device is not yet activated', () => {
+      const { result } = renderHook(() => useDeviceSelections());
+      expect(result.current.projectedAudioBytes).toBeNull();
     });
   });
 });

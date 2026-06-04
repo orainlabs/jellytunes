@@ -102,6 +102,35 @@ export function useDeviceSelections() {
   const estimatedSizeBytes = estimatedSizeResult.total;
   const isTickEstimate = estimatedSizeResult.isTickEstimate;
 
+  // Projected audio bytes post-sync = what will exist on the device if the
+  // user starts the sync right now. Equals:
+  //   - estimatedSizeBytes if calculateSize returned a value (sum of bytes of
+  //     currently selected items, including already-synced ones kept)
+  //   - otherwise (nothing selected → everything synced is in WILL REMOVE):
+  //     syncedMusicBytes - willRemoveBytes
+  //
+  // Excluding items in `remove` state is what makes the storage bar's Audio
+  // segment show 0 when the user deselects every previously-synced item
+  // (ORAIN-0528).
+  const projectedAudioBytes = useMemo(() => {
+    void registryVersion; // reactive dep: re-runs after scheduleSyncedMusicRecalc bumps version
+    if (!activeDevicePath) return null;
+    const state = deviceStates.get(activeDevicePath);
+    if (!state?.syncedMusicBytes) return null;
+    if (estimatedSizeBytes !== null && estimatedSizeBytes !== undefined) {
+      // Selection has items — projected total comes from calculateSize.
+      return estimatedSizeBytes;
+    }
+    // Nothing selected (or all selections had no resolvable tracks).
+    // Audio post-sync = (kept synced bytes) = synced - bytes of removed items.
+    const removedItemIds: string[] = [];
+    for (const info of state.syncedItemsInfo) {
+      if (!state.selectedItems.has(info.id)) removedItemIds.push(info.id);
+    }
+    const removeBytes = registry.countRemoveBytes(removedItemIds, activeDevicePath);
+    return Math.max(0, state.syncedMusicBytes - removeBytes);
+  }, [activeDevicePath, deviceStates, registry, registryVersion, estimatedSizeBytes]);
+
   // Schedule recalc of syncedMusicBytes after device load
   const scheduleSyncedMusicRecalc = useCallback(
     (devicePath: string) => {
@@ -505,6 +534,7 @@ export function useDeviceSelections() {
     syncedItemsInfo: activeState.syncedItemsInfo,
     outOfSyncItems: activeState.outOfSyncItems,
     estimatedSizeBytes,
+    projectedAudioBytes,
     isTickEstimate,
     isLoadingSize: sizeLoadingCount > 0,
     syncedMusicBytes: activeState.syncedMusicBytes,
