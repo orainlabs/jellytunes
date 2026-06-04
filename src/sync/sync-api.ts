@@ -57,8 +57,10 @@ export interface SyncApi {
   /** Get user information */
   getUser(): Promise<{ id: string; name: string }>;
 
-  /** Get tracks for an artist */
-  getArtistTracks(artistId: string): Promise<TrackInfo[]>;
+  /** Get tracks for an artist. ORAIN-0534: type discriminates between regular
+   *  artists (ArtistIds= query) and album-artists (AlbumArtistIds= query). The two
+   *  share IDs in Jellyfin but resolve to different album sets. */
+  getArtistTracks(artistId: string, type?: 'artist' | 'albumArtist'): Promise<TrackInfo[]>;
 
   /** Get tracks for an album */
   getAlbumTracks(albumId: string): Promise<TrackInfo[]>;
@@ -219,13 +221,19 @@ class SyncApiImpl implements SyncApi {
     };
   }
 
-  async getArtistTracks(artistId: string): Promise<TrackInfo[]> {
-    this.logger?.debug(`[BATCH] getArtistTracks START artistId=${artistId}`);
+  async getArtistTracks(
+    artistId: string,
+    type: 'artist' | 'albumArtist' = 'artist',
+  ): Promise<TrackInfo[]> {
+    this.logger?.debug(`[BATCH] getArtistTracks START artistId=${artistId} type=${type}`);
     const startTime = Date.now();
 
-    const albumsEndpoint = `/Users/${this.userId}/Items?AlbumArtistIds=${artistId}&includeItemTypes=MusicAlbum&Recursive=true&Fields=Path,MediaSources`;
+    // ORAIN-0534: regular artists use ArtistIds=, album-artists use AlbumArtistIds=.
+    // The two are distinct fields in Jellyfin even though IDs can overlap.
+    const filterParam = type === 'albumArtist' ? 'AlbumArtistIds' : 'ArtistIds';
+    const albumsEndpoint = `/Users/${this.userId}/Items?${filterParam}=${artistId}&includeItemTypes=MusicAlbum&Recursive=true&Fields=Path,MediaSources`;
     this.logger?.debug(
-      `[BATCH] getArtistTracks ${artistId} → fetching albums endpoint=${albumsEndpoint}`,
+      `[BATCH] getArtistTracks ${artistId} (${type}) → fetching albums endpoint=${albumsEndpoint}`,
     );
     const albumsData = await this.request<{ Items: JellyfinAlbumItem[] }>(albumsEndpoint);
 
@@ -369,7 +377,8 @@ class SyncApiImpl implements SyncApi {
             switch (itemType) {
               case 'artist':
               case 'albumArtist':
-                return await this.getArtistTracks(itemId);
+                // ORAIN-0534: pass type to use the correct Jellyfin filter (ArtistIds vs AlbumArtistIds)
+                return await this.getArtistTracks(itemId, itemType);
               case 'playlist':
                 return await this.getPlaylistTracks(itemId);
               default:

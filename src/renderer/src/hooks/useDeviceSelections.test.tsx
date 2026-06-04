@@ -665,4 +665,74 @@ describe('useDeviceSelections', () => {
       expect(result.current.projectedAudioBytes).toBeNull();
     });
   });
+
+  describe('ORAIN-0534: Artist vs AlbumArtist selection separation', () => {
+    it('selectedArtists and selectedAlbumArtists are exposed as independent sets', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useDeviceSelections());
+
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', {
+          ...defaultOptions,
+          itemIds: ['shared-id', 'artist-only', 'albumArtist-only'],
+          itemTypes: {
+            'shared-id': 'artist' as const,
+            'artist-only': 'artist' as const,
+            'albumArtist-only': 'albumArtist' as const,
+          },
+        });
+      });
+
+      // API surface must expose both sets independently
+      expect(result.current.selectedArtists).toBeDefined();
+      expect(result.current.selectedAlbumArtists).toBeDefined();
+      expect(result.current.selectedArtists).not.toBe(result.current.selectedAlbumArtists);
+    });
+
+    it('toggling an artist id does NOT add it to selectedAlbumArtists', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useDeviceSelections());
+
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', {
+          ...defaultOptions,
+          itemIds: ['shared-id'],
+          itemTypes: { 'shared-id': 'artist' as const },
+        });
+      });
+
+      await act(async () => {
+        result.current.toggleItem('shared-id');
+      });
+
+      expect(result.current.selectedArtists.has('shared-id')).toBe(true);
+      // The cross-leak bug: same Set<string> used for both — must be independent
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(false);
+    });
+
+    it('toggling an albumArtist id does NOT add it to selectedArtists', async () => {
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      // Mock registry.getItemType to return albumArtist for this test
+      mockRegistry.getItemType.mockReturnValue('albumArtist');
+
+      const { result } = renderHook(() => useDeviceSelections());
+
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', {
+          ...defaultOptions,
+          itemIds: ['shared-id'],
+          itemTypes: { 'shared-id': 'albumArtist' as const },
+        });
+      });
+
+      await act(async () => {
+        result.current.toggleItem('shared-id');
+      });
+
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedArtists.has('shared-id')).toBe(false);
+    });
+  });
 });

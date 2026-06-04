@@ -175,6 +175,31 @@ describe('DeviceSyncPanel', () => {
     });
   });
 
+  describe('ORAIN-0534: React duplicate key for artist + albumArtist with same id', () => {
+    it('does NOT emit React duplicate-key warning when artists and albumArtists share an id', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const sharedId = 'shared-id';
+        // Both lists include the same id — must not cause React duplicate-key warning
+        await renderPanelAndSettle({
+          selectedTracks: new Set([sharedId]),
+          syncedItemsInfo: [],
+          artists: [{ Id: sharedId, Name: 'As Artist', AlbumCount: 5 }],
+          albumArtists: [{ Id: sharedId, Name: 'As AlbumArtist', AlbumCount: 7 }],
+        });
+        const duplicateKeyCalls = consoleErrorSpy.mock.calls.filter((args) =>
+          args.some(
+            (a) =>
+              typeof a === 'string' && a.includes('Encountered two children with the same key'),
+          ),
+        );
+        expect(duplicateKeyCalls).toHaveLength(0);
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
+    });
+  });
+
   describe('cover art mode', () => {
     const getCoverArtSection = () =>
       screen

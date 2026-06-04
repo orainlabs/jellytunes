@@ -142,6 +142,59 @@ describe('sync-api', () => {
       expect(result.errors).toEqual([]);
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    it('ORAIN-0534: artist type → uses ArtistIds= (NOT AlbumArtistIds=)', async () => {
+      const capturedUrls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        capturedUrls.push(url);
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ Items: [] }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getTracksForItems(['artist-1'], new Map([['artist-1', 'artist']]));
+
+      const artistCall = capturedUrls.find((u) => u.includes('Items?'));
+      expect(artistCall).toBeDefined();
+      // Must use bare ArtistIds= (not the album-artist variant)
+      expect(artistCall).toMatch(/[?&]ArtistIds=artist-1/);
+      expect(artistCall).not.toMatch(/[?&]AlbumArtistIds=artist-1/);
+    });
+
+    it('ORAIN-0534: albumArtist type → uses AlbumArtistIds= (NOT bare ArtistIds=)', async () => {
+      const capturedUrls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        capturedUrls.push(url);
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ Items: [] }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getTracksForItems(['aa-1'], new Map([['aa-1', 'albumArtist']]));
+
+      const aaCall = capturedUrls.find((u) => u.includes('Items?'));
+      expect(aaCall).toBeDefined();
+      expect(aaCall).toMatch(/[?&]AlbumArtistIds=aa-1/);
+      // Bare ArtistIds= would be wrong — AlbumArtistIds already contains "ArtistIds" as a substring,
+      // so check the param name with the [?&] boundary
+      expect(aaCall).not.toMatch(/[?&]ArtistIds=aa-1/);
+    });
   });
 
   describe('getCoverArt', () => {

@@ -425,7 +425,10 @@ export function DeviceSyncPanel({
                       <div className="space-y-1">
                         {items.map((item) => (
                           <button
-                            key={item.id}
+                            // ORAIN-0534: key must include `type` because artists and
+                            // album-artists can share the same Jellyfin ID, which
+                            // would otherwise trigger React's "duplicate key" warning.
+                            key={`${item.type}:${item.id}`}
                             onClick={() => !isSyncing && onToggleItem(item.id)}
                             disabled={isSyncing}
                             className="w-full flex items-center gap-2 text-body-md py-1 px-2 rounded hover:bg-surface_container_high disabled:hover:bg-transparent disabled:cursor-default transition-colors text-left group"

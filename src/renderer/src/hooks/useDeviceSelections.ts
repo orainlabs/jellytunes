@@ -28,6 +28,8 @@ export interface SyncedItemInfo {
 }
 
 interface DeviceState {
+  selectedArtists: Set<string>;
+  selectedAlbumArtists: Set<string>;
   selectedItems: Set<string>;
   syncedItems: Set<string>;
   syncedItemsInfo: SyncedItemInfo[];
@@ -37,6 +39,8 @@ interface DeviceState {
 }
 
 const EMPTY: DeviceState = {
+  selectedArtists: new Set(),
+  selectedAlbumArtists: new Set(),
   selectedItems: new Set(),
   syncedItems: new Set(),
   syncedItemsInfo: [],
@@ -44,6 +48,22 @@ const EMPTY: DeviceState = {
   syncedMusicBytes: null,
   isActivatingDevice: false,
 };
+
+/** ORAIN-0534: build unified selectedItems set from the typed subsets.
+ *  Artists and album-artists live in their own sets to avoid cross-leak when the same
+ *  Jellyfin ID appears in both views. selectedItems is the union used by downstream
+ *  consumers (size estimation, fetch threshold, etc.) that don't care about the type. */
+function unionSelections(
+  artists: Set<string>,
+  albumArtists: Set<string>,
+  others: Set<string>,
+): Set<string> {
+  const result = new Set<string>();
+  for (const id of artists) result.add(id);
+  for (const id of albumArtists) result.add(id);
+  for (const id of others) result.add(id);
+  return result;
+}
 
 /** Build a cache key from path+options to detect unchanged re-activations */
 function buildActivationKey(
@@ -190,6 +210,8 @@ export function useDeviceSelections() {
           return new Map(prev).set(path, { ...existing, isActivatingDevice: isFirstLoad });
         }
         return new Map(prev).set(path, {
+          selectedArtists: new Set(),
+          selectedAlbumArtists: new Set(),
           selectedItems: new Set(),
           syncedItems: new Set(),
           syncedItemsInfo: [],
@@ -285,12 +307,39 @@ export function useDeviceSelections() {
       const resolvedOutOfSync = outOfSyncResult ?? new Set<string>();
       setDeviceStates((prev) => {
         const existing = prev.get(path);
-        // Only init selectedItems if this is the first load
-        const selectedItems =
-          existing?.syncedItems.size === 0 && existing.selectedItems.size === 0
-            ? new Set(syncedSet)
-            : (existing?.selectedItems ?? new Set(syncedSet));
+        // Only init selectedArtists/selectedAlbumArtists if this is the first load
+        // Split syncedSet into artists and albumArtists based on itemTypes
+        const newSelectedArtists =
+          existing?.syncedItems.size === 0 && existing.selectedArtists.size === 0
+            ? new Set(
+                items
+                  .filter((i: SyncedItemInfo) => i.type === 'artist')
+                  .map((i: { id: string }) => i.id),
+              )
+            : (existing?.selectedArtists ??
+              new Set(
+                items
+                  .filter((i: SyncedItemInfo) => i.type === 'artist')
+                  .map((i: { id: string }) => i.id),
+              ));
+        const newSelectedAlbumArtists =
+          existing?.syncedItems.size === 0 && existing.selectedAlbumArtists.size === 0
+            ? new Set(
+                items
+                  .filter((i: SyncedItemInfo) => i.type === 'albumArtist')
+                  .map((i: { id: string }) => i.id),
+              )
+            : (existing?.selectedAlbumArtists ??
+              new Set(
+                items
+                  .filter((i: SyncedItemInfo) => i.type === 'albumArtist')
+                  .map((i: { id: string }) => i.id),
+              ));
+        // Unified selectedItems set derived from both — used for compatibility (size estimation, etc.)
+        const selectedItems = new Set([...newSelectedArtists, ...newSelectedAlbumArtists]);
         return new Map(prev).set(path, {
+          selectedArtists: newSelectedArtists,
+          selectedAlbumArtists: newSelectedAlbumArtists,
           selectedItems,
           syncedItems: syncedSet,
           syncedItemsInfo: items,
@@ -418,46 +467,92 @@ export function useDeviceSelections() {
       if (!activeDevicePath) return;
 
       const current = deviceStates.get(activeDevicePath) ?? EMPTY;
-      const wasSelected = current.selectedItems.has(id);
-      const next = new Set(current.selectedItems);
-      if (wasSelected) next.delete(id);
-      else next.add(id);
+      const itemType = registry.getItemType(id) as
+        | 'artist'
+        | 'albumArtist'
+        | 'album'
+        | 'playlist'
+        | undefined;
+
+      // ORAIN-0534: determine "is selected" by checking the union — if the id is in
+      // ANY of the three sets (selectedArtists, selectedAlbumArtists, selectedItems)
+      // we consider it selected and remove it on toggle. This handles the case where
+      // an item was previously added to the un-typed selectedItems set before the type
+      // was known (e.g., registry returns undefined mid-loading).
+      const inArtists = current.selectedArtists.has(id);
+      const inAlbumArtists = current.selectedAlbumArtists.has(id);
+      const inItems = current.selectedItems.has(id);
+      const wasSelected = inArtists || inAlbumArtists || inItems;
+
+      const newArtists = new Set(current.selectedArtists);
+      const newAlbumArtists = new Set(current.selectedAlbumArtists);
+      const newItems = new Set(current.selectedItems);
+      if (wasSelected) {
+        newArtists.delete(id);
+        newAlbumArtists.delete(id);
+        newItems.delete(id);
+      } else if (itemType === 'artist') {
+        newArtists.add(id);
+      } else if (itemType === 'albumArtist') {
+        newAlbumArtists.add(id);
+      } else {
+        // album / playlist / unknown — use the un-typed set
+        newItems.add(id);
+      }
+
+      const next = unionSelections(newArtists, newAlbumArtists, newItems);
 
       setDeviceStates((prev) => {
         const state = prev.get(activeDevicePath) ?? EMPTY;
-        const ns = new Set(state.selectedItems);
-        if (ns.has(id)) ns.delete(id);
-        else ns.add(id);
-        return new Map(prev).set(activeDevicePath, { ...state, selectedItems: ns });
+        // Recompute union from the *new* typed sets so removing from one set also
+        // removes it from the unified view (avoids stale entries in selectedItems).
+        const updatedSelectedItems = unionSelections(newArtists, newAlbumArtists, newItems);
+        const updated: DeviceState = {
+          ...state,
+          selectedArtists: newArtists,
+          selectedAlbumArtists: newAlbumArtists,
+          selectedItems: updatedSelectedItems,
+        };
+        return new Map(prev).set(activeDevicePath, updated);
       });
 
       // On add, fetch real track data for any uncached selected items.
       if (!wasSelected) fetchSelectedUncachedTracks(next, activeDevicePath);
       bumpRegistryVersion();
     },
-    [activeDevicePath, deviceStates, fetchSelectedUncachedTracks],
+    [activeDevicePath, deviceStates, fetchSelectedUncachedTracks, registry],
   );
 
   const selectItems = useCallback(
     (items: Array<{ Id: string }>) => {
       if (!activeDevicePath) return;
 
-      const current = deviceStates.get(activeDevicePath) ?? EMPTY;
-      const next = new Set(current.selectedItems);
-      items.forEach((i) => next.add(i.Id));
-
       setDeviceStates((prev) => {
         const state = prev.get(activeDevicePath) ?? EMPTY;
-        const ns = new Set(state.selectedItems);
-        items.forEach((i) => ns.add(i.Id));
-        return new Map(prev).set(activeDevicePath, { ...state, selectedItems: ns });
+        const newArtists = new Set(state.selectedArtists);
+        const newAlbumArtists = new Set(state.selectedAlbumArtists);
+        const newItems = new Set(state.selectedItems);
+        items.forEach((i) => {
+          const t = registry.getItemType(i.Id);
+          if (t === 'artist') newArtists.add(i.Id);
+          else if (t === 'albumArtist') newAlbumArtists.add(i.Id);
+          else newItems.add(i.Id);
+        });
+        const selectedItems = unionSelections(newArtists, newAlbumArtists, newItems);
+        return new Map(prev).set(activeDevicePath, {
+          ...state,
+          selectedArtists: newArtists,
+          selectedAlbumArtists: newAlbumArtists,
+          selectedItems,
+        });
       });
 
+      const next = new Set(items.map((i) => i.Id));
       // Fetch real track data for any uncached selected items.
       fetchSelectedUncachedTracks(next, activeDevicePath);
       bumpRegistryVersion();
     },
-    [activeDevicePath, deviceStates, fetchSelectedUncachedTracks],
+    [activeDevicePath, fetchSelectedUncachedTracks, registry],
   );
 
   // Select All: registers item types in registry BEFORE selection so that
@@ -479,7 +574,12 @@ export function useDeviceSelections() {
     if (!activeDevicePath) return;
     setDeviceStates((prev) => {
       const state = prev.get(activeDevicePath) ?? EMPTY;
-      return new Map(prev).set(activeDevicePath, { ...state, selectedItems: new Set() });
+      return new Map(prev).set(activeDevicePath, {
+        ...state,
+        selectedArtists: new Set(),
+        selectedAlbumArtists: new Set(),
+        selectedItems: new Set(),
+      });
     });
   }, [activeDevicePath]);
 
@@ -530,6 +630,8 @@ export function useDeviceSelections() {
   return {
     activeDevicePath,
     selectedTracks: activeState.selectedItems,
+    selectedArtists: activeState.selectedArtists,
+    selectedAlbumArtists: activeState.selectedAlbumArtists,
     previouslySyncedItems: activeState.syncedItems,
     syncedItemsInfo: activeState.syncedItemsInfo,
     outOfSyncItems: activeState.outOfSyncItems,

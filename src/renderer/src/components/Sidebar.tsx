@@ -9,6 +9,7 @@ import {
   Plus,
   RotateCcw,
   Trash2,
+  Users,
 } from 'lucide-react';
 import type {
   ActiveSection,
@@ -133,7 +134,7 @@ export function Sidebar({
             onClick={() => onLibraryTab('albumArtists')}
             className={tabClass(activeSection === 'library' && activeLibrary === 'albumArtists')}
           >
-            <Disc className="w-4 h-4 flex-shrink-0" />
+            <Users className="w-4 h-4 flex-shrink-0" />
             Album Artists
             <span className="ml-auto text-label-sm opacity-60">
               {pagination.albumArtists.total > 0
