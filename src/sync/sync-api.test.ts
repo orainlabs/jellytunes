@@ -197,6 +197,145 @@ describe('sync-api', () => {
     });
   });
 
+  describe('getArtistTracks (ORAIN-0554)', () => {
+    it('type="artist" queries Audio items directly (not albums) using artistIds=', async () => {
+      const capturedUrls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        capturedUrls.push(url);
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ Items: [] }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getArtistTracks('artist-1', 'artist');
+
+      // ORAIN-0554: direct track query, NOT the album→tracks flow
+      const trackCall = capturedUrls.find(
+        (u) => u.includes('artistIds=artist-1') && u.includes('includeItemTypes=Audio'),
+      );
+      expect(trackCall).toBeDefined();
+      // The old flow used ArtistIds= for MusicAlbum — ensure we never query albums
+      const albumCall = capturedUrls.find(
+        (u) => u.includes('ArtistIds=artist-1') && u.includes('includeItemTypes=MusicAlbum'),
+      );
+      expect(albumCall).toBeUndefined();
+    });
+
+    it('type="albumArtist" keeps the MusicAlbum→tracks flow (AlbumArtistIds=)', async () => {
+      const capturedUrls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        capturedUrls.push(url);
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ Items: [] }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getArtistTracks('aa-1', 'albumArtist');
+
+      // AlbumArtist path: first fetches MusicAlbum items via AlbumArtistIds=
+      const albumCall = capturedUrls.find(
+        (u) => u.includes('AlbumArtistIds=aa-1') && u.includes('includeItemTypes=MusicAlbum'),
+      );
+      expect(albumCall).toBeDefined();
+    });
+
+    it('type="artist" returns tracks from a direct Audio query (no album roundtrip)', async () => {
+      // ORAIN-0554 acceptance: artista con 4 tracks propios + 1 contribución en album ajeno
+      // → sync como artist copia 5 tracks.
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        // Direct Audio query returns 5 tracks — including the contribution track
+        // whose album is owned by a different artist.
+        if (url.includes('artistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  {
+                    Id: 't1',
+                    Name: 'A',
+                    AlbumId: 'album-self',
+                    AlbumArtist: 'Self',
+                    Album: 'X',
+                    Artists: ['artist-1'],
+                    Path: '/p/t1.mp3',
+                    MediaSources: [{ Path: '/p/t1.mp3' }],
+                  },
+                  {
+                    Id: 't2',
+                    Name: 'B',
+                    AlbumId: 'album-self',
+                    AlbumArtist: 'Self',
+                    Album: 'X',
+                    Artists: ['artist-1'],
+                    Path: '/p/t2.mp3',
+                    MediaSources: [{ Path: '/p/t2.mp3' }],
+                  },
+                  {
+                    Id: 't3',
+                    Name: 'C',
+                    AlbumId: 'album-self',
+                    AlbumArtist: 'Self',
+                    Album: 'X',
+                    Artists: ['artist-1'],
+                    Path: '/p/t3.mp3',
+                    MediaSources: [{ Path: '/p/t3.mp3' }],
+                  },
+                  {
+                    Id: 't4',
+                    Name: 'D',
+                    AlbumId: 'album-self',
+                    AlbumArtist: 'Self',
+                    Album: 'X',
+                    Artists: ['artist-1'],
+                    Path: '/p/t4.mp3',
+                    MediaSources: [{ Path: '/p/t4.mp3' }],
+                  },
+                  {
+                    Id: 't5',
+                    Name: 'Contrib',
+                    AlbumId: 'album-other',
+                    AlbumArtist: 'Other',
+                    Album: 'Y',
+                    Artists: ['other', 'artist-1'],
+                    Path: '/p/t5.mp3',
+                    MediaSources: [{ Path: '/p/t5.mp3' }],
+                  },
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+      expect(tracks).toHaveLength(5);
+    });
+  });
+
   describe('getCoverArt', () => {
     it('emits warning (via error) when cover art fetch fails — sync continues', async () => {
       const mockFetch = vi.fn().mockResolvedValue({

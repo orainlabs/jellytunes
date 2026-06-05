@@ -3,7 +3,15 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { LibraryContent } from './LibraryContent';
-import type { LibraryTab, Artist, Album, Playlist, Genre, PaginationState } from '../appTypes';
+import type {
+  LibraryTab,
+  Artist,
+  AlbumArtist,
+  Album,
+  Playlist,
+  Genre,
+  PaginationState,
+} from '../appTypes';
 
 const mockApi = {
   listUsbDevices: vi.fn().mockResolvedValue([]),
@@ -334,5 +342,61 @@ describe('LibraryContent', () => {
     // Buttons should be to the LEFT of the label
     expect(selectAllBox.right).toBeLessThanOrEqual(labelBox.left);
     expect(clearBox.right).toBeLessThanOrEqual(labelBox.left);
+  });
+
+  // ORAIN-0554: handleToggle must propagate the active tab as viewType so the
+  // toggle handler can route the id to selectedArtists vs selectedAlbumArtists.
+  describe('ORAIN-0554: handleToggle viewType routing', () => {
+    it('forwards "artist" viewType when item is clicked in Artists tab', async () => {
+      const user = userEvent.setup({ delay: null });
+      const onToggle = vi.fn();
+      render(
+        <LibraryContent
+          {...defaultProps}
+          activeLibrary="artists"
+          onToggle={onToggle}
+          artists={sampleArtists}
+        />,
+      );
+      const firstItem = screen.getAllByTestId('library-item')[0];
+      await user.click(firstItem);
+      expect(onToggle).toHaveBeenCalledWith('artist-1', 'artist');
+    });
+
+    it('forwards "albumArtist" viewType when item is clicked in AlbumArtists tab', async () => {
+      const user = userEvent.setup({ delay: null });
+      const onToggle = vi.fn();
+      const albumArtists: AlbumArtist[] = [
+        { Id: 'aa-1', Name: 'Pink Floyd (AlbumArtist)' },
+        { Id: 'aa-2', Name: 'Radiohead (AlbumArtist)' },
+      ];
+      render(
+        <LibraryContent
+          {...defaultProps}
+          activeLibrary="albumArtists"
+          onToggle={onToggle}
+          albumArtists={albumArtists}
+        />,
+      );
+      const firstItem = screen.getAllByTestId('library-item')[0];
+      await user.click(firstItem);
+      expect(onToggle).toHaveBeenCalledWith('aa-1', 'albumArtist');
+    });
+
+    it('forwards undefined viewType for non-artist tabs (albums)', async () => {
+      const user = userEvent.setup({ delay: null });
+      const onToggle = vi.fn();
+      render(
+        <LibraryContent
+          {...defaultProps}
+          activeLibrary="albums"
+          onToggle={onToggle}
+          albums={[{ Id: 'album-1', Name: 'Help!' }]}
+        />,
+      );
+      const firstItem = screen.getAllByTestId('library-item')[0];
+      await user.click(firstItem);
+      expect(onToggle).toHaveBeenCalledWith('album-1', undefined);
+    });
   });
 });
