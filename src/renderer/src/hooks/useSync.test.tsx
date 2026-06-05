@@ -26,6 +26,8 @@ const defaultProps = {
   jellyfinConfig: { url: 'https://jellyfin.test', apiKey: 'test-key' },
   userId: 'user-1',
   selectedTracks: new Set<string>(),
+  selectedArtists: new Set<string>(),
+  selectedAlbumArtists: new Set<string>(),
   previouslySyncedItems: new Set<string>(),
   syncedItemsInfo: [] as SyncedItemInfo[],
   outOfSyncItems: new Set<string>(),
@@ -290,6 +292,7 @@ describe('useSync', () => {
       const props = {
         ...defaultProps,
         selectedTracks: new Set(['artist-1']),
+        selectedArtists: new Set(['artist-1']),
       };
       const { result } = renderHook(() => useSync(props));
 
@@ -310,6 +313,7 @@ describe('useSync', () => {
       const props = {
         ...defaultProps,
         selectedTracks: new Set(['artist-1']),
+        selectedArtists: new Set(['artist-1']),
         revalidateDevice,
       };
       const { result } = renderHook(() => useSync(props));
@@ -331,6 +335,7 @@ describe('useSync', () => {
       const props = {
         ...defaultProps,
         selectedTracks: new Set(['artist-1']),
+        selectedArtists: new Set(['artist-1']),
         revalidateDevice,
       };
       const { result } = renderHook(() => useSync(props));

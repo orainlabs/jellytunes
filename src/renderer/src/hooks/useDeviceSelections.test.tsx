@@ -314,29 +314,36 @@ describe('useDeviceSelections', () => {
       expect(result.current.selectedArtists.has('artist-1')).toBe(false);
     });
 
-    it('deselects a shared id from BOTH typed sets when toggled off, even if viewType is provided', async () => {
+    it('tracks the same id independently per tab — artist-view toggle does not affect albumArtist selection', async () => {
       mockApi.getSyncedItems.mockResolvedValue([]);
-      mockRegistry.getItemType.mockReturnValue('albumArtist');
 
       const { result } = renderHook(() => useDeviceSelections());
       await act(async () => {
         await result.current.activateDevice('/Volumes/USB', defaultOptions);
       });
 
-      // First add via the albumArtist view.
+      // Add via albumArtist view.
       await act(async () => {
         result.current.toggleItem('shared-id', 'albumArtist');
       });
       expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedArtists.has('shared-id')).toBe(false);
 
-      // Then deselect from the artist view — should remove from albumArtist
-      // because we always deselect from all typed sets on toggle-off.
+      // Toggle as artist view → ADDS to artists (item was not selected as artist).
+      // albumArtist selection is unaffected — independent per-tab behavior.
       await act(async () => {
         result.current.toggleItem('shared-id', 'artist');
       });
-      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(false);
+      expect(result.current.selectedArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
+
+      // Toggle as artist view again → removes from artists only.
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'artist');
+      });
       expect(result.current.selectedArtists.has('shared-id')).toBe(false);
-      expect(result.current.selectedTracks.has('shared-id')).toBe(false);
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedTracks.has('shared-id')).toBe(true);
     });
   });
 

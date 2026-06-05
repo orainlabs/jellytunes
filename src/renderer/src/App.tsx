@@ -134,6 +134,8 @@ function AppConnected({
     jellyfinConfig: connection.jellyfinConfig,
     userId: connection.userId,
     selectedTracks: deviceSelections.selectedTracks,
+    selectedArtists: deviceSelections.selectedArtists,
+    selectedAlbumArtists: deviceSelections.selectedAlbumArtists,
     previouslySyncedItems: deviceSelections.previouslySyncedItems,
     syncedItemsInfo: deviceSelections.syncedItemsInfo,
     outOfSyncItems: deviceSelections.outOfSyncItems,
@@ -188,6 +190,17 @@ function AppConnected({
 
     return result;
   }, [deviceSelections.previouslySyncedItems, extArtists, extAlbums]);
+
+  // Typed synced sets for artists/albumArtists tabs — prevents cross-leak where
+  // syncing X as 'artist' makes X show as "will remove" in Album Artists tab.
+  const syncedArtistIds = useMemo(
+    () => new Set(deviceSelections.syncedItemsInfo.filter((i) => i.type === 'artist').map((i) => i.id)),
+    [deviceSelections.syncedItemsInfo],
+  );
+  const syncedAlbumArtistIds = useMemo(
+    () => new Set(deviceSelections.syncedItemsInfo.filter((i) => i.type === 'albumArtist').map((i) => i.id)),
+    [deviceSelections.syncedItemsInfo],
+  );
 
   useEffect(() => {
     if (activeSection === 'library' && connection.jellyfinConfig && connection.userId) {
@@ -529,6 +542,10 @@ function AppConnected({
               playlists={lib.playlists}
               pagination={lib.pagination}
               selectedTracks={deviceSelections.selectedTracks}
+              selectedArtists={deviceSelections.selectedArtists}
+              selectedAlbumArtists={deviceSelections.selectedAlbumArtists}
+              syncedArtistIds={syncedArtistIds}
+              syncedAlbumArtistIds={syncedAlbumArtistIds}
               previouslySyncedItems={inferredSyncedItems}
               outOfSyncItems={deviceSelections.outOfSyncItems}
               isLoadingMore={lib.isLoadingMore || isSelectingAll}

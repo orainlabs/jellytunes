@@ -463,7 +463,7 @@ export function useDeviceSelections() {
   );
 
   const toggleItem = useCallback(
-    (id: string, viewType?: 'artist' | 'albumArtist') => {
+    (id: string, viewType?: 'artist' | 'albumArtist' | 'album' | 'playlist') => {
       if (!activeDevicePath) return;
 
       const current = deviceStates.get(activeDevicePath) ?? EMPTY;
@@ -481,29 +481,51 @@ export function useDeviceSelections() {
       // list was registered second) and a click in the Artists view then routes to
       // the wrong set.
       const effectiveType: 'artist' | 'albumArtist' | 'album' | 'playlist' | undefined =
-        viewType ?? itemType;
+        (viewType as 'artist' | 'albumArtist' | 'album' | 'playlist' | undefined) ?? itemType;
 
-      // ORAIN-0534: determine "is selected" by checking the union — if the id is in
-      // ANY of the three sets (selectedArtists, selectedAlbumArtists, selectedItems)
-      // we consider it selected and remove it on toggle. This handles the case where
-      // an item was previously added to the un-typed selectedItems set before the type
-      // was known (e.g., registry returns undefined mid-loading).
       const inArtists = current.selectedArtists.has(id);
       const inAlbumArtists = current.selectedAlbumArtists.has(id);
       const inItems = current.selectedItems.has(id);
-      const wasSelected = inArtists || inAlbumArtists || inItems;
+      // Use only the set relevant to this tab so that the same Jellyfin id can be
+      // independently selected as 'artist' and as 'albumArtist'. Using the union here
+      // caused a click in one tab to deselect the item in the other tab.
+      const wasSelected =
+        effectiveType === 'artist'
+          ? inArtists
+          : effectiveType === 'albumArtist'
+            ? inAlbumArtists
+            : inItems || inArtists || inAlbumArtists;
 
       const newArtists = new Set(current.selectedArtists);
       const newAlbumArtists = new Set(current.selectedAlbumArtists);
-      const newItems = new Set(current.selectedItems);
+      // Only carry over items that belong to neither typed set — avoids the stale-union
+      // problem where deleting from newArtists alone left the id in the copied union.
+      const newItems = new Set<string>();
+      for (const oid of current.selectedItems) {
+        if (!current.selectedArtists.has(oid) && !current.selectedAlbumArtists.has(oid)) {
+          newItems.add(oid);
+        }
+      }
       if (wasSelected) {
-        newArtists.delete(id);
-        newAlbumArtists.delete(id);
-        newItems.delete(id);
+        // Only remove from the set that owns this type — preserves independent selection
+        // across tabs when the same Jellyfin id appears in both Artists and Album Artists.
+        if (effectiveType === 'artist') {
+          newArtists.delete(id);
+        } else if (effectiveType === 'albumArtist') {
+          newAlbumArtists.delete(id);
+        } else {
+          newArtists.delete(id);
+          newAlbumArtists.delete(id);
+          newItems.delete(id);
+        }
       } else if (effectiveType === 'artist') {
         newArtists.add(id);
+        // Override stale registry type so fetchSelectedUncachedTracks uses the
+        // correct endpoint (ArtistIds) instead of last-write-wins albumArtist.
+        registry.setItemTypes([{ id, type: 'artist' }]);
       } else if (effectiveType === 'albumArtist') {
         newAlbumArtists.add(id);
+        registry.setItemTypes([{ id, type: 'albumArtist' }]);
       } else {
         // album / playlist / unknown — use the un-typed set
         newItems.add(id);

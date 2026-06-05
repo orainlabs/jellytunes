@@ -80,6 +80,10 @@ interface LibraryContentProps {
   playlists: Playlist[];
   pagination: PaginationState;
   selectedTracks: Set<string>;
+  selectedArtists?: Set<string>;
+  selectedAlbumArtists?: Set<string>;
+  syncedArtistIds?: Set<string>;
+  syncedAlbumArtistIds?: Set<string>;
   previouslySyncedItems: Set<string>;
   outOfSyncItems: Set<string>;
   isLoadingMore: boolean;
@@ -112,6 +116,10 @@ export function LibraryContent({
   playlists,
   pagination,
   selectedTracks,
+  selectedArtists,
+  selectedAlbumArtists,
+  syncedArtistIds,
+  syncedAlbumArtistIds,
   previouslySyncedItems,
   outOfSyncItems,
   isLoadingMore,
@@ -447,8 +455,8 @@ export function LibraryContent({
                     key={artist.Id || `artist-${idx}`}
                     item={artist}
                     type="artist"
-                    isSelected={selectedTracks.has(artist.Id)}
-                    wasSynced={previouslySyncedItems.has(artist.Id)}
+                    isSelected={(selectedArtists ?? selectedTracks).has(artist.Id)}
+                    wasSynced={(syncedArtistIds ?? previouslySyncedItems).has(artist.Id)}
                     outOfSync={outOfSyncItems.has(artist.Id)}
                     onToggle={handleToggle}
                     serverUrl={serverUrl}
@@ -461,8 +469,8 @@ export function LibraryContent({
                     key={albumArtist.Id || `albumArtist-${idx}`}
                     item={albumArtist}
                     type="albumArtist"
-                    isSelected={selectedTracks.has(albumArtist.Id)}
-                    wasSynced={previouslySyncedItems.has(albumArtist.Id)}
+                    isSelected={(selectedAlbumArtists ?? selectedTracks).has(albumArtist.Id)}
+                    wasSynced={(syncedAlbumArtistIds ?? previouslySyncedItems).has(albumArtist.Id)}
                     outOfSync={outOfSyncItems.has(albumArtist.Id)}
                     onToggle={handleToggle}
                     serverUrl={serverUrl}

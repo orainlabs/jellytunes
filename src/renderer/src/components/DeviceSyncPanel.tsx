@@ -82,7 +82,7 @@ interface DeviceSyncPanelProps {
   coverArtMode: CoverArtMode;
   lyricsMode: LyricsMode;
   hasFlacOrM4a: boolean;
-  onToggleItem: (id: string) => void;
+  onToggleItem: (id: string, type?: 'artist' | 'albumArtist' | 'album' | 'playlist') => void;
   onToggleConvert: () => void;
   onBitrateChange: (b: Bitrate) => void;
   onCoverArtModeChange: (m: CoverArtMode) => void;
@@ -445,7 +445,7 @@ export function DeviceSyncPanel({
                             // album-artists can share the same Jellyfin ID, which
                             // would otherwise trigger React's "duplicate key" warning.
                             key={`${item.type}:${item.id}`}
-                            onClick={() => !isSyncing && onToggleItem(item.id)}
+                            onClick={() => !isSyncing && onToggleItem(item.id, item.type)}
                             disabled={isSyncing}
                             className="w-full flex items-center gap-2 text-body-md py-1 px-2 rounded hover:bg-surface_container_high disabled:hover:bg-transparent disabled:cursor-default transition-colors text-left group"
                           >
