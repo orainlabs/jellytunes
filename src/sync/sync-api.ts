@@ -615,7 +615,7 @@ class SyncApiImpl implements SyncApi {
   }
 
   async fetchReplayGain(itemId: string): Promise<{ trackGain: string; trackPeak: string } | null> {
-    const url = `${this.baseUrl}/Items/${itemId}`;
+    const url = `${this.baseUrl}/Users/${this.userId}/Items/${itemId}?Fields=MediaSources`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 

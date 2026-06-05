@@ -244,6 +244,73 @@ describe('fetchReplayGain from Jellyfin API', () => {
     const result = await api.fetchReplayGain('track-1');
     expect(result).toBeNull();
   });
+
+  it('AC-1: fetchReplayGain uses user-scoped /Users/{userId}/Items/{itemId}?Fields=MediaSources endpoint', async () => {
+    const { createApiClient } = await import('./sync-api');
+
+    function makeMockResponse(
+      overrides: Partial<Response> & { ok: boolean; status: number; statusText: string },
+    ): Response {
+      return {
+        headers: new Headers(),
+        redirected: false,
+        type: 'basic',
+        url: 'https://jellyfin.example.com/Users/abcdef1234567890abcdef1234567890/Items/track-1?Fields=MediaSources',
+        clone: () => ({}) as any,
+        arrayBuffer: async () => new ArrayBuffer(0),
+        text: async () => '',
+        json: async () => ({}),
+        blob: async () => new Blob(),
+        formData: async () => new FormData(),
+        bodyUsed: false,
+        body: null,
+        ...overrides,
+      } as unknown as Response;
+    }
+
+    const userId = 'abcdef1234567890abcdef1234567890';
+    const itemId = 'track-1';
+    const expectedUrl = `https://jellyfin.example.com/Users/${userId}/Items/${itemId}?Fields=MediaSources`;
+    let capturedUrl = '';
+
+    const api = createApiClient({
+      baseUrl: 'https://jellyfin.example.com',
+      apiKey: '0123456789abcdef0123456789abcdef',
+      userId,
+      timeout: 5000,
+      fetch: async (input) => {
+        capturedUrl = typeof input === 'string' ? input : input.toString();
+        return makeMockResponse({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({
+            Id: itemId,
+            Name: 'Test Track',
+            MediaSources: [
+              {
+                Path: '/music/Artist/Album/track.mp3',
+                Container: 'mp3',
+                Metadata: {
+                  '@replaygain_track_gain': '-6.0 dB',
+                  '@replaygain_track_peak': '0.501187',
+                },
+              },
+            ],
+          }),
+        });
+      },
+    });
+
+    await api.fetchReplayGain(itemId);
+
+    // The URL must include the userId and request MediaSources fields
+    expect(capturedUrl).toBe(expectedUrl);
+    expect(capturedUrl).toContain(`/Users/${userId}/Items/${itemId}`);
+    expect(capturedUrl).toContain('Fields=MediaSources');
+    // It must NOT use the admin-only /Items/{itemId} endpoint
+    expect(capturedUrl).not.toMatch(/\/Items\/[^?]*$/);
+  });
 });
 
 // ─── AC-2: FFmpeg embeds ReplayGain tags by format ───────────────────────────
