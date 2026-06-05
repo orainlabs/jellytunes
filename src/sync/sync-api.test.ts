@@ -71,6 +71,87 @@ describe('sync-api', () => {
       const tracks = await api.getAlbumTracks('album-1');
       expect(tracks[0].album).toBe('Help! (Deluxe)');
     });
+
+    it('ORAIN-0560: falls back to AlbumName when Album is empty string ("" → falsy)', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            Items: [makeTrackItem({ Id: 'track-1', Album: '', AlbumName: 'Help! (Deluxe)' })],
+          }),
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getAlbumTracks('album-1');
+      expect(tracks[0].album).toBe('Help! (Deluxe)');
+    });
+
+    it('ORAIN-0560: falls back to albumData.Name when both Album and AlbumName are empty', async () => {
+      let albumDataCallCount = 0;
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        // The first call fetches album metadata; subsequent calls fetch tracks
+        if (url.includes(`/Items/${'album-1'}`) && !url.includes('parentId=')) {
+          albumDataCallCount++;
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ Name: 'Parent Album Title' }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [makeTrackItem({ Id: 'track-1', Album: '', AlbumName: '' })],
+            }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getAlbumTracks('album-1');
+      expect(albumDataCallCount).toBe(1);
+      expect(tracks[0].album).toBe('Parent Album Title');
+    });
+
+    it('ORAIN-0560: leaves album undefined when Album, AlbumName, and parent album name are all empty', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes(`/Items/${'album-1'}`) && !url.includes('parentId=')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ Name: '' }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [makeTrackItem({ Id: 'track-1', Album: '', AlbumName: '' })],
+            }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getAlbumTracks('album-1');
+      // AC: "Si item.Album, item.AlbumName y albumName son todos falsy, el tag no se escribe (no se escribe 'Unknown')"
+      expect(tracks[0].album).toBeUndefined();
+    });
   });
 
   describe('getAlbumTracks fields', () => {
@@ -96,6 +177,58 @@ describe('sync-api', () => {
       expect(capturedUrl).toContain('Fields=');
       expect(capturedUrl).toContain('Artists');
       expect(capturedUrl).toContain('AlbumArtist');
+    });
+
+    it('ORAIN-0560: includes IndexNumber and ParentIndexNumber in the Fields query param (so track number is populated)', async () => {
+      let capturedUrl = '';
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ Items: [], ProductionYear: 1969 }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getAlbumTracks('album-1');
+
+      expect(capturedUrl).toContain('Fields=');
+      expect(capturedUrl).toContain('IndexNumber');
+      expect(capturedUrl).toContain('ParentIndexNumber');
+    });
+
+    it('ORAIN-0560: getAlbumTracks returns trackNumber and discNumber from the IndexNumber/ParentIndexNumber fields', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            Items: [
+              makeTrackItem({
+                Id: 'track-1',
+                Album: 'Abbey Road',
+                IndexNumber: 7,
+                ParentIndexNumber: 1,
+              }),
+            ],
+          }),
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getAlbumTracks('album-1');
+      expect(tracks[0].trackNumber).toBe(7);
+      expect(tracks[0].discNumber).toBe(1);
     });
   });
 
@@ -413,8 +546,6 @@ describe('sync-api', () => {
     });
 
     it('type="artist" returns tracks from a direct Audio query (no album roundtrip)', async () => {
-      // ORAIN-0554 acceptance: artista con 4 tracks propios + 1 contribución en album ajeno
-      // → sync como artist copia 5 tracks.
       const mockFetch = vi.fn().mockImplementation((url: string) => {
         // Direct Audio query returns 5 tracks — including the contribution track
         // whose album is owned by a different artist.
@@ -490,6 +621,152 @@ describe('sync-api', () => {
 
       const tracks = await api.getArtistTracks('artist-1', 'artist');
       expect(tracks).toHaveLength(5);
+    });
+
+    // ORAIN-0560: AC — "Tests unitarios cubren item.Album como undefined, null y '' en el path de artista"
+    it('ORAIN-0560: artist path → album = item.Album when present', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  makeTrackItem({ Id: 't1', Album: 'Album A', AlbumName: 'Album A (Remastered)' }),
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+      expect(tracks[0].album).toBe('Album A');
+    });
+
+    it('ORAIN-0560: artist path → falls back to AlbumName when item.Album is undefined', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  makeTrackItem({ Id: 't1', Album: undefined, AlbumName: 'Album A (Remastered)' }),
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+      expect(tracks[0].album).toBe('Album A (Remastered)');
+    });
+
+    it('ORAIN-0560: artist path → falls back to AlbumName when item.Album is null', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  // The TS type doesn't allow null, but JSON may carry it — cast to bypass typing
+                  {
+                    Id: 't1',
+                    Name: 'A',
+                    Album: null,
+                    AlbumName: 'Album A (Remastered)',
+                    AlbumArtist: 'Self',
+                    Artists: ['artist-1'],
+                    AlbumId: 'album-1',
+                    Path: '/p/t1.mp3',
+                    MediaSources: [{ Path: '/p/t1.mp3', Container: 'mp3' }],
+                    IndexNumber: 1,
+                    ParentIndexNumber: 1,
+                  } as unknown as JellyfinTrackItem,
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+      expect(tracks[0].album).toBe('Album A (Remastered)');
+    });
+
+    it('ORAIN-0560: artist path → falls back to AlbumName when item.Album is empty string', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [makeTrackItem({ Id: 't1', Album: '', AlbumName: 'Album A (Remastered)' })],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+      expect(tracks[0].album).toBe('Album A (Remastered)');
+    });
+
+    it('ORAIN-0560: artist path → album is undefined when both Album and AlbumName are empty (no fallback to "Unknown")', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [makeTrackItem({ Id: 't1', Album: '', AlbumName: '' })],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+      // AC: "Si item.Album, item.AlbumName y albumName son todos falsy, el tag no se escribe (no se escribe 'Unknown')"
+      expect(tracks[0].album).toBeUndefined();
     });
   });
 

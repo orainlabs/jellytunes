@@ -307,7 +307,11 @@ class SyncApiImpl implements SyncApi {
         `/Users/${this.userId}/Items/${albumId}`,
       ).catch(() => ({ Name: undefined, ProductionYear: undefined })),
       this.request<{ Items: JellyfinTrackItem[] }>(
-        `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album`,
+        // ORAIN-0560: add IndexNumber and ParentIndexNumber so the `track` (and
+        // disc number) tags get populated when syncing by album. Without these
+        // fields, Jellyfin omits them from the response and trackNumber is
+        // undefined.
+        `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album,IndexNumber,ParentIndexNumber`,
       ),
     ]);
 
@@ -705,7 +709,14 @@ class SyncApiImpl implements SyncApi {
     albumName?: string,
   ): TrackInfo {
     const source = item.MediaSources?.[0];
-    const resolvedAlbum = item.Album ?? item.AlbumName ?? albumName;
+    // ORAIN-0560: use `||` (not `??`) so empty strings returned by Jellyfin
+    // fall through to the next fallback. With `??`, item.Album === "" would
+    // be kept and the album tag would be written as "". If every fallback is
+    // falsy, leave the field undefined so the tag is not written at all
+    // (rather than writing an "Unknown" placeholder).
+    /* eslint-disable @typescript-eslint/prefer-nullish-coalescing -- ORAIN-0560: empty strings must fall through, not be kept as-is */
+    const resolvedAlbum = item.Album || item.AlbumName || albumName || undefined;
+    /* eslint-enable @typescript-eslint/prefer-nullish-coalescing */
 
     // Parse RunTimeTicks: 1 tick = 100 nanoseconds = 10,000,000 ticks per second
     const durationSeconds = item.RunTimeTicks

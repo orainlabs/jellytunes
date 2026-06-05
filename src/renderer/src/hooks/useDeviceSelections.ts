@@ -420,9 +420,7 @@ export function useDeviceSelections() {
 
         const uncachedOther = options.itemIds.filter(
           (id) =>
-            options.itemTypes[id] &&
-            !registry.hasItemTracks(id) &&
-            !syncedGenrePlaylistIds.has(id),
+            options.itemTypes[id] && !registry.hasItemTracks(id) && !syncedGenrePlaylistIds.has(id),
         );
 
         const toFetch = [
@@ -606,7 +604,11 @@ export function useDeviceSelections() {
         // album / playlist / genre / unknown — use the un-typed set
         newItems.add(id);
         // Register type so fetchTracksForItems uses the correct Jellyfin endpoint
-        if (effectiveType === 'album' || effectiveType === 'playlist' || effectiveType === 'genre') {
+        if (
+          effectiveType === 'album' ||
+          effectiveType === 'playlist' ||
+          effectiveType === 'genre'
+        ) {
           registry.setItemTypes([{ id, type: effectiveType }]);
         }
       }
