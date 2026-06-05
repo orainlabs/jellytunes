@@ -89,7 +89,9 @@ export function useSync({
 
   const buildItemTypesMap = () => {
     const artistIds = artists.filter((a) => selectedArtists.has(a.Id)).map((a) => a.Id);
-    const albumArtistIds = albumArtists.filter((a) => selectedAlbumArtists.has(a.Id)).map((a) => a.Id);
+    const albumArtistIds = albumArtists
+      .filter((a) => selectedAlbumArtists.has(a.Id))
+      .map((a) => a.Id);
     const albumIds = albums.filter((a) => selectedTracks.has(a.Id)).map((a) => a.Id);
     const playlistIds = playlists.filter((p) => selectedTracks.has(p.Id)).map((p) => p.Id);
     const map: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {};

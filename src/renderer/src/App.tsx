@@ -194,11 +194,15 @@ function AppConnected({
   // Typed synced sets for artists/albumArtists tabs — prevents cross-leak where
   // syncing X as 'artist' makes X show as "will remove" in Album Artists tab.
   const syncedArtistIds = useMemo(
-    () => new Set(deviceSelections.syncedItemsInfo.filter((i) => i.type === 'artist').map((i) => i.id)),
+    () =>
+      new Set(deviceSelections.syncedItemsInfo.filter((i) => i.type === 'artist').map((i) => i.id)),
     [deviceSelections.syncedItemsInfo],
   );
   const syncedAlbumArtistIds = useMemo(
-    () => new Set(deviceSelections.syncedItemsInfo.filter((i) => i.type === 'albumArtist').map((i) => i.id)),
+    () =>
+      new Set(
+        deviceSelections.syncedItemsInfo.filter((i) => i.type === 'albumArtist').map((i) => i.id),
+      ),
     [deviceSelections.syncedItemsInfo],
   );
 

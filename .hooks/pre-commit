@@ -10,4 +10,7 @@ pnpm exec lint-staged
 echo "▶ unit tests..."
 pnpm run test:unit
 
+echo "▶ build..."
+pnpm run build
+
 echo "✓ all checks passed"

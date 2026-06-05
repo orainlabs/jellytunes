@@ -13,7 +13,7 @@
     "build": "electron-vite build",
     "build:dev": "VITE_DEV_BUILD=true NODE_ENV=development electron-vite build",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm run typecheck && pnpm run build",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run build",
     "lint": "eslint src tests",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src tests",
