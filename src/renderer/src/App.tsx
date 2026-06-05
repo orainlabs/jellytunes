@@ -28,6 +28,7 @@ import { useSync } from './hooks/useSync';
 import { useJellyfinConnection } from './hooks/useJellyfinConnection';
 import { useSavedDestinations } from './hooks/useSavedDestinations';
 import { getTrackRegistry } from './hooks/useTrackRegistry';
+import { buildItemTypes, buildItemIds } from './utils/selectionTypes';
 
 function AppConnected({
   connection,
@@ -230,33 +231,33 @@ function AppConnected({
     // registry always has correct types for items selected after device activation.
     // ORAIN-0551: iterate the typed sets instead of the union `selectedTracks` so
     // a shared id (present in both extArtists and extAlbumArtists) is only added
-    // once. The id's "intended" type comes from the typed set it was selected in,
-    // not from whichever list happened to register last in the registry.
+    // once. ORAIN-0554: route itemTypes by the typed set the id was selected in,
+    // not by the registry's last-write-wins fallback — otherwise a shared id
+    // clicked from the Artists tab still arrived at the sync engine typed
+    // 'albumArtist', and DeviceSyncPanel showed the wrong label.
     const selectedArtists = deviceSelections.selectedArtists;
     const selectedAlbumArtists = deviceSelections.selectedAlbumArtists;
     const selectedOthers = new Set<string>();
     for (const id of deviceSelections.selectedTracks) {
       if (!selectedArtists.has(id) && !selectedAlbumArtists.has(id)) selectedOthers.add(id);
     }
-    const itemIds: string[] = [];
-    const itemTypes: Record<string, 'artist' | 'albumArtist' | 'album' | 'playlist'> = {
-      ...Object.fromEntries(extArtists.map((a) => [a.Id, 'artist' as const])),
-      ...Object.fromEntries(extAlbumArtists.map((a) => [a.Id, 'albumArtist' as const])),
-      ...Object.fromEntries(extAlbums.map((a) => [a.Id, 'album' as const])),
-      ...Object.fromEntries(extPlaylists.map((p) => [p.Id, 'playlist' as const])),
-    };
-    for (const a of extArtists) {
-      if (selectedArtists.has(a.Id)) itemIds.push(a.Id);
-    }
-    for (const a of extAlbumArtists) {
-      if (selectedAlbumArtists.has(a.Id)) itemIds.push(a.Id);
-    }
-    for (const a of extAlbums) {
-      if (selectedOthers.has(a.Id)) itemIds.push(a.Id);
-    }
-    for (const p of extPlaylists) {
-      if (selectedOthers.has(p.Id)) itemIds.push(p.Id);
-    }
+    const itemTypes = buildItemTypes({
+      selectedArtists,
+      selectedAlbumArtists,
+      extArtists,
+      extAlbumArtists,
+      extAlbums,
+      extPlaylists,
+    });
+    const itemIds = buildItemIds({
+      selectedArtists,
+      selectedAlbumArtists,
+      selectedOthers,
+      extArtists,
+      extAlbumArtists,
+      extAlbums,
+      extPlaylists,
+    });
 
     // Load saved prefs for this destination (or use global defaults)
     // forced* params come from handleAddFolder where state hasn't flushed yet;

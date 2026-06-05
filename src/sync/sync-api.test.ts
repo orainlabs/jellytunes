@@ -219,7 +219,7 @@ describe('sync-api', () => {
 
       // ORAIN-0554: direct track query, NOT the album→tracks flow
       const trackCall = capturedUrls.find(
-        (u) => u.includes('artistIds=artist-1') && u.includes('includeItemTypes=Audio'),
+        (u) => u.includes('ArtistIds=artist-1') && u.includes('includeItemTypes=Audio'),
       );
       expect(trackCall).toBeDefined();
       // The old flow used ArtistIds= for MusicAlbum — ensure we never query albums
@@ -261,7 +261,7 @@ describe('sync-api', () => {
       const mockFetch = vi.fn().mockImplementation((url: string) => {
         // Direct Audio query returns 5 tracks — including the contribution track
         // whose album is owned by a different artist.
-        if (url.includes('artistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
+        if (url.includes('ArtistIds=artist-1') && url.includes('includeItemTypes=Audio')) {
           return Promise.resolve({
             ok: true,
             json: () =>

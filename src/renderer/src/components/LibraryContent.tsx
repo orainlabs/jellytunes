@@ -178,13 +178,24 @@ export function LibraryContent({
     return () => observer.disconnect();
   }, [activeLibrary, isLoadingMore, isSearchActive, syncFilter, onLoadMore]);
 
-  const handleToggle = (id: string) => {
+  const handleToggle = (id: string, viewType?: 'artist' | 'albumArtist') => {
     if (!hasActiveDevice) {
       setNoDeviceHint(true);
       setTimeout(() => setNoDeviceHint(false), 2500);
       return;
     }
-    onToggle(id);
+    // ORAIN-0554: forward the active tab as viewType so the toggle handler can
+    // route the id to the correct typed set (selectedArtists vs
+    // selectedAlbumArtists) even when the same id exists in both Jellyfin lists.
+    // LibraryTab uses 'albumArtists' (plural tab key) but viewType is the
+    // singular 'albumArtist' to match the canonical item type.
+    const routedViewType =
+      activeLibrary === 'artists'
+        ? 'artist'
+        : activeLibrary === 'albumArtists'
+          ? 'albumArtist'
+          : viewType;
+    onToggle(id, routedViewType);
   };
 
   // Filter uses snapshot so items don't vanish mid-interaction

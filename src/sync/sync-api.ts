@@ -228,45 +228,71 @@ class SyncApiImpl implements SyncApi {
     this.logger?.debug(`[BATCH] getArtistTracks START artistId=${artistId} type=${type}`);
     const startTime = Date.now();
 
-    // ORAIN-0534: regular artists use ArtistIds=, album-artists use AlbumArtistIds=.
-    // The two are distinct fields in Jellyfin even though IDs can overlap.
-    const filterParam = type === 'albumArtist' ? 'AlbumArtistIds' : 'ArtistIds';
-    const albumsEndpoint = `/Users/${this.userId}/Items?${filterParam}=${artistId}&includeItemTypes=MusicAlbum&Recursive=true&Fields=Path,MediaSources`;
-    this.logger?.debug(
-      `[BATCH] getArtistTracks ${artistId} (${type}) → fetching albums endpoint=${albumsEndpoint}`,
-    );
-    const albumsData = await this.request<{ Items: JellyfinAlbumItem[] }>(albumsEndpoint);
-
-    const albums = albumsData.Items ?? [];
-    if (albums.length === 0) {
+    if (type === 'albumArtist') {
+      // ORAIN-0534 / ORAIN-0554: album-artist semantics — "every track on every
+      // album this person is the album artist of". Query MusicAlbum by
+      // AlbumArtistIds=, then expand to tracks. Kept exactly as before.
+      const filterParam = 'AlbumArtistIds';
+      const albumsEndpoint = `/Users/${this.userId}/Items?${filterParam}=${artistId}&includeItemTypes=MusicAlbum&Recursive=true&Fields=Path,MediaSources`;
       this.logger?.debug(
-        `[BATCH] getArtistTracks ${artistId} → 0 albums, took ${Date.now() - startTime}ms`,
+        `[BATCH] getArtistTracks ${artistId} (albumArtist) → fetching albums endpoint=${albumsEndpoint}`,
       );
-      return [];
+      const albumsData = await this.request<{ Items: JellyfinAlbumItem[] }>(albumsEndpoint);
+
+      const albums = albumsData.Items ?? [];
+      if (albums.length === 0) {
+        this.logger?.debug(
+          `[BATCH] getArtistTracks ${artistId} → 0 albums, took ${Date.now() - startTime}ms`,
+        );
+        return [];
+      }
+
+      this.logger?.debug(
+        `[BATCH] getArtistTracks ${artistId} → found ${albums.length} albums: ${albums
+          .slice(0, 5)
+          .map((a) => a.Id)
+          .join(',')}...`,
+      );
+
+      const perAlbumResults = await Promise.all(
+        albums.map((album) => this.getAlbumTracks(album.Id)),
+      );
+      const allTracks = perAlbumResults.flat();
+
+      const elapsed = Date.now() - startTime;
+      this.logger?.debug(
+        `[BATCH] getArtistTracks ${artistId} → DONE ${allTracks.length} tracks in ${elapsed}ms`,
+      );
+      return allTracks;
     }
 
+    // ORAIN-0554: regular artist semantics — "every track where this person
+    // performed", INCLUDING contributions on albums owned by other artists
+    // (e.g., a guest vocal on someone else's record). The previous flow
+    // fetched MusicAlbum by ArtistIds= and then expanded to tracks, which
+    // missed those contribution tracks entirely AND double-counted when the
+    // same album also listed the artist as an album artist.
+    //
+    // The new flow queries Audio items directly. `artistIds=` in Jellyfin
+    // matches both the `Artists` array on a track AND the `AlbumArtists` on
+    // its album (broad semantic). The alternative `contributingArtistIds=`
+    // would be a tighter "performer" semantic, but only matches the
+    // `Artists` array; the trade-off is documented in
+    // `docs/JELLYFIN_API.md` (pending manual verification).
+    const tracksEndpoint = `/Users/${this.userId}/Items?ArtistIds=${artistId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album,RunTimeTicks,IndexNumber,ParentIndexNumber`;
     this.logger?.debug(
-      `[BATCH] getArtistTracks ${artistId} → found ${albums.length} albums: ${albums
-        .slice(0, 5)
-        .map((a) => a.Id)
-        .join(',')}...`,
+      `[BATCH] getArtistTracks ${artistId} (artist) → fetching tracks endpoint=${tracksEndpoint}`,
     );
-
-    // Fetch tracks for each album in parallel using parentId (albumIds= unreliable when Album field is NULL)
-    const albumMeta = new Map<string, { Name?: string; ProductionYear?: number }>();
-    for (const album of albums) {
-      albumMeta.set(album.Id, { Name: album.Name, ProductionYear: album.ProductionYear });
-    }
-
-    const perAlbumResults = await Promise.all(albums.map((album) => this.getAlbumTracks(album.Id)));
-    const allTracks = perAlbumResults.flat();
+    const tracksData = await this.request<{ Items: JellyfinTrackItem[] }>(tracksEndpoint);
+    const tracks = (tracksData.Items ?? [])
+      .filter((item) => item.MediaSources?.[0]?.Path)
+      .map((item) => this.trackItemToInfo(item));
 
     const elapsed = Date.now() - startTime;
     this.logger?.debug(
-      `[BATCH] getArtistTracks ${artistId} → DONE ${allTracks.length} tracks in ${elapsed}ms`,
+      `[BATCH] getArtistTracks ${artistId} → DONE ${tracks.length} tracks in ${elapsed}ms`,
     );
-
-    return allTracks;
+    return tracks;
   }
 
   async getAlbumTracks(albumId: string): Promise<TrackInfo[]> {
