@@ -472,6 +472,7 @@ export function LibraryContent({
                     isSelected={(selectedAlbumArtists ?? selectedTracks).has(albumArtist.Id)}
                     wasSynced={(syncedAlbumArtistIds ?? previouslySyncedItems).has(albumArtist.Id)}
                     outOfSync={outOfSyncItems.has(albumArtist.Id)}
+                    coveredByArtist={selectedArtists?.has(albumArtist.Id) === true}
                     onToggle={handleToggle}
                     serverUrl={serverUrl}
                   />

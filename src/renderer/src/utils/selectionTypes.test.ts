@@ -70,12 +70,12 @@ describe('buildItemTypes (ORAIN-0554 Defect 2)', () => {
     expect(result['aa-only-1']).toBe('albumArtist');
   });
 
-  it('defensive: when an id is in BOTH selected sets, the later iteration wins', () => {
-    // In practice the toggle handler keeps these sets mutually exclusive
-    // (toggleItem removes from the other set on add). This test pins the
-    // documented behavior for the unreachable "both contain id" case: the
-    // last-iterated set (selectedAlbumArtists) wins, matching the historical
-    // last-write-wins order.
+  it('both-sets case is prevented at toggleItem — if it somehow occurs, albumArtist wins (last-write)', () => {
+    // toggleItem now enforces mutual exclusion: the same Jellyfin id cannot
+    // coexist in selectedArtists and selectedAlbumArtists simultaneously.
+    // This test documents the fallback behaviour if that invariant were broken:
+    // the simple loop (artists then albumArtists) gives albumArtist last-write.
+    // Under normal operation this branch is unreachable.
     const result = buildItemTypes({
       selectedArtists: new Set([sharedId]),
       selectedAlbumArtists: new Set([sharedId]),

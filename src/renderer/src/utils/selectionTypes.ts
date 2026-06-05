@@ -42,6 +42,8 @@ export function buildItemTypes({
 
   // For selected ids, the typed set is the source of truth — override the
   // registry-derived type so the active tab is what reaches the sync engine.
+  // The sets are mutually exclusive for shared ids (toggleItem enforces this),
+  // so iteration order does not matter here.
   for (const id of selectedArtists) itemTypes[id] = 'artist';
   for (const id of selectedAlbumArtists) itemTypes[id] = 'albumArtist';
 

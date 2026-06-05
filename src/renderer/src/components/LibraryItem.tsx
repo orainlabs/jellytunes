@@ -11,6 +11,7 @@ interface LibraryItemProps {
   isSelected: boolean;
   wasSynced: boolean;
   outOfSync: boolean;
+  coveredByArtist?: boolean;
   onToggle: (id: string, viewType?: 'artist' | 'albumArtist') => void;
   serverUrl?: string;
 }
@@ -96,10 +97,12 @@ export function LibraryItem({
   isSelected,
   wasSynced,
   outOfSync,
+  coveredByArtist = false,
   onToggle,
   serverUrl,
 }: LibraryItemProps): JSX.Element {
-  const willDelete = wasSynced && !isSelected;
+  // coveredByArtist suppresses willDelete — files stay on device, artist query is superset
+  const willDelete = wasSynced && !isSelected && !coveredByArtist;
   const pendingSync = isSelected && !wasSynced;
 
   const artist = item as Artist;
@@ -177,19 +180,24 @@ export function LibraryItem({
         </p>
         <p className="text-caption text-on_surface_variant flex items-center gap-1.5 h-4">
           {subtitle && <span className="truncate">{subtitle}</span>}
-          {wasSynced && !outOfSync && (
+          {coveredByArtist && (
+            <span className="px-1.5 py-0.5 rounded-md text-caption flex-shrink-0 bg-surface_container text-on_surface_variant">
+              covered by artist
+            </span>
+          )}
+          {!coveredByArtist && wasSynced && !outOfSync && (
             <span
               className={`px-1.5 py-0.5 rounded-md text-caption flex-shrink-0 ${willDelete ? 'bg-error_container text-error' : 'bg-success/20 text-success'}`}
             >
               {willDelete ? 'will remove' : 'synced'}
             </span>
           )}
-          {pendingSync && (
+          {!coveredByArtist && pendingSync && (
             <span className="px-1.5 py-0.5 rounded-md text-caption flex-shrink-0 bg-primary_container/20 text-primary">
               pending sync
             </span>
           )}
-          {outOfSync && !willDelete && (
+          {!coveredByArtist && outOfSync && !willDelete && (
             <span className="px-1.5 py-0.5 rounded-md text-caption flex-shrink-0 bg-warning_container text-warning">
               out of sync
             </span>

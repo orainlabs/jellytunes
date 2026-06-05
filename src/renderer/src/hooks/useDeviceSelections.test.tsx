@@ -314,7 +314,12 @@ describe('useDeviceSelections', () => {
       expect(result.current.selectedArtists.has('artist-1')).toBe(false);
     });
 
-    it('tracks the same id independently per tab — artist-view toggle does not affect albumArtist selection', async () => {
+    it('upgrade: selecting the same id as artist when it is already an albumArtist migrates it', async () => {
+      // Mutual exclusion is enforced at toggleItem: the same Jellyfin id cannot
+      // coexist in both typed sets. Clicking artist for an id already in
+      // albumArtists is an "upgrade" — the id migrates to artists, removing it
+      // from albumArtists. This signals that the next sync should pick up the
+      // additional tracks covered by the broader artist query.
       mockApi.getSyncedItems.mockResolvedValue([]);
 
       const { result } = renderHook(() => useDeviceSelections());
@@ -322,28 +327,45 @@ describe('useDeviceSelections', () => {
         await result.current.activateDevice('/Volumes/USB', defaultOptions);
       });
 
-      // Add via albumArtist view.
+      // Select as albumArtist first.
       await act(async () => {
         result.current.toggleItem('shared-id', 'albumArtist');
       });
       expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
       expect(result.current.selectedArtists.has('shared-id')).toBe(false);
 
-      // Toggle as artist view → ADDS to artists (item was not selected as artist).
-      // albumArtist selection is unaffected — independent per-tab behavior.
+      // Upgrade: click as artist → migrates from albumArtists to artists.
       await act(async () => {
         result.current.toggleItem('shared-id', 'artist');
       });
       expect(result.current.selectedArtists.has('shared-id')).toBe(true);
-      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(false);
+      expect(result.current.selectedTracks.has('shared-id')).toBe(true);
+    });
 
-      // Toggle as artist view again → removes from artists only.
+    it('no-op: clicking albumArtist for an id already in selectedArtists does nothing', async () => {
+      // Artist query is the superset — once an id is selected as artist,
+      // adding it as albumArtist would be a downgrade. The click is silently
+      // ignored so the user cannot accidentally narrow their selection.
+      mockApi.getSyncedItems.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      // Select as artist first.
       await act(async () => {
         result.current.toggleItem('shared-id', 'artist');
       });
-      expect(result.current.selectedArtists.has('shared-id')).toBe(false);
-      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(true);
-      expect(result.current.selectedTracks.has('shared-id')).toBe(true);
+      expect(result.current.selectedArtists.has('shared-id')).toBe(true);
+
+      // No-op: click albumArtist for the same id → nothing changes.
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'albumArtist');
+      });
+      expect(result.current.selectedArtists.has('shared-id')).toBe(true);
+      expect(result.current.selectedAlbumArtists.has('shared-id')).toBe(false);
     });
   });
 

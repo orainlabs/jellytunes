@@ -486,9 +486,16 @@ export function useDeviceSelections() {
       const inArtists = current.selectedArtists.has(id);
       const inAlbumArtists = current.selectedAlbumArtists.has(id);
       const inItems = current.selectedItems.has(id);
-      // Use only the set relevant to this tab so that the same Jellyfin id can be
-      // independently selected as 'artist' and as 'albumArtist'. Using the union here
-      // caused a click in one tab to deselect the item in the other tab.
+
+      // Artist query (ArtistIds=X) is a superset of albumArtist query (AlbumArtistIds=X).
+      // The same Jellyfin id must not live in both typed sets simultaneously.
+      //
+      // No-op: clicking albumArtist when artist already selected — artist already covers it.
+      if (effectiveType === 'albumArtist' && inArtists) return;
+      // Upgrade: clicking artist when albumArtist already selected — migrate to the superset.
+      // The narrower albumArtist selection is replaced; next sync picks up additional tracks.
+      const isUpgrade = effectiveType === 'artist' && inAlbumArtists && !inArtists;
+
       const wasSelected =
         effectiveType === 'artist'
           ? inArtists
@@ -507,8 +514,6 @@ export function useDeviceSelections() {
         }
       }
       if (wasSelected) {
-        // Only remove from the set that owns this type — preserves independent selection
-        // across tabs when the same Jellyfin id appears in both Artists and Album Artists.
         if (effectiveType === 'artist') {
           newArtists.delete(id);
         } else if (effectiveType === 'albumArtist') {
@@ -519,9 +524,8 @@ export function useDeviceSelections() {
           newItems.delete(id);
         }
       } else if (effectiveType === 'artist') {
+        if (isUpgrade) newAlbumArtists.delete(id);
         newArtists.add(id);
-        // Override stale registry type so fetchSelectedUncachedTracks uses the
-        // correct endpoint (ArtistIds) instead of last-write-wins albumArtist.
         registry.setItemTypes([{ id, type: 'artist' }]);
       } else if (effectiveType === 'albumArtist') {
         newAlbumArtists.add(id);
