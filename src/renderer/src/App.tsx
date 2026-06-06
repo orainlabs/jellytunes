@@ -683,6 +683,7 @@ function AppConnected({
         artists={lib.artists}
         albums={lib.albums}
         playlists={lib.playlists}
+        genres={lib.genres}
         activeDeviceName={
           deviceSelections.activeDevicePath
             ? getDestinationName(deviceSelections.activeDevicePath)

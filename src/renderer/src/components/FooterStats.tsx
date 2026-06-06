@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { LibraryStats, PaginationState, Artist, Album, Playlist } from '../appTypes';
+import type { LibraryStats, PaginationState, Artist, Album, Playlist, Genre } from '../appTypes';
 import { HardDrive, Folder } from 'lucide-react';
 
 interface FooterStatsProps {
@@ -8,6 +8,7 @@ interface FooterStatsProps {
   artists: Artist[];
   albums: Album[];
   playlists: Playlist[];
+  genres: Genre[];
   activeDeviceName?: string | null;
   isUsbDevice?: boolean;
   onGoToDevice?: () => void;
@@ -20,6 +21,7 @@ export function FooterStats({
   artists,
   albums,
   playlists,
+  genres,
   activeDeviceName,
   isUsbDevice,
   onGoToDevice,
@@ -40,9 +42,10 @@ export function FooterStats({
       .catch(() => {});
   }, []);
 
+  const genreCount = pagination.genres?.total > 0 ? pagination.genres.total : genres.length;
   const libraryText = stats
-    ? `${stats.ArtistCount.toLocaleString()} artists · ${stats.AlbumCount.toLocaleString()} albums · ${stats.PlaylistCount.toLocaleString()} playlists`
-    : `${pagination.artists.total > 0 ? pagination.artists.total : artists.length} artists · ${pagination.albums.total > 0 ? pagination.albums.total : albums.length} albums · ${pagination.playlists.total > 0 ? pagination.playlists.total : playlists.length} playlists`;
+    ? `${stats.ArtistCount.toLocaleString()} artists · ${stats.AlbumCount.toLocaleString()} albums · ${stats.PlaylistCount.toLocaleString()} playlists · ${genreCount.toLocaleString()} genres`
+    : `${pagination.artists.total > 0 ? pagination.artists.total : artists.length} artists · ${pagination.albums.total > 0 ? pagination.albums.total : albums.length} albums · ${pagination.playlists.total > 0 ? pagination.playlists.total : playlists.length} playlists · ${genreCount.toLocaleString()} genres`;
 
   const DeviceIcon = isUsbDevice ? HardDrive : Folder;
 

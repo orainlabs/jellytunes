@@ -973,7 +973,7 @@ ipcMain.handle(
       apiKey: string;
       userId: string;
       itemIds: string[];
-      itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
+      itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'>;
       destinationPath: string;
       options: {
         coverArtMode: CoverArtMode;
@@ -1023,7 +1023,7 @@ ipcMain.handle(
         });
         const cacheMissTypesMap = new Map(
           cacheMisses.map((id) => [id, itemTypes[id] ?? 'album']),
-        ) as Map<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
+        ) as Map<string, 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'>;
         const { tracks: fetchedTracks } = await api.getTracksForItems(
           cacheMisses,
           cacheMissTypesMap,
@@ -1174,7 +1174,7 @@ ipcMain.handle(
       apiKey: string;
       userId: string;
       itemIds: string[];
-      itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
+      itemTypes: Record<string, 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'>;
     },
   ) => {
     try {
@@ -1182,7 +1182,7 @@ ipcMain.handle(
       const normalizedUrl = serverUrl.replace(/\/$/, '');
       const itemTypesMap = new Map(Object.entries(itemTypes)) as Map<
         string,
-        'artist' | 'album' | 'playlist' | 'albumArtist'
+        'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'
       >;
 
       // Check cache for each itemId; collect cache misses
@@ -1216,7 +1216,7 @@ ipcMain.handle(
 
         const cacheMissTypesMap = new Map(
           cacheMisses.map((id) => [id, itemTypesMap.get(id) ?? 'album']),
-        ) as Map<string, 'artist' | 'album' | 'playlist' | 'albumArtist'>;
+        ) as Map<string, 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre'>;
         const { tracks: fetchedTracks, errors } = await api.getTracksForItems(
           cacheMisses,
           cacheMissTypesMap,

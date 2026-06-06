@@ -276,11 +276,40 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       setPlaylists([]);
     }
 
+    try {
+      const res = await fetch(
+        buildUrl(
+          baseUrl,
+          `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=ItemCount,ChildCount`,
+        ),
+        { headers },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const items: Genre[] = (data.Items ?? []).map(normalizeGenre);
+      setGenres(items);
+      itemTypeIndexRef.current.genres = new Set(items.map((g) => g.Id));
+      const totalCount = data.TotalRecordCount ?? items.length;
+      setPagination((prev) => ({
+        ...prev,
+        genres: {
+          items,
+          total: totalCount,
+          startIndex: items.length,
+          hasMore: items.length < totalCount,
+          scrollPos: 0,
+        },
+      }));
+    } catch (e) {
+      logger.error('Failed to load genres: ' + (e instanceof Error ? e.message : String(e)));
+      setGenres([]);
+    }
+
     // Mark tabs as loaded AFTER all data has been fetched to avoid the sync effect
     // overwriting valid data with empty initial pagination state
     // Use Promise.resolve() to defer to next microtask so sync effect runs first
     void Promise.resolve().then(() => {
-      setLoadedTabs(new Set(['artists', 'albumArtists', 'albums', 'playlists']));
+      setLoadedTabs(new Set(['artists', 'albumArtists', 'albums', 'playlists', 'genres']));
     });
   };
 

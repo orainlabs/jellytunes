@@ -244,6 +244,14 @@ export function useDeviceSelections() {
         }));
         registry.setItemTicks(ticksArray);
       }
+      // Genres have no RunTimeTicks so they are absent from itemTicks.
+      // Register their types explicitly so fetchTracksForItems uses getGenreTracks.
+      if (options?.itemTypes) {
+        const genreEntries = Object.entries(options.itemTypes)
+          .filter(([, type]) => type === 'genre')
+          .map(([id]) => ({ id, type: 'genre' as const }));
+        if (genreEntries.length > 0) registry.setItemTypes(genreEntries);
+      }
 
       // Get already-synced items from local DB (no Jellyfin calls)
       const items = await window.api.getSyncedItems(path);
@@ -336,8 +344,36 @@ export function useDeviceSelections() {
                   .filter((i: SyncedItemInfo) => i.type === 'albumArtist')
                   .map((i: { id: string }) => i.id),
               ));
-        // Unified selectedItems set derived from both — used for compatibility (size estimation, etc.)
+        // Unified selectedItems: artists + albumArtists + preserved genres/albums/playlists.
+        // Without preservation, re-runs of activateDevice (e.g., after sync or convert toggle)
+        // would silently drop any genres/albums/playlists the user had selected.
         const selectedItems = new Set([...newSelectedArtists, ...newSelectedAlbumArtists]);
+        // isSeeding: true only when no non-artist items have been user-selected yet.
+        // "Non-artist items" = selectedItems minus the artist/albumArtist subsets.
+        // Using selectedItems.size would wrongly block genre seeding when the user
+        // clicked an artist during loading (artists live in selectedItems too).
+        // Using selectedArtists.size alone would wrongly enable genre seeding after
+        // the user clicked a genre during loading (genre lives in selectedItems, not selectedArtists).
+        const existingNonArtistCount = existing
+          ? [...existing.selectedItems].filter(
+              (id) => !existing.selectedArtists.has(id) && !existing.selectedAlbumArtists.has(id),
+            ).length
+          : 0;
+        const isSeeding =
+          !existing || (existing.syncedItems.size === 0 && existingNonArtistCount === 0);
+        if (isSeeding) {
+          for (const item of items) {
+            if (item.type !== 'artist' && item.type !== 'albumArtist') {
+              selectedItems.add(item.id);
+            }
+          }
+        } else {
+          for (const id of existing.selectedItems) {
+            if (!newSelectedArtists.has(id) && !newSelectedAlbumArtists.has(id)) {
+              selectedItems.add(id);
+            }
+          }
+        }
         return new Map(prev).set(path, {
           selectedArtists: newSelectedArtists,
           selectedAlbumArtists: newSelectedAlbumArtists,
@@ -357,14 +393,48 @@ export function useDeviceSelections() {
       // When convertToMp3=true, estimation is always tick-based (no fetch needed).
       // Estimation is already showing ~X GB from ticks immediately.
       if (options && !options.convertToMp3) {
-        const uncachedIds = options.itemIds.filter(
-          (id) => options.itemTypes[id] && !registry.hasItemTracks(id),
+        // Synced genres and playlists: always fetch from Jellyfin regardless of the uncached
+        // threshold and regardless of whether they're currently loaded in the library UI.
+        // (The user may not have navigated to that tab or paginated to that section yet.)
+        //
+        // loadDeviceSyncedTracks sets itemTracks from DB (hasItemTracks = true), so these
+        // items would normally be excluded from uncachedIds. But the DB has no durationSeconds
+        // column — calculateDuration returns 0 without trackMap entries populated by Jellyfin.
+        //
+        // We register types from SyncedItemInfo so fetchTracksForItems uses the correct
+        // Jellyfin endpoint even when these items aren't loaded in the library yet.
+        const syncedGenrePlaylists = items.filter(
+          (i: SyncedItemInfo) => i.type === 'genre' || i.type === 'playlist',
         );
-        if (uncachedIds.length > 0 && !shouldSkipUncachedFetch(uncachedIds)) {
+        if (syncedGenrePlaylists.length > 0) {
+          registry.setItemTypes(
+            syncedGenrePlaylists.map((i: SyncedItemInfo) => ({
+              id: i.id,
+              type: i.type as 'genre' | 'playlist',
+            })),
+          );
+        }
+        const syncedGenrePlaylistIds = new Set(
+          syncedGenrePlaylists.map((i: SyncedItemInfo) => i.id),
+        );
+
+        const uncachedOther = options.itemIds.filter(
+          (id) =>
+            options.itemTypes[id] &&
+            !registry.hasItemTracks(id) &&
+            !syncedGenrePlaylistIds.has(id),
+        );
+
+        const toFetch = [
+          ...syncedGenrePlaylistIds,
+          ...(shouldSkipUncachedFetch(uncachedOther) ? [] : uncachedOther),
+        ];
+
+        if (toFetch.length > 0) {
           // Mark loading state — button stays disabled while background fetch runs
           setSizeLoadingCount((c) => c + 1);
           void registry
-            .fetchTracksForItems(uncachedIds, path, {
+            .fetchTracksForItems(toFetch, path, {
               serverUrl: options.serverUrl,
               apiKey: options.apiKey,
               userId: options.userId,
@@ -533,8 +603,12 @@ export function useDeviceSelections() {
         newAlbumArtists.add(id);
         registry.setItemTypes([{ id, type: 'albumArtist' }]);
       } else {
-        // album / playlist / unknown — use the un-typed set
+        // album / playlist / genre / unknown — use the un-typed set
         newItems.add(id);
+        // Register type so fetchTracksForItems uses the correct Jellyfin endpoint
+        if (effectiveType === 'album' || effectiveType === 'playlist' || effectiveType === 'genre') {
+          registry.setItemTypes([{ id, type: effectiveType }]);
+        }
       }
 
       const next = unionSelections(newArtists, newAlbumArtists, newItems);
