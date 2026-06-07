@@ -104,6 +104,55 @@ describe('AboutModal', () => {
     openSpy.mockRestore();
   });
 
+  // Regression: ORAIN-0292 added a `void` to the main-process IPC handler,
+  // so `app:checkForUpdates` resolved to `undefined` instead of the result
+  // object. Clicking "Check Updates" then threw on `result.updateAvailable`.
+  it('does not crash when checkForUpdates resolves to undefined', async () => {
+    // Simulate the broken handler returning undefined.
+    window.api.checkForUpdates = vi.fn().mockResolvedValue(undefined);
+    render(<AboutModal onClose={vi.fn()} />);
+    const button = await screen.findByText('Check Updates');
+    await act(async () => {
+      button.click();
+    });
+    // Neutral state: neither a crash, nor a false "up to date" / "available".
+    expect(screen.getByText('Check Updates')).toBeInTheDocument();
+    expect(screen.queryByText('✓ Up to date')).not.toBeInTheDocument();
+  });
+
+  it('shows the available version after clicking Check Updates', async () => {
+    window.api.checkForUpdates = vi.fn().mockResolvedValue({
+      updateAvailable: true,
+      latestVersion: '9.9.9',
+      releaseUrl: 'https://x',
+    });
+    render(<AboutModal onClose={vi.fn()} />);
+    const button = await screen.findByText('Check Updates');
+    await act(async () => {
+      button.click();
+    });
+    expect(await screen.findByText('v9.9.9')).toBeInTheDocument();
+  });
+
+  it('shows "Up to date" when no update is available', async () => {
+    render(<AboutModal onClose={vi.fn()} />);
+    const button = await screen.findByText('Check Updates');
+    await act(async () => {
+      button.click();
+    });
+    expect(await screen.findByText('✓ Up to date')).toBeInTheDocument();
+  });
+
+  it('does not crash when checkForUpdates rejects', async () => {
+    window.api.checkForUpdates = vi.fn().mockRejectedValue(new Error('network down'));
+    render(<AboutModal onClose={vi.fn()} />);
+    const button = await screen.findByText('Check Updates');
+    await act(async () => {
+      button.click();
+    });
+    expect(screen.getByText('Check Updates')).toBeInTheDocument();
+  });
+
   it('closes when close button is clicked', async () => {
     const onClose = vi.fn();
     render(<AboutModal onClose={onClose} />);

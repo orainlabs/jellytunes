@@ -49,11 +49,13 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     setUpToDate(false);
     try {
       const result = await window.api.checkForUpdates(true);
-      if (result.updateAvailable) {
+      if (result?.updateAvailable) {
         setUpdateInfo({ latestVersion: result.latestVersion, releaseUrl: result.releaseUrl });
-      } else {
+      } else if (result) {
         setUpToDate(true);
       }
+    } catch {
+      // Network/IPC failure — leave UI in a neutral state instead of crashing.
     } finally {
       setCheckingUpdate(false);
     }
