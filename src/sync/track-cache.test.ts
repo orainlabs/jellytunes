@@ -62,9 +62,16 @@ describe('Track Cache', () => {
         string,
         { tracks: ReturnType<typeof makeTrack>[]; fetchedAt: number }
       >();
-      cache.set(albumArtistKey, { tracks: [makeTrack({ id: 't1' })], fetchedAt: Date.now() });
+      cache.set(albumArtistKey, {
+        tracks: [makeTrack({ id: 't1', name: 't1' })],
+        fetchedAt: Date.now(),
+      });
       cache.set(artistKey, {
-        tracks: [makeTrack({ id: 't1' }), makeTrack({ id: 't2' }), makeTrack({ id: 't3' })],
+        tracks: [
+          makeTrack({ id: 't1', name: 't1' }),
+          makeTrack({ id: 't2', name: 't2' }),
+          makeTrack({ id: 't3', name: 't3' }),
+        ],
         fetchedAt: Date.now(),
       });
 

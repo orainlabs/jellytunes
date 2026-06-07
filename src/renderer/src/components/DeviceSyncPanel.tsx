@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { HardDrive, Folder, Loader2, Trash2, Music, RefreshCw, X, AlertCircle } from 'lucide-react';
 import type {
   Artist,
@@ -158,12 +158,13 @@ export function DeviceSyncPanel({
   const [loadingInfo, setLoadingInfo] = useState(true);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [filesystemType, setFilesystemType] = useState<string>('unknown');
+  const prevIsSyncingRef = useRef(isSyncing);
 
-  useEffect(() => {
-    setDeviceInfo(null);
-    setLoadingInfo(true);
-    setFilesystemType('unknown');
-    const cacheKey = destinationPath;
+  const fetchDeviceInfo = (path: string, bustCache: boolean) => {
+    const cacheKey = path;
+    if (bustCache) {
+      deviceInfoCache.delete(cacheKey);
+    }
     const cached = deviceInfoCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < DEVICE_INFO_CACHE_TTL_MS) {
       setDeviceInfo(cached.info);
@@ -172,8 +173,8 @@ export function DeviceSyncPanel({
       return;
     }
     void Promise.all([
-      window.api.getDeviceInfo(destinationPath).catch(() => null),
-      window.api.getFilesystem(destinationPath).catch(() => 'unknown'),
+      window.api.getDeviceInfo(path).catch(() => null),
+      window.api.getFilesystem(path).catch(() => 'unknown'),
     ])
       .then(([info, fs]) => {
         if (info?.total) {
@@ -183,7 +184,23 @@ export function DeviceSyncPanel({
         setFilesystemType(fs ?? 'unknown');
       })
       .finally(() => setLoadingInfo(false));
+  };
+
+  useEffect(() => {
+    setDeviceInfo(null);
+    setLoadingInfo(true);
+    setFilesystemType('unknown');
+    fetchDeviceInfo(destinationPath, false);
   }, [destinationPath]);
+
+  // Refresh disk usage after sync or delete so "other" segment reflects reality
+  useEffect(() => {
+    const wasSyncing = prevIsSyncingRef.current;
+    prevIsSyncingRef.current = isSyncing;
+    if (wasSyncing && !isSyncing) {
+      fetchDeviceInfo(destinationPath, true);
+    }
+  }, [isSyncing, destinationPath]);
 
   // Build sync item list
   // Synced items come from DB (available even if not loaded in library)
