@@ -1476,7 +1476,7 @@ ipcMain.handle('prefs:set', (_event, partial: { analyticsEnabled?: boolean }) =>
   setPreferences(partial);
 });
 
-ipcMain.handle('app:checkForUpdates', (_event, force = false) => void performUpdateCheck(force));
+ipcMain.handle('app:checkForUpdates', (_event, force = false) => performUpdateCheck(force));
 
 void app.whenReady().then(() => {
   log.info('App ready');
