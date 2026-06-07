@@ -89,7 +89,8 @@ describe('useLibrary', () => {
         },
         'IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
         'IncludeItemTypes=Playlist': { items: [], total: 0 },
-        '/MusicGenres': { items: [], total: 0 },
+        '/Genres': { items: [], total: 0 },
+        '/Views': { items: [], total: 0 },
       });
 
       const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
@@ -98,8 +99,9 @@ describe('useLibrary', () => {
         await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
       });
 
-      // artists, albumArtists, albums, playlists, genres — all 5 tabs are loaded
-      expect(mockFetch).toHaveBeenCalledTimes(5);
+      // artists, albumArtists, albums, playlists, genres — all 5 tabs are loaded,
+      // plus one /Users/{id}/Views call to resolve the music library id for /Genres
+      expect(mockFetch).toHaveBeenCalledTimes(6);
     });
   });
 
@@ -325,8 +327,11 @@ describe('useLibrary', () => {
 
       // Should have fetched genres
       expect(mockFetch).toHaveBeenCalled();
-      const lastCallUrl = mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0] as string;
-      expect(lastCallUrl.toLowerCase()).toContain('musicgenres');
+      const genresCall = (mockFetch.mock.calls as Array<[string]>)
+        .map((c) => c[0])
+        .find((url) => url.includes('/Genres?'));
+      expect(genresCall).toBeDefined();
+      expect(genresCall).toContain('Recursive=true');
     });
 
     it('genres data is populated after loadTab genres', async () => {
@@ -355,7 +360,7 @@ describe('useLibrary', () => {
       expect(result.current.genres).toHaveLength(0);
     });
 
-    it('loadMore fetches from MusicGenres endpoint for genres type', async () => {
+    it('loadMore fetches from Genres endpoint for genres type', async () => {
       // Setup mock to track which endpoints are called
       const fetchCalls: string[] = [];
       mockFetch.mockImplementation((url: string) => {
@@ -380,16 +385,16 @@ describe('useLibrary', () => {
         await result.current.loadMore('genres');
       });
 
-      // Verify loadMore called the MusicGenres endpoint (with startIndex from pagination)
+      // Verify loadMore called the Genres endpoint (with startIndex from pagination)
       // After initial load with 1 item, pagination startIndex = 1
       const loadMoreCall = fetchCalls.find(
-        (url) => url.includes('MusicGenres') && url.includes('StartIndex=1'),
+        (url) => url.includes('/Genres?') && url.includes('StartIndex=1'),
       );
       expect(loadMoreCall).toBeDefined();
-      expect(loadMoreCall).toContain('MusicGenres');
+      expect(loadMoreCall).toContain('Recursive=true');
     });
 
-    it('fetchAllIds fetches from MusicGenres endpoint for genres type', async () => {
+    it('fetchAllIds fetches from Genres endpoint for genres type', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () =>

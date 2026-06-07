@@ -17,6 +17,41 @@ export function buildUrl(base: string, path: string): string {
 }
 
 /**
+ * Build the endpoint for fetching music genres.
+ *
+ * Uses `/Genres` (NOT `/MusicGenres`) scoped to the music library via
+ * `ParentId`, mirroring the Jellyfin web client exactly. `/MusicGenres` returns
+ * the raw MusicGenre entity list, which includes orphaned/compound tags (e.g.
+ * "Alternative Metal; Heavy Metal; Rock") that are no longer attached to any
+ * live track — selecting them syncs nothing. `/Genres?ParentId=<musicLib>` is
+ * derived from the items currently in that library, so it only returns genres
+ * that actually have tracks, and `Fields=ItemCounts` yields a per-genre
+ * `SongCount`.
+ *
+ * `parentId` is the music library (collection folder) id. When it can't be
+ * resolved we fall back to an unscoped `/Genres` query — still far better than
+ * the stale `/MusicGenres` list, though counts may then span all libraries.
+ */
+export function buildGenresEndpoint(opts: {
+  startIndex: number;
+  limit: number;
+  userId: string;
+  parentId?: string | null;
+}): string {
+  const params = new URLSearchParams({
+    SortBy: 'SortName',
+    SortOrder: 'Ascending',
+    Recursive: 'true',
+    Fields: 'ItemCounts',
+    StartIndex: String(opts.startIndex),
+    Limit: String(opts.limit),
+    userId: opts.userId,
+  });
+  if (opts.parentId) params.set('ParentId', opts.parentId);
+  return `/Genres?${params.toString()}`;
+}
+
+/**
  * Format Jellyfin RunTimeTicks into a human-readable duration string.
  * Jellyfin uses 100-nanosecond ticks: 1 tick = 100ns.
  * @param ticks - RunTimeTicks value (1 tick = 100 nanoseconds)
@@ -101,15 +136,17 @@ export function normalizePlaylist(raw: Record<string, unknown>): Playlist {
 }
 
 /**
- * Normalize a raw Jellyfin genre item from /MusicGenres endpoint.
- * LibraryItems indicates how many items belong to this genre in Jellyfin's library.
- * Count is resolved as: modern `ItemCount` → older `ChildCount` → 0.
+ * Normalize a raw Jellyfin genre item from the /Genres endpoint.
+ * LibraryItems indicates how many tracks belong to this genre.
+ * Count is resolved as: `SongCount` (from Fields=ItemCounts, scoped to Audio) →
+ * legacy `ItemCount` → legacy `ChildCount` → 0.
  */
 export function normalizeGenre(raw: Record<string, unknown>): Genre {
   return {
     Id: String(raw.Id ?? ''),
     Name: String(raw.Name ?? ''),
-    LibraryItems: (raw.ItemCount as number) ?? (raw.ChildCount as number) ?? 0,
+    LibraryItems:
+      (raw.SongCount as number) ?? (raw.ItemCount as number) ?? (raw.ChildCount as number) ?? 0,
   };
 }
 

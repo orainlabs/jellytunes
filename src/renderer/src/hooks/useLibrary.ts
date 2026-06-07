@@ -14,6 +14,7 @@ import type {
 import {
   jellyfinHeaders,
   buildUrl,
+  buildGenresEndpoint,
   PAGE_SIZE,
   normalizeArtist,
   normalizeAlbum,
@@ -60,6 +61,34 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
   });
 
   const contentScrollRef = useRef<HTMLDivElement>(null);
+
+  // Music library (collection folder) id, used to scope the /Genres query the
+  // same way the Jellyfin web client does. Resolved once and cached (including a
+  // null result, so we don't re-query /Views on every genre page).
+  const musicLibraryIdRef = useRef<string | null>(null);
+  const musicLibraryResolvedRef = useRef(false);
+
+  const ensureMusicLibraryId = async (
+    baseUrl: string,
+    headers: Record<string, string>,
+    uid: string,
+  ): Promise<string | null> => {
+    if (musicLibraryResolvedRef.current) return musicLibraryIdRef.current;
+    const safeUserId = uid.trim();
+    if (!safeUserId) return null;
+    try {
+      const res = await fetch(buildUrl(baseUrl, `/Users/${safeUserId}/Views`), { headers });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const views = (data.Items ?? []) as Array<{ Id?: string; CollectionType?: string }>;
+      const music = views.find((v) => v.CollectionType === 'music');
+      musicLibraryIdRef.current = music?.Id ?? null;
+      musicLibraryResolvedRef.current = true;
+      return musicLibraryIdRef.current;
+    } catch {
+      return null;
+    }
+  };
 
   const loadStats = async (url: string, apiKey: string, uid: string): Promise<void> => {
     const headers = jellyfinHeaders(apiKey);
@@ -146,6 +175,8 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       genres: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
     });
     setGenres([]);
+    musicLibraryIdRef.current = null;
+    musicLibraryResolvedRef.current = false;
     itemTypeIndexRef.current = {
       artists: new Set(),
       albumArtists: new Set(),
@@ -280,7 +311,12 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       const res = await fetch(
         buildUrl(
           baseUrl,
-          `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=ItemCount,ChildCount`,
+          buildGenresEndpoint({
+            startIndex: 0,
+            limit: PAGE_SIZE,
+            userId: uid,
+            parentId: await ensureMusicLibraryId(baseUrl, headers, uid),
+          }),
         ),
         { headers },
       );
@@ -406,7 +442,12 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         const res = await fetch(
           buildUrl(
             baseUrl,
-            `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0&Fields=ItemCount,ChildCount`,
+            buildGenresEndpoint({
+              startIndex: 0,
+              limit: PAGE_SIZE,
+              userId,
+              parentId: await ensureMusicLibraryId(baseUrl, headers, userId),
+            }),
           ),
           { headers },
         );
@@ -476,7 +517,12 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else if (type === 'genres')
-          endpoint = `/MusicGenres?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Fields=ItemCount,ChildCount`;
+          endpoint = buildGenresEndpoint({
+            startIndex,
+            limit: PAGE_SIZE,
+            userId,
+            parentId: await ensureMusicLibraryId(baseUrl, headers, userId),
+          });
         else
           endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 
@@ -642,7 +688,12 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         else if (type === 'albums')
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${pageLimit}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
         else if (type === 'genres')
-          endpoint = `/MusicGenres?SortBy=Name&Limit=${pageLimit}&StartIndex=${startIndex}&Fields=ItemCount,ChildCount`;
+          endpoint = buildGenresEndpoint({
+            startIndex,
+            limit: pageLimit,
+            userId,
+            parentId: await ensureMusicLibraryId(baseUrl, headers, userId),
+          });
         else
           endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${pageLimit}&StartIndex=${startIndex}&Recursive=true&Fields=RunTimeTicks,ChildCount&userId=${userId}`;
 

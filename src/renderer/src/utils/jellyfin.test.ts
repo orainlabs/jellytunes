@@ -210,6 +210,12 @@ describe('jellyfin normalizers', () => {
       expect(result.LibraryItems).toBe(30);
     });
 
+    it('prefers SongCount (from /Genres Fields=ItemCounts) over legacy counts', () => {
+      const raw = { Id: 'g-metal', Name: 'Metal', SongCount: 12, ItemCount: 99, ChildCount: 4 };
+      const result = normalizeGenre(raw);
+      expect(result.LibraryItems).toBe(12);
+    });
+
     it('returns 0 when neither ItemCount nor ChildCount is present', () => {
       const raw = { Id: 'g-1', Name: 'Classical' };
       const result = normalizeGenre(raw);

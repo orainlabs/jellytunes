@@ -69,7 +69,9 @@ describe('useLibrary albumArtists tab', () => {
         // Playlists
         'IncludeItemTypes=Playlist': { items: [], total: 0 },
         // Genres
-        '/MusicGenres': { items: [], total: 0 },
+        '/Genres': { items: [], total: 0 },
+        // Music library id resolution for the /Genres ParentId
+        '/Views': { items: [], total: 0 },
       });
 
       const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
@@ -78,8 +80,9 @@ describe('useLibrary albumArtists tab', () => {
         await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
       });
 
-      // artists, albumArtists, albums, playlists, genres — all 5 tabs are loaded
-      expect(mockFetch).toHaveBeenCalledTimes(5);
+      // artists, albumArtists, albums, playlists, genres — all 5 tabs are loaded,
+      // plus one /Users/{id}/Views call to resolve the music library id for /Genres
+      expect(mockFetch).toHaveBeenCalledTimes(6);
       // Verify the AlbumArtists endpoint was called
       const albumArtistsCall = mockFetch.mock.calls.find((call) =>
         (call[0] as string).includes('/Artists/AlbumArtists'),
