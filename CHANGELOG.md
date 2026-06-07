@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0] — 2026-06-07
+
+### Added
+
+- **Album Artists tab** — browse the library by album artist, distinct from track artist, with selection, sync, and track fetching fully independent from the Artists tab.
+- **Genres** — browse, filter, and sync albums by genre via a dedicated Genres tab. Genre artwork is shown in the library list, the tab is toggleable for sync, and genres load on startup with a footer count.
+- **ReplayGain tag embedding** — ReplayGain tags pulled from Jellyfin are embedded into synced tracks for consistent playback volume.
+- **Hidden native menu bar** on Windows and macOS for a more focused window.
+- **View → Toggle Developer Tools** menu item in dev builds.
+
+### Fixed
+
+- Resolved empty album and track tags when syncing by artist (batched `Ids=` fetch).
+- Stopped the same track being repeatedly re-synced when shared across albums, by normalizing track metadata fields across all fetch endpoints.
+- Device disk usage refreshes after a sync so the storage bar's "other" segment stays accurate.
+- Storage bar audio segment no longer counts items marked WILL REMOVE.
+- Hardened library pagination against servers that ignore the `Limit` parameter, guarding against endless loading on large libraries.
+- More robust destination path handling using `path.dirname()` instead of brittle string slicing.
+
+### Changed
+
+- Replaced stray `console.warn` / `console.error` calls with the proper logger.
+- `check` script aligned with CI and now runs the build in pre-commit.
+
 ## [0.4.0] — 2026-05-30
 
 ### Added

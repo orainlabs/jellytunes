@@ -1,32 +1,25 @@
-## JellyTunes 0.4.0 — Lyrics, cover art modes, and smarter sync
+## JellyTunes 0.5.0 — Your whole library, organized your way
 
-This release adds lyrics sync, a cover art mode selector, a redesigned sync preview, and a large batch of reliability fixes across selection, storage estimation, and file handling.
+Your music collection is more than a flat list of artists, and now JellyTunes treats it that way. This release brings real Album Artist and Genre browsing, consistent playback volume with ReplayGain, and a cleaner, more focused window. Behind the scenes, we spent a lot of time making sync just work, even on the messiest libraries.
 
 ### What's new
 
-**Lyrics sync** — JellyTunes can now download `.lrc` sidecar files or embed lyrics directly into tracks. Works with Jellyfin 10.9+ (JSON format) and older servers (plain `.lrc`). Orphaned LRC files are cleaned up automatically when you switch modes.
+**Browse by Album Artist.** You shouldn't have to scroll past a hundred "Various Artists" entries to find the album you're after. The new Album Artists tab gives you a clean view of your collection, with its own selection and sync that stays completely separate from individual track artists.
 
-**Cover art mode selector** — choose between embedded cover art and companion `cover.jpg` files per device. Your choice is remembered between sessions.
+**Find music by genre.** Sometimes you don't want an artist, you want a mood. The new Genres tab lets you browse, filter, and sync a whole genre at once, with genre artwork right there in the list and a live count of what you've got. Flip a genre on and it syncs from then on.
 
-**Redesigned sync preview** — the preview modal now shows a three-column layout with per-category breakdowns (new / will update / will remove), a total row, and a selection summary with combined duration and estimated size before you start a sync.
+**The right volume on every track.** No more reaching for the volume knob between songs. JellyTunes now pulls ReplayGain tags straight from Jellyfin and embeds them, so quiet tracks and loud tracks land at a level that just feels right.
 
-**Smarter selection** — track sizes are estimated as you select, using batched Jellyfin fetches and tick-based sampling. A fetch threshold guard prevents accidental runaway requests on large libraries. Select All now handles pagination correctly on any library size and recovers gracefully from errors.
+### Reliability you can count on
 
-**Per-tab search** — Artists, Albums, and Playlists tabs each keep their own independent search query.
+This is where most of the work went. We wanted sync to be something you never have to think about, especially on big libraries:
 
-**Lazy image loading** — library cover art loads as rows scroll into view, reducing initial load time on large libraries.
-
-### Fixed
-
-- Stale `cover.jpg` and `.lrc` files are now cleaned up when switching cover art modes or removing items
-- False "out of sync" detections after changing cover art mode
-- Disk-full hangs and ghost rows in the sync database during large syncs
-- Select All race condition on large libraries
-- Storage bar showing inaccurate estimated sizes (`~` prefix now shown correctly while loading)
-- Sync preview track counts and durations showing `undefined` in some cases
-- Library images disappearing after load in certain scroll positions
-- Several LRC file path handling edge cases
+- Album and track details now sync correctly every time when you sync by artist
+- Tracks that show up on more than one album sync once instead of over and over, so you're not waiting on duplicate transfers
+- Storage tracking got a lot sharper. Disk usage refreshes right after a sync, and the storage bar actually reflects what's on your device
+- Large libraries load smoothly now, even against servers that get loose with pagination, so no more endless spinners
+- Steadier file handling means your tracks end up exactly where they should
 
 ---
 
-Full technical changelog: [CHANGELOG.md](CHANGELOG.md)
+Want the full technical breakdown? See the [CHANGELOG.md](CHANGELOG.md).
