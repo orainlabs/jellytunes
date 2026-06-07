@@ -80,7 +80,7 @@ describe('useLibrary', () => {
   }
 
   describe('loadLibrary', () => {
-    it('fetches 3 tabs in parallel', async () => {
+    it('fetches all 5 tabs in parallel', async () => {
       setupFetchMock({
         // Pattern matching - partial URL that will be found via includes()
         'SortBy=Name&Limit=50&StartIndex=0': {
@@ -89,6 +89,7 @@ describe('useLibrary', () => {
         },
         'IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
         'IncludeItemTypes=Playlist': { items: [], total: 0 },
+        '/MusicGenres': { items: [], total: 0 },
       });
 
       const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
@@ -97,8 +98,8 @@ describe('useLibrary', () => {
         await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
       });
 
-      // artists, albumArtists, albums, playlists — all 4 tabs are loaded
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      // artists, albumArtists, albums, playlists, genres — all 5 tabs are loaded
+      expect(mockFetch).toHaveBeenCalledTimes(5);
     });
   });
 

@@ -154,6 +154,225 @@ describe('sync-api', () => {
     });
   });
 
+  describe('getArtistTracks album enrichment (ORAIN-0560 follow-up)', () => {
+    // The flat ArtistIds= query returns each track's Album scalar empty for
+    // untagged files; the album name only lives on the parent MusicAlbum and is
+    // backfilled via a batched Ids= call.
+    it('backfills album name + year from the parent album when the track Album scalar is empty', async () => {
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  makeTrackItem({
+                    Id: 'track-1',
+                    Name: 'This I Promise You',
+                    Album: undefined,
+                    AlbumName: undefined,
+                    AlbumId: 'album-9',
+                  }),
+                ],
+              }),
+          });
+        }
+        // Batched album-metadata call (Ids=)
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [{ Id: 'album-9', Name: 'No Strings Attached', ProductionYear: 2000 }],
+            }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+      expect(tracks[0].album).toBe('No Strings Attached');
+      expect(tracks[0].year).toBe(2000);
+    });
+
+    it('resolves all distinct albums in a SINGLE batched Ids= call (no per-album fan-out)', async () => {
+      const idsCalls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  makeTrackItem({ Id: 't1', Album: '', AlbumName: '', AlbumId: 'a1' }),
+                  makeTrackItem({ Id: 't2', Album: '', AlbumName: '', AlbumId: 'a2' }),
+                  makeTrackItem({ Id: 't3', Album: '', AlbumName: '', AlbumId: 'a1' }),
+                ],
+              }),
+          });
+        }
+        idsCalls.push(url);
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [
+                { Id: 'a1', Name: 'Album One' },
+                { Id: 'a2', Name: 'Album Two' },
+              ],
+            }),
+        });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+
+      // Exactly one batched metadata call covering both distinct albums
+      expect(idsCalls).toHaveLength(1);
+      expect(idsCalls[0]).toContain('Ids=a1,a2');
+      expect(tracks.find((t) => t.id === 't1')?.album).toBe('Album One');
+      expect(tracks.find((t) => t.id === 't2')?.album).toBe('Album Two');
+      expect(tracks.find((t) => t.id === 't3')?.album).toBe('Album One');
+    });
+
+    it('makes no batch call and leaves album unset when no track has an AlbumId', async () => {
+      const allCalls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        allCalls.push(url);
+        if (url.includes('ArtistIds=')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [makeTrackItem({ Id: 't1', Album: '', AlbumName: '', AlbumId: undefined })],
+              }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+
+      expect(tracks[0].album).toBeUndefined();
+      // No Ids= batch call when there are no album IDs to resolve
+      expect(allCalls.every((u) => !u.includes('?Ids='))).toBe(true);
+    });
+  });
+
+  describe('album batching strategy (M+1, chunked, bounded)', () => {
+    const resp = (body: unknown) =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+
+    it('syncing M albums uses ONE Ids= metadata call + one parentId= per album (no per-album /Items/{id})', async () => {
+      const calls = { ids: 0, parent: 0, single: 0 };
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('?Ids=')) {
+          calls.ids++;
+          return resp({
+            Items: [
+              { Id: 'al1', Name: 'Album One', ProductionYear: 2001 },
+              { Id: 'al2', Name: 'Album Two', ProductionYear: 2002 },
+            ],
+          });
+        }
+        if (url.includes('parentId=al1')) {
+          calls.parent++;
+          return resp({
+            Items: [makeTrackItem({ Id: 't1', Album: '', AlbumName: '', AlbumId: 'al1' })],
+          });
+        }
+        if (url.includes('parentId=al2')) {
+          calls.parent++;
+          return resp({
+            Items: [makeTrackItem({ Id: 't2', Album: '', AlbumName: '', AlbumId: 'al2' })],
+          });
+        }
+        if (/\/Items\/al\d/.test(url)) {
+          calls.single++;
+          return resp({});
+        }
+        return resp({ Items: [] });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const { tracks } = await api.getTracksForItems(
+        ['al1', 'al2'],
+        new Map([
+          ['al1', 'album'],
+          ['al2', 'album'],
+        ]),
+      );
+
+      expect(calls.ids).toBe(1); // one batched metadata call for both albums
+      expect(calls.parent).toBe(2); // one track call per album
+      expect(calls.single).toBe(0); // NO legacy per-album /Items/{id} metadata call
+      expect(tracks.find((t) => t.id === 't1')?.album).toBe('Album One');
+      expect(tracks.find((t) => t.id === 't2')?.album).toBe('Album Two');
+      expect(tracks.find((t) => t.id === 't1')?.parentItemId).toBe('al1');
+    });
+
+    it('chunks the Ids= metadata query so the URL never grows unbounded (150 albums → 2 chunks)', async () => {
+      const albumIds = Array.from({ length: 150 }, (_, i) => `a${i}`);
+      const idsCalls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('ArtistIds=')) {
+          return resp({
+            Items: albumIds.map((aid, i) =>
+              makeTrackItem({ Id: `t${i}`, Album: '', AlbumName: '', AlbumId: aid }),
+            ),
+          });
+        }
+        if (url.includes('?Ids=')) {
+          idsCalls.push(url);
+          const ids = decodeURIComponent(url.split('Ids=')[1].split('&')[0]).split(',');
+          return resp({ Items: ids.map((id) => ({ Id: id, Name: `Name ${id}` })) });
+        }
+        return resp({ Items: [] });
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      const tracks = await api.getArtistTracks('artist-1', 'artist');
+
+      // 150 albums / 100 per chunk → 2 batched metadata calls (not 150)
+      expect(idsCalls).toHaveLength(2);
+      idsCalls.forEach((u) => {
+        const count = u.split('Ids=')[1].split('&')[0].split(',').length;
+        expect(count).toBeLessThanOrEqual(100);
+      });
+      expect(tracks.find((t) => t.id === 't0')?.album).toBe('Name a0');
+      expect(tracks.find((t) => t.id === 't149')?.album).toBe('Name a149');
+    });
+  });
+
   describe('getAlbumTracks fields', () => {
     it('includes Artists and AlbumArtist in the Fields query param', async () => {
       let capturedUrl = '';

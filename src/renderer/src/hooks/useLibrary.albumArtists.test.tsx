@@ -49,7 +49,7 @@ describe('useLibrary albumArtists tab', () => {
   }
 
   describe('loadLibrary loads albumArtists', () => {
-    it('fetches 4 tabs in parallel including albumArtists', async () => {
+    it('fetches all 5 tabs in parallel including albumArtists', async () => {
       setupFetchMock({
         // Artists (track-level)
         'SortBy=Name&Limit=50&StartIndex=0': {
@@ -68,6 +68,8 @@ describe('useLibrary albumArtists tab', () => {
         'IncludeItemTypes=MusicAlbum': { items: [], total: 0 },
         // Playlists
         'IncludeItemTypes=Playlist': { items: [], total: 0 },
+        // Genres
+        '/MusicGenres': { items: [], total: 0 },
       });
 
       const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
@@ -76,8 +78,8 @@ describe('useLibrary albumArtists tab', () => {
         await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
       });
 
-      // artists, albumArtists, albums, playlists — all 4 tabs are loaded
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      // artists, albumArtists, albums, playlists, genres — all 5 tabs are loaded
+      expect(mockFetch).toHaveBeenCalledTimes(5);
       // Verify the AlbumArtists endpoint was called
       const albumArtistsCall = mockFetch.mock.calls.find((call) =>
         (call[0] as string).includes('/Artists/AlbumArtists'),

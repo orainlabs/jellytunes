@@ -127,6 +127,22 @@ class ConcurrencyLimiter {
 const API_CONCURRENCY = 4;
 
 /**
+ * Max album IDs per `Ids=` batch request. Keeps the query string well within
+ * URL-length limits (~100 × 32-char GUIDs ≈ 3.2KB) and avoids oversized requests
+ * while still collapsing hundreds of albums into a handful of calls.
+ */
+const ALBUM_IDS_CHUNK_SIZE = 100;
+
+/** Split an array into chunks of at most `size` elements. */
+function chunk<T>(arr: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+/**
  * API client implementation
  */
 class SyncApiImpl implements SyncApi {
@@ -136,6 +152,12 @@ class SyncApiImpl implements SyncApi {
   private timeout: number;
   private fetchFn: typeof fetch;
   private limiter = new ConcurrencyLimiter(API_CONCURRENCY);
+  // Separate limiter for the per-album track fan-out inside getAlbumTracksBatch.
+  // The albumArtist path runs getAlbumTracksBatch from *inside* `limiter.run`,
+  // so reusing the same limiter for the inner fan-out would deadlock (outer
+  // slots waiting on inner slots of the same semaphore). A distinct limiter
+  // bounds album track requests without that risk.
+  private albumLimiter = new ConcurrencyLimiter(API_CONCURRENCY);
   private logger?: SyncLogger;
 
   constructor(config: ApiClientConfig) {
@@ -257,10 +279,11 @@ class SyncApiImpl implements SyncApi {
           .join(',')}...`,
       );
 
-      const perAlbumResults = await Promise.all(
-        albums.map((album) => this.getAlbumTracks(album.Id)),
+      // Route through getAlbumTracksBatch: chunked Ids= metadata + one bounded
+      // parentId= per album, instead of 2 unbounded calls per album.
+      const allTracks = (await this.getAlbumTracksBatch(albums.map((album) => album.Id))).map(
+        ({ _albumId, ...track }) => track,
       );
-      const allTracks = perAlbumResults.flat();
 
       const elapsed = Date.now() - startTime;
       this.logger?.debug(
@@ -287,37 +310,62 @@ class SyncApiImpl implements SyncApi {
       `[BATCH] getArtistTracks ${artistId} (artist) → fetching tracks endpoint=${tracksEndpoint}`,
     );
     const tracksData = await this.request<{ Items: JellyfinTrackItem[] }>(tracksEndpoint);
-    const tracks = (tracksData.Items ?? [])
-      .filter((item) => item.MediaSources?.[0]?.Path)
-      .map((item) => this.trackItemToInfo(item));
+    const items = (tracksData.Items ?? []).filter((item) => item.MediaSources?.[0]?.Path);
+
+    // ORAIN-0560 follow-up: the flat ArtistIds= query returns each track's
+    // `Album` scalar empty for files lacking an album tag, and unlike
+    // getAlbumTracks this path has no parent-album fallback — so the album tag
+    // was dropped when syncing by artist. Resolve names + years for all distinct
+    // albums in ONE batched Ids= call and pass them as the album-name fallback.
+    const albumIds = [
+      ...new Set(items.map((i) => i.AlbumId).filter((id): id is string => Boolean(id))),
+    ];
+    const albumMeta = await this.fetchAlbumMetaByIds(albumIds);
+    const tracks = items.map((item) => {
+      const meta = item.AlbumId ? albumMeta.get(item.AlbumId) : undefined;
+      return this.trackItemToInfo(item, meta?.year, meta?.name);
+    });
 
     const elapsed = Date.now() - startTime;
     this.logger?.debug(
-      `[BATCH] getArtistTracks ${artistId} → DONE ${tracks.length} tracks in ${elapsed}ms`,
+      `[BATCH] getArtistTracks ${artistId} → DONE ${tracks.length} tracks (${albumIds.length} albums backfilled) in ${elapsed}ms`,
     );
     return tracks;
+  }
+
+  /**
+   * Fetch the Audio tracks under a single album with ONE parentId= request.
+   * The album Name/Year are supplied by the caller (resolved separately, usually
+   * batched via fetchAlbumMetaByIds) and used as the album-name/year fallback —
+   * the per-track `Album` scalar can't be relied on (see fetchAlbumMetaByIds).
+   */
+  private async getAlbumTracksByParent(
+    albumId: string,
+    albumName?: string,
+    albumYear?: number,
+  ): Promise<TrackInfo[]> {
+    const data = await this.request<{ Items: JellyfinTrackItem[] }>(
+      // ORAIN-0560: IndexNumber/ParentIndexNumber are required for track/disc tags.
+      `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album,IndexNumber,ParentIndexNumber`,
+    );
+    return (data.Items ?? [])
+      .filter((item) => item.MediaSources?.[0]?.Path)
+      .map((item) => this.trackItemToInfo(item, albumYear, albumName));
   }
 
   async getAlbumTracks(albumId: string): Promise<TrackInfo[]> {
     const startTime = Date.now();
     this.logger?.debug(`[BATCH] getAlbumTracks START albumId=${albumId}`);
 
-    const [albumData, tracksData] = await Promise.all([
-      this.request<{ Name?: string; ProductionYear?: number }>(
-        `/Users/${this.userId}/Items/${albumId}`,
-      ).catch(() => ({ Name: undefined, ProductionYear: undefined })),
-      this.request<{ Items: JellyfinTrackItem[] }>(
-        // ORAIN-0560: add IndexNumber and ParentIndexNumber so the `track` (and
-        // disc number) tags get populated when syncing by album. Without these
-        // fields, Jellyfin omits them from the response and trackNumber is
-        // undefined.
-        `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album,IndexNumber,ParentIndexNumber`,
-      ),
-    ]);
+    const albumData = await this.request<{ Name?: string; ProductionYear?: number }>(
+      `/Users/${this.userId}/Items/${albumId}`,
+    ).catch(() => ({ Name: undefined, ProductionYear: undefined }));
 
-    const tracks = (tracksData.Items ?? [])
-      .filter((item) => item.MediaSources?.[0]?.Path)
-      .map((item) => this.trackItemToInfo(item, albumData.ProductionYear, albumData.Name));
+    const tracks = await this.getAlbumTracksByParent(
+      albumId,
+      albumData.Name,
+      albumData.ProductionYear,
+    );
 
     this.logger?.debug(
       `[BATCH] getAlbumTracks ${albumId} → albumName="${albumData.Name}" tracks=${tracks.length} in ${Date.now() - startTime}ms`,
@@ -363,14 +411,60 @@ class SyncApiImpl implements SyncApi {
     return tracks;
   }
 
+  /**
+   * Resolve album Name + ProductionYear for multiple albums in a SINGLE HTTP
+   * call via Jellyfin's `Ids=` filter. Used to backfill the album-name fallback
+   * for track queries (e.g. ArtistIds=) where the per-track `Album` scalar is
+   * empty: Jellyfin sets `dto.Album = audio.Album` directly with no parent
+   * fallback (verified against DtoService.cs), so the album name only lives on
+   * the parent MusicAlbum entity reachable via AlbumId.
+   *
+   * Returns a map keyed by album ID. On failure it resolves to an empty map so
+   * callers degrade gracefully (the album tag simply stays unset).
+   */
+  private async fetchAlbumMetaByIds(
+    albumIds: string[],
+  ): Promise<Map<string, { name?: string; year?: number }>> {
+    const map = new Map<string, { name?: string; year?: number }>();
+    if (albumIds.length === 0) return map;
+
+    // Split into chunks so the Ids= URL never grows unbounded (a single artist
+    // can span hundreds of albums). Chunks run through albumLimiter to cap
+    // parallelism. Each chunk is one HTTP call; failures degrade gracefully
+    // (those albums simply keep an unset album tag).
+    const chunks = chunk(albumIds, ALBUM_IDS_CHUNK_SIZE);
+    await Promise.all(
+      chunks.map((ids) =>
+        this.albumLimiter.run(async () => {
+          const endpoint = `/Users/${this.userId}/Items?Ids=${ids.join(',')}&Fields=ProductionYear`;
+          const data = await this.request<{ Items: JellyfinAlbumItem[] }>(endpoint).catch(() => ({
+            Items: [] as JellyfinAlbumItem[],
+          }));
+          for (const album of data.Items ?? []) {
+            map.set(album.Id, { name: album.Name, year: album.ProductionYear });
+          }
+        }),
+      ),
+    );
+    return map;
+  }
+
   private async getAlbumTracksBatch(
     albumIds: string[],
   ): Promise<Array<TrackInfo & { _albumId: string }>> {
+    // Resolve every album's Name/Year in chunked Ids= batches (1 call per chunk,
+    // not 1 per album), then fetch tracks with one bounded parentId= query each.
+    // Total: ceil(M/CHUNK) + M calls instead of the old 2M, with the per-album
+    // fan-out capped by albumLimiter so we never flood the server.
+    const albumMeta = await this.fetchAlbumMetaByIds(albumIds);
     const results = await Promise.all(
-      albumIds.map(async (albumId) => {
-        const tracks = await this.getAlbumTracks(albumId);
-        return tracks.map((t) => ({ ...t, _albumId: albumId }));
-      }),
+      albumIds.map((albumId) =>
+        this.albumLimiter.run(async () => {
+          const meta = albumMeta.get(albumId);
+          const tracks = await this.getAlbumTracksByParent(albumId, meta?.name, meta?.year);
+          return tracks.map((t) => ({ ...t, _albumId: albumId }));
+        }),
+      ),
     );
     return results.flat();
   }
