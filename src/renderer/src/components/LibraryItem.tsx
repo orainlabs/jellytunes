@@ -30,8 +30,7 @@ function ItemThumbnail({
 }) {
   const [imgError, setImgError] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
-  // Genres don't have ImageTags — only Artist/AlbumArtist/Album/Playlist do
-  const tag = (item as Artist | AlbumArtist | Album | Playlist).ImageTags?.Primary;
+  const tag = (item as Artist | AlbumArtist | Album | Playlist | Genre).ImageTags?.Primary;
   const { ref, isIntersecting } = useIntersectionObserver<HTMLDivElement>({
     rootMargin: '100px',
     triggerOnce: true,

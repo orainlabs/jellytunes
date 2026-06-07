@@ -147,6 +147,7 @@ export function normalizeGenre(raw: Record<string, unknown>): Genre {
     Name: String(raw.Name ?? ''),
     LibraryItems:
       (raw.SongCount as number) ?? (raw.ItemCount as number) ?? (raw.ChildCount as number) ?? 0,
+    ImageTags: (raw.ImageTags as Genre['ImageTags']) ?? undefined,
   };
 }
 

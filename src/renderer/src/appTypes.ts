@@ -64,6 +64,7 @@ export interface Genre {
   Id: string;
   Name: string;
   LibraryItems?: number;
+  ImageTags?: { Primary?: string };
 }
 
 export interface LibraryStats {
