@@ -477,6 +477,136 @@ describe('sync-api', () => {
     });
   });
 
+  // A track shared between an artist/album and a playlist/genre must produce
+  // identical hash-relevant metadata (album, year, trackNumber, discNumber)
+  // regardless of which endpoint fetched it. Otherwise computeMetadataHash
+  // differs per fetch path and the shared track ping-pongs between
+  // "out of sync"/"retagged" each time the other item is synced.
+  describe('cross-endpoint metadata consistency (shared track ping-pong)', () => {
+    function playlistMock() {
+      return vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/Playlists/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  makeTrackItem({
+                    Id: 'shared-1',
+                    Album: '',
+                    AlbumName: '',
+                    AlbumId: 'album-9',
+                    IndexNumber: 5,
+                    ParentIndexNumber: 2,
+                  }),
+                ],
+              }),
+          });
+        }
+        // Batched album-metadata call (Ids=) — backfill source
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [{ Id: 'album-9', Name: 'The Original Soundtrack', ProductionYear: 1975 }],
+            }),
+        });
+      });
+    }
+
+    function genreMock() {
+      return vi.fn().mockImplementation((url: string) => {
+        if (url.includes('GenreIds=')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                Items: [
+                  makeTrackItem({
+                    Id: 'shared-1',
+                    Album: '',
+                    AlbumName: '',
+                    AlbumId: 'album-9',
+                    IndexNumber: 5,
+                    ParentIndexNumber: 2,
+                  }),
+                ],
+              }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [{ Id: 'album-9', Name: 'The Original Soundtrack', ProductionYear: 1975 }],
+            }),
+        });
+      });
+    }
+
+    it('getPlaylistTracks backfills album name + year from the parent album', async () => {
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: playlistMock(),
+      });
+
+      const tracks = await api.getPlaylistTracks('playlist-1');
+      expect(tracks[0].album).toBe('The Original Soundtrack');
+      expect(tracks[0].year).toBe(1975);
+    });
+
+    it('getPlaylistTracks requests IndexNumber + ParentIndexNumber so trackNumber/discNumber survive', async () => {
+      let capturedUrl = '';
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/Playlists/')) capturedUrl = url;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getPlaylistTracks('playlist-1');
+      expect(capturedUrl).toContain('IndexNumber');
+      expect(capturedUrl).toContain('ParentIndexNumber');
+    });
+
+    it('getGenreTracks backfills album name + year from the parent album', async () => {
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: genreMock(),
+      });
+
+      const tracks = await api.getGenreTracks('genre-1');
+      expect(tracks[0].album).toBe('The Original Soundtrack');
+      expect(tracks[0].year).toBe(1975);
+    });
+
+    it('getGenreTracks requests IndexNumber + ParentIndexNumber so trackNumber/discNumber survive', async () => {
+      let capturedUrl = '';
+      const mockFetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('GenreIds=')) capturedUrl = url;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ Items: [] }) });
+      });
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'test-key',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getGenreTracks('genre-1');
+      expect(capturedUrl).toContain('IndexNumber');
+      expect(capturedUrl).toContain('ParentIndexNumber');
+    });
+  });
+
   describe('getGenreTracks', () => {
     it('returns tracks for a given genre id (ORAIN-0535)', async () => {
       const mockFetch = vi.fn().mockResolvedValue({

@@ -133,6 +133,17 @@ const API_CONCURRENCY = 4;
  */
 const ALBUM_IDS_CHUNK_SIZE = 100;
 
+/**
+ * Canonical `Fields` list for every track query, regardless of the source
+ * endpoint (artist, album, playlist, genre). Keeping a single list guarantees
+ * the same track yields identical hash-relevant metadata (album, year,
+ * trackNumber=IndexNumber, discNumber=ParentIndexNumber) no matter which item
+ * fetched it. If the lists diverge, a track shared between two items hashes
+ * differently per fetch path and ping-pongs between "out of sync"/"retagged".
+ */
+const TRACK_FIELDS =
+  'Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album,RunTimeTicks,IndexNumber,ParentIndexNumber';
+
 /** Split an array into chunks of at most `size` elements. */
 function chunk<T>(arr: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -305,7 +316,7 @@ class SyncApiImpl implements SyncApi {
     // would be a tighter "performer" semantic, but only matches the
     // `Artists` array; the trade-off is documented in
     // `docs/JELLYFIN_API.md` (pending manual verification).
-    const tracksEndpoint = `/Users/${this.userId}/Items?ArtistIds=${artistId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album,RunTimeTicks,IndexNumber,ParentIndexNumber`;
+    const tracksEndpoint = `/Users/${this.userId}/Items?ArtistIds=${artistId}&includeItemTypes=Audio&Recursive=true&Fields=${TRACK_FIELDS}`;
     this.logger?.debug(
       `[BATCH] getArtistTracks ${artistId} (artist) → fetching tracks endpoint=${tracksEndpoint}`,
     );
@@ -317,18 +328,11 @@ class SyncApiImpl implements SyncApi {
     // getAlbumTracks this path has no parent-album fallback — so the album tag
     // was dropped when syncing by artist. Resolve names + years for all distinct
     // albums in ONE batched Ids= call and pass them as the album-name fallback.
-    const albumIds = [
-      ...new Set(items.map((i) => i.AlbumId).filter((id): id is string => Boolean(id))),
-    ];
-    const albumMeta = await this.fetchAlbumMetaByIds(albumIds);
-    const tracks = items.map((item) => {
-      const meta = item.AlbumId ? albumMeta.get(item.AlbumId) : undefined;
-      return this.trackItemToInfo(item, meta?.year, meta?.name);
-    });
+    const tracks = await this.itemsToInfoWithAlbumBackfill(items);
 
     const elapsed = Date.now() - startTime;
     this.logger?.debug(
-      `[BATCH] getArtistTracks ${artistId} → DONE ${tracks.length} tracks (${albumIds.length} albums backfilled) in ${elapsed}ms`,
+      `[BATCH] getArtistTracks ${artistId} → DONE ${tracks.length} tracks in ${elapsed}ms`,
     );
     return tracks;
   }
@@ -346,7 +350,7 @@ class SyncApiImpl implements SyncApi {
   ): Promise<TrackInfo[]> {
     const data = await this.request<{ Items: JellyfinTrackItem[] }>(
       // ORAIN-0560: IndexNumber/ParentIndexNumber are required for track/disc tags.
-      `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album,IndexNumber,ParentIndexNumber`,
+      `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=${TRACK_FIELDS}`,
     );
     return (data.Items ?? [])
       .filter((item) => item.MediaSources?.[0]?.Path)
@@ -379,12 +383,11 @@ class SyncApiImpl implements SyncApi {
     this.logger?.debug(`[BATCH] getPlaylistTracks START playlistId=${playlistId}`);
 
     const data = await this.request<{ Items: JellyfinTrackItem[] }>(
-      `/Playlists/${playlistId}/Items?UserId=${this.userId}&Fields=Path,MediaSources,AlbumId,ParentId,Genres,Artists,AlbumArtist,Album`,
+      `/Playlists/${playlistId}/Items?UserId=${this.userId}&Fields=${TRACK_FIELDS}`,
     );
 
-    const tracks = (data.Items ?? [])
-      .filter((item) => item.MediaSources?.[0]?.Path)
-      .map((item) => this.trackItemToInfo(item));
+    const items = (data.Items ?? []).filter((item) => item.MediaSources?.[0]?.Path);
+    const tracks = await this.itemsToInfoWithAlbumBackfill(items);
 
     this.logger?.debug(
       `[BATCH] getPlaylistTracks ${playlistId} → ${tracks.length} tracks in ${Date.now() - startTime}ms`,
@@ -397,12 +400,11 @@ class SyncApiImpl implements SyncApi {
     const startTime = Date.now();
     this.logger?.debug(`[BATCH] getGenreTracks START genreId=${genreId}`);
 
-    const endpoint = `/Items?IncludeItemTypes=Audio&GenreIds=${encodeURIComponent(genreId)}&Recursive=true&Fields=Path,MediaSources,AlbumId,ParentId,Genres,Artists,AlbumArtist,Album`;
+    const endpoint = `/Items?IncludeItemTypes=Audio&GenreIds=${encodeURIComponent(genreId)}&Recursive=true&Fields=${TRACK_FIELDS}`;
     const data = await this.request<{ Items: JellyfinTrackItem[] }>(endpoint);
 
-    const tracks = (data.Items ?? [])
-      .filter((item) => item.MediaSources?.[0]?.Path)
-      .map((item) => this.trackItemToInfo(item));
+    const items = (data.Items ?? []).filter((item) => item.MediaSources?.[0]?.Path);
+    const tracks = await this.itemsToInfoWithAlbumBackfill(items);
 
     this.logger?.debug(
       `[BATCH] getGenreTracks ${genreId} → ${tracks.length} tracks in ${Date.now() - startTime}ms`,
@@ -422,6 +424,26 @@ class SyncApiImpl implements SyncApi {
    * Returns a map keyed by album ID. On failure it resolves to an empty map so
    * callers degrade gracefully (the album tag simply stays unset).
    */
+  /**
+   * Map raw Jellyfin track items to TrackInfo, backfilling the album name + year
+   * from the parent MusicAlbum (resolved in ONE batched Ids= call). Jellyfin
+   * leaves the per-track `Album` scalar empty for files without an album tag and
+   * never returns a track-level year, so without this fallback those fields stay
+   * blank — diverging from the artist/album fetch paths that already backfill.
+   * Routing every flat track query through here keeps the metadata hash stable
+   * across endpoints (see TRACK_FIELDS).
+   */
+  private async itemsToInfoWithAlbumBackfill(items: JellyfinTrackItem[]): Promise<TrackInfo[]> {
+    const albumIds = [
+      ...new Set(items.map((i) => i.AlbumId).filter((id): id is string => Boolean(id))),
+    ];
+    const albumMeta = await this.fetchAlbumMetaByIds(albumIds);
+    return items.map((item) => {
+      const meta = item.AlbumId ? albumMeta.get(item.AlbumId) : undefined;
+      return this.trackItemToInfo(item, meta?.year, meta?.name);
+    });
+  }
+
   private async fetchAlbumMetaByIds(
     albumIds: string[],
   ): Promise<Map<string, { name?: string; year?: number }>> {
