@@ -177,7 +177,7 @@ export function LibraryItem({
       onClick={() =>
         onToggle(item.Id, type === 'artist' || type === 'albumArtist' ? type : undefined)
       }
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${isSelected ? 'bg-primary_container/15 border border-primary_container/30 hover:bg-primary_container/20 border-l-4 border-primary' : willDelete ? 'border border-error/40 hover:bg-surface_container_low border-l-4 border-transparent' : 'border border-transparent hover:bg-surface_container_low border-l-4 border-transparent'}`}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${coveredByArtist ? 'border border-transparent border-l-4 border-transparent opacity-50 hover:opacity-70' : isSelected ? 'bg-primary_container/15 border border-primary_container/30 hover:bg-primary_container/20 border-l-4 border-primary' : willDelete ? 'border border-error/40 hover:bg-surface_container_low border-l-4 border-transparent' : 'border border-transparent hover:bg-surface_container_low border-l-4 border-transparent'}`}
     >
       <input
         type="checkbox"
@@ -198,7 +198,7 @@ export function LibraryItem({
         <p className="text-caption text-on_surface_variant flex items-center gap-1.5 h-4">
           {finalSubtitle && <span className="truncate">{finalSubtitle}</span>}
           {coveredByArtist && (
-            <span className="px-1.5 py-0.5 rounded-md text-caption flex-shrink-0 bg-surface_container text-on_surface_variant">
+            <span className="px-1.5 py-0.5 rounded-md text-caption flex-shrink-0 bg-on_surface_variant/15 text-on_surface_variant font-medium">
               covered by artist
             </span>
           )}
