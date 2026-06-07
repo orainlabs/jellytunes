@@ -30,16 +30,46 @@ describe('Track Cache', () => {
   // --- Test AC-3: Cache structure and TTL ---
 
   describe('AC-1: Cache module-level structure', () => {
-    it('should be a Map with key format serverUrl:userId:itemId', () => {
-      // The cache key format must be `${serverUrl}:${userId}:${itemId}`
-      // to enable per-itemId caching independent of combination
+    it('should be a Map with key format serverUrl:userId:itemType:itemId', () => {
+      // The cache key format must be `${serverUrl}:${userId}:${itemType}:${itemId}`.
+      // The itemType segment is required so the same id cached under different types
+      // does not collide (see ORAIN-0561 test below).
       const serverUrl = 'https://jellyfin.example.com';
       const userId = 'abc123def456789';
       const itemId = 'item-001';
 
-      const cacheKey = `${serverUrl}:${userId}:${itemId}`;
+      const cacheKey = `${serverUrl}:${userId}:album:${itemId}`;
 
-      expect(cacheKey).toBe('https://jellyfin.example.com:abc123def456789:item-001');
+      expect(cacheKey).toBe('https://jellyfin.example.com:abc123def456789:album:item-001');
+    });
+
+    it('ORAIN-0561: artist and albumArtist for the same id produce distinct keys', () => {
+      // A Jellyfin id can be queried as artist (ArtistIds= → superset incl. collaborations)
+      // or albumArtist (AlbumArtistIds= → owned albums only). These return different track
+      // sets; a type-agnostic key let the narrower albumArtist result shadow a later artist
+      // request, freezing size/track-count until app restart.
+      const serverUrl = 'https://jellyfin.example.com';
+      const userId = 'abc123def456789';
+      const sharedId = 'aitana-id';
+
+      const artistKey = `${serverUrl}:${userId}:artist:${sharedId}`;
+      const albumArtistKey = `${serverUrl}:${userId}:albumArtist:${sharedId}`;
+
+      expect(artistKey).not.toBe(albumArtistKey);
+
+      // Both can coexist in the cache without one clobbering the other.
+      const cache = new Map<
+        string,
+        { tracks: ReturnType<typeof makeTrack>[]; fetchedAt: number }
+      >();
+      cache.set(albumArtistKey, { tracks: [makeTrack({ id: 't1' })], fetchedAt: Date.now() });
+      cache.set(artistKey, {
+        tracks: [makeTrack({ id: 't1' }), makeTrack({ id: 't2' }), makeTrack({ id: 't3' })],
+        fetchedAt: Date.now(),
+      });
+
+      expect(cache.get(albumArtistKey)?.tracks).toHaveLength(1);
+      expect(cache.get(artistKey)?.tracks).toHaveLength(3);
     });
   });
 

@@ -16,10 +16,34 @@ import { createSyncCore, createApiClient, type CoverArtMode, type TrackInfo } fr
 const TRACK_CACHE_TTL_MS = 3_600_000; // 1 hour
 const _trackCache = new Map<string, { tracks: TrackInfo[]; fetchedAt: number }>();
 
+/** Item types whose tracks are cached. */
+type CacheItemType = 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre';
+const CACHE_ITEM_TYPES: readonly CacheItemType[] = [
+  'artist',
+  'album',
+  'playlist',
+  'albumArtist',
+  'genre',
+];
+
 // ─── Cache helpers (exported for testability) ──────────────────────────────
-/** Build cache key from serverUrl, userId, and itemId */
-function _buildTrackCacheKey(serverUrl: string, userId: string, itemId: string): string {
-  return `${serverUrl}:${userId}:${itemId}`;
+/**
+ * Build cache key from serverUrl, userId, itemType, and itemId.
+ *
+ * The type MUST be part of the key: a Jellyfin id can be queried both as an
+ * `artist` (ArtistIds= → every track the person performs on, incl. collaborations)
+ * and as an `albumArtist` (AlbumArtistIds= → only albums they own). These return
+ * different track sets, so a type-agnostic key let the narrower albumArtist result
+ * shadow a later artist request, freezing size/track-count until app restart
+ * (ORAIN-0561).
+ */
+function _buildTrackCacheKey(
+  serverUrl: string,
+  userId: string,
+  itemType: CacheItemType,
+  itemId: string,
+): string {
+  return `${serverUrl}:${userId}:${itemType}:${itemId}`;
 }
 
 /** Get tracks from cache if present and not expired; returns undefined otherwise */
@@ -38,10 +62,12 @@ function _setInTrackCache(key: string, tracks: TrackInfo[]): void {
   _trackCache.set(key, { tracks, fetchedAt: Date.now() });
 }
 
-/** Invalidate cache entries for given itemIds */
+/** Invalidate cache entries for given itemIds across every cached type. */
 function _invalidateTrackCache(serverUrl: string, userId: string, itemIds: string[]): void {
   for (const itemId of itemIds) {
-    _trackCache.delete(_buildTrackCacheKey(serverUrl, userId, itemId));
+    for (const itemType of CACHE_ITEM_TYPES) {
+      _trackCache.delete(_buildTrackCacheKey(serverUrl, userId, itemType, itemId));
+    }
   }
 }
 
@@ -999,7 +1025,12 @@ ipcMain.handle(
       const cacheMisses: string[] = [];
 
       for (const itemId of itemIds) {
-        const cacheKey = _buildTrackCacheKey(normalizedUrl, userId, itemId);
+        const cacheKey = _buildTrackCacheKey(
+          normalizedUrl,
+          userId,
+          itemTypes[itemId] ?? 'album',
+          itemId,
+        );
         const cached = _getFromTrackCache(cacheKey);
         if (cached) {
           preloadedTracks.set(itemId, cached);
@@ -1037,7 +1068,12 @@ ipcMain.handle(
           tracksByItem.get(parentId)!.push(track);
         }
         for (const [itemId, tracks] of tracksByItem) {
-          const cacheKey = _buildTrackCacheKey(normalizedUrl, userId, itemId);
+          const cacheKey = _buildTrackCacheKey(
+            normalizedUrl,
+            userId,
+            itemTypes[itemId] ?? 'album',
+            itemId,
+          );
           _setInTrackCache(cacheKey, tracks);
           preloadedTracks.set(itemId, tracks);
         }
@@ -1190,7 +1226,12 @@ ipcMain.handle(
       const cacheMisses: string[] = [];
 
       for (const itemId of itemIds) {
-        const cacheKey = _buildTrackCacheKey(normalizedUrl, userId, itemId);
+        const cacheKey = _buildTrackCacheKey(
+          normalizedUrl,
+          userId,
+          itemTypesMap.get(itemId) ?? 'album',
+          itemId,
+        );
         const cached = _getFromTrackCache(cacheKey);
         if (cached) {
           // Mark parentItemId so tracks are correctly grouped in results
@@ -1230,13 +1271,26 @@ ipcMain.handle(
           tracksByItem.get(parentId)!.push(track);
         }
         for (const [itemId, tracks] of tracksByItem) {
-          const cacheKey = _buildTrackCacheKey(normalizedUrl, userId, itemId);
+          const cacheKey = _buildTrackCacheKey(
+            normalizedUrl,
+            userId,
+            itemTypesMap.get(itemId) ?? 'album',
+            itemId,
+          );
           _setInTrackCache(cacheKey, tracks);
         }
         // Cache empty result for items with 0 tracks to prevent repeated fetches
         for (const itemId of cacheMisses) {
           if (!tracksByItem.has(itemId)) {
-            _setInTrackCache(_buildTrackCacheKey(normalizedUrl, userId, itemId), []);
+            _setInTrackCache(
+              _buildTrackCacheKey(
+                normalizedUrl,
+                userId,
+                itemTypesMap.get(itemId) ?? 'album',
+                itemId,
+              ),
+              [],
+            );
           }
         }
 

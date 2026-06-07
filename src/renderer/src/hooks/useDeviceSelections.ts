@@ -594,7 +594,15 @@ export function useDeviceSelections() {
           newItems.delete(id);
         }
       } else if (effectiveType === 'artist') {
-        if (isUpgrade) newAlbumArtists.delete(id);
+        if (isUpgrade) {
+          newAlbumArtists.delete(id);
+          // The cached track set was fetched with AlbumArtistIds= (solo albums only).
+          // The artist query (ArtistIds=) is a superset, so drop the stale narrower
+          // cache to force a refetch below — otherwise hasItemTracks(id) stays true and
+          // fetchSelectedUncachedTracks skips it, leaving size/track-count frozen at the
+          // album-artist values (ORAIN-0561).
+          registry.invalidateItem(id);
+        }
         newArtists.add(id);
         registry.setItemTypes([{ id, type: 'artist' }]);
       } else if (effectiveType === 'albumArtist') {

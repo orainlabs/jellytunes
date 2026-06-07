@@ -343,6 +343,46 @@ describe('useDeviceSelections', () => {
       expect(result.current.selectedTracks.has('shared-id')).toBe(true);
     });
 
+    it('upgrade: invalidates cached tracks and refetches the broader artist set', async () => {
+      // The id was fetched as albumArtist (AlbumArtistIds= → solo albums only), so its
+      // tracks are already cached. Upgrading to artist (ArtistIds= → superset incl.
+      // collaborations) must drop the stale narrower cache and refetch — otherwise the
+      // size/track-count preview stays frozen at the album-artist values.
+      vi.useFakeTimers();
+      mockApi.getSyncedItems.mockResolvedValue([]);
+      // Simulate the cache being present for the upgraded id, and cleared by invalidateItem.
+      const cached = new Set(['shared-id']);
+      mockRegistry.hasItemTracks.mockImplementation((id: string) => cached.has(id));
+      mockRegistry.invalidateItem.mockImplementation((id: string) => cached.delete(id));
+
+      const { result } = renderHook(() => useDeviceSelections());
+      await act(async () => {
+        await result.current.activateDevice('/Volumes/USB', defaultOptions);
+      });
+
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'albumArtist');
+      });
+      mockRegistry.invalidateItem.mockClear();
+      mockRegistry.fetchTracksForItems.mockClear();
+
+      await act(async () => {
+        result.current.toggleItem('shared-id', 'artist'); // upgrade
+        vi.advanceTimersByTime(500);
+      });
+      vi.useRealTimers();
+
+      expect(mockRegistry.invalidateItem).toHaveBeenCalledWith('shared-id');
+      expect(mockRegistry.fetchTracksForItems).toHaveBeenCalledWith(
+        expect.arrayContaining(['shared-id']),
+        '/Volumes/USB',
+        expect.objectContaining({ serverUrl: defaultOptions.serverUrl }),
+      );
+
+      mockRegistry.hasItemTracks.mockReturnValue(false);
+      mockRegistry.invalidateItem.mockReset();
+    });
+
     it('no-op: clicking albumArtist for an id already in selectedArtists does nothing', async () => {
       // Artist query is the superset — once an id is selected as artist,
       // adding it as albumArtist would be a downgrade. The click is silently

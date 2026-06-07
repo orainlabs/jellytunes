@@ -193,19 +193,24 @@ export function DeviceSyncPanel({
   // Synced/remove: iterate DB records — always available regardless of library state
   for (const item of syncedItemsInfo) {
     const selected = selectedTracks.has(item.id);
+    // ORAIN-0561: an id synced as albumArtist that the user has since upgraded to a
+    // full artist selection should display as 'artist' — the DB record still says
+    // 'albumArtist' until the next sync re-writes it, so reflect the pending type here.
+    const displayType =
+      item.type === 'albumArtist' && selectedArtists.has(item.id) ? 'artist' : item.type;
     if (outOfSyncItems.has(item.id)) {
       // Out of sync items can be re-tagged without re-download
       syncItems.push({
         id: item.id,
         name: item.name,
-        type: item.type,
+        type: displayType,
         state: selected ? 'outOfSync' : 'remove',
       });
     } else {
       syncItems.push({
         id: item.id,
         name: item.name,
-        type: item.type,
+        type: displayType,
         state: selected ? 'synced' : 'remove',
       });
     }

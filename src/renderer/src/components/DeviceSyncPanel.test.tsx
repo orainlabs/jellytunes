@@ -150,6 +150,19 @@ describe('DeviceSyncPanel', () => {
       expect(screen.getByText(/will remove/i)).toBeInTheDocument();
     });
 
+    it('ORAIN-0561: shows "artist" label for a synced albumArtist upgraded to artist', async () => {
+      const sharedId = 'aitana-id';
+      await renderPanelAndSettle({
+        selectedTracks: new Set([sharedId]),
+        selectedArtists: new Set([sharedId]),
+        syncedItemsInfo: [{ id: sharedId, name: 'Aitana', type: 'albumArtist' }],
+      });
+      // The DB record is still typed albumArtist, but the upgraded selection must
+      // surface as 'artist' in the row's type label (getByText uses exact match).
+      expect(screen.getByText('artist')).toBeInTheDocument();
+      expect(screen.queryByText('albumArtist')).not.toBeInTheDocument();
+    });
+
     it('shows "New" badge for newly selected items not yet synced', async () => {
       await renderPanelAndSettle({
         // ORAIN-0551: artist selections now live in the typed set, not the union.
