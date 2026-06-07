@@ -20,16 +20,19 @@
 
 ---
 
-JellyTunes is a desktop app for [Jellyfin](https://jellyfin.org) users who want to take their music offline. Browse your server's artists, albums, and playlists, pick a destination — a USB drive, SD card, or any local folder — and hit sync. JellyTunes downloads everything, converts formats if needed, and mirrors your server's folder structure at the destination.
+JellyTunes is a desktop app for [Jellyfin](https://jellyfin.org) users who want to take their music offline. Browse your server's artists, album artists, albums, playlists, and genres, pick a destination — a USB drive, SD card, or any local folder — and hit sync. JellyTunes downloads everything, converts formats if needed, embeds lyrics and cover art, and mirrors your server's folder structure at the destination.
 
 ## Key Features
 
-- **Browse your full library** — artists, albums, and playlists pulled directly from your Jellyfin server
+- **Browse your full library** — artists, album artists, albums, playlists, and genres pulled directly from your Jellyfin server
 - **Sync anywhere** — USB drives, SD cards, and local folders all work as destinations
 - **Selective sync** — only downloads what's new or changed; skips tracks already at the destination
 - **Out-of-sync detection** — tracks that changed on the server since the last sync are automatically flagged for update
-- **Sync preview** — review exactly what will be added, updated, or removed before you commit to a sync
+- **Sync preview** — a three-column breakdown of exactly what will be added, updated, or removed — with per-category track count, size, and duration — before you commit to a sync
 - **FLAC to MP3 conversion** — built-in FFmpeg support with configurable bitrate (128k / 192k / 320k); settings saved per device
+- **Lyrics sync** — download `.lrc` sidecar files or embed lyrics directly into tracks (supports Jellyfin 10.9+ JSON lyrics); mode is configurable per device
+- **Cover art modes** — embed cover art into each track or write companion `cover.jpg` files; chosen per device and persisted
+- **ReplayGain tags** — ReplayGain metadata from Jellyfin is embedded into synced tracks for consistent playback volume
 - **Smart storage bar** — visual capacity indicator with live size estimates; warns when your selection exceeds free space
 - **Smart filesystem handling** — auto-detects FAT32, exFAT, and NTFS; sanitizes filenames accordingly
 - **Per-destination history** — remembers what was synced to each device or folder so you can pick up where you left off
@@ -40,10 +43,19 @@ JellyTunes is a desktop app for [Jellyfin](https://jellyfin.org) users who want 
 <p align="center">
   <a href="assets/screenshot-albums.png"><img src="assets/screenshot-albums.png" alt="Browse your Jellyfin library" width="400" /></a>
   &nbsp;&nbsp;
-  <a href="assets/screenshot-sync.png"><img src="assets/screenshot-sync.png" alt="Sync to device with MP3 conversion" width="400" /></a>
+  <a href="assets/screenshot-device.png"><img src="assets/screenshot-device.png" alt="Pick a destination device or folder" width="400" /></a>
 </p>
 <p align="center">
-  <em>Browse your library &nbsp;·&nbsp; Sync to any device with optional MP3 conversion</em>
+  <em>Browse your library &nbsp;·&nbsp; Pick a destination device or folder</em>
+</p>
+
+<p align="center">
+  <a href="assets/screenshot-sync-preview.png"><img src="assets/screenshot-sync-preview.png" alt="Review the sync preview before syncing" width="400" /></a>
+  &nbsp;&nbsp;
+  <a href="assets/screenshot-syncing.png"><img src="assets/screenshot-syncing.png" alt="Sync in progress with phase-aware progress" width="400" /></a>
+</p>
+<p align="center">
+  <em>Review what will change &nbsp;·&nbsp; Sync with live, phase-aware progress</em>
 </p>
 
 ## Installation
@@ -75,6 +87,16 @@ Then open the app normally.
 1. Try to open the app (it will be blocked)
 2. Go to **System Settings → Privacy & Security → Security**
 3. Click **"Open Anyway"** next to the JellyTunes entry
+
+### Windows: "Windows protected your PC" (SmartScreen)
+
+JellyTunes is not signed with a code-signing certificate, so Windows SmartScreen may show a blue **"Windows protected your PC"** warning the first time you run the installer. To proceed:
+
+1. Click **"More info"** on the warning dialog
+2. Click the **"Run anyway"** button that appears
+3. Continue through the installer as normal
+
+This only happens on first run.
 
 ### Prerequisites
 
