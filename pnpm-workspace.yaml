@@ -7,10 +7,14 @@ allowBuilds:
   electron: true
   esbuild: true
   sharp: true
-  usb-detection: true
 
 ignoredBuiltDependencies:
   - drivelist
+  # usb-detection 4.14.2 install hook falls back to node-gyp@10 which can't parse
+  # Visual Studio 18 on the windows-2025-vs2026 runner. Native build is handled by
+  # `electron-builder install-app-deps` (postinstall) which uses @electron/rebuild
+  # + node-gyp@12 — verified locally on 2026-07-22.
+  - usb-detection
 
 onlyBuiltDependencies:
   - '@ffmpeg-installer/darwin-x64'
@@ -18,4 +22,3 @@ onlyBuiltDependencies:
   - electron
   - esbuild
   - sharp
-  - usb-detection
