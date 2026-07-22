@@ -2,6 +2,7 @@
   "name": "jellytunes",
   "version": "0.5.0",
   "description": "Sincronizador de música Jellyfin → dispositivos MP3/FLAC",
+  "homepage": "https://github.com/orainlabs/jellytunes",
   "main": "dist/main/index.js",
   "author": {
     "name": "Orain Labs",
