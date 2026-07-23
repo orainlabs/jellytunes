@@ -126,7 +126,8 @@
         "AppImage",
         "deb"
       ],
-      "icon": "assets/icon.png"
+      "icon": "assets/icons",
+      "synopsis": "Sincronizador de música Jellyfin → dispositivos MP3/FLAC"
     }
   },
   "lint-staged": {
