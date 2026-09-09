@@ -295,7 +295,7 @@ export function useJellyfinConnection(
       setState((prev) => ({
         ...prev,
         isConnecting: false,
-        error: 'Could not identify user. Please select manually.',
+        error: 'Could not authenticate. Check your API key and try again.',
       }));
       return false;
     } catch (err) {
