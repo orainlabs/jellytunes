@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useJellyfinConnection, isSecureAuthUrl } from './useJellyfinConnection';
+import {
+  useJellyfinConnection,
+  isSecureAuthUrl,
+  INVALID_API_KEY_ERROR,
+} from './useJellyfinConnection';
 
 const mockApi = {
   saveSession: vi.fn().mockResolvedValue({ success: true }),
@@ -586,6 +590,32 @@ describe('useJellyfinConnection', () => {
 
       expect(mockFetch).toHaveBeenCalled();
       expect(result.current.isConnected).toBe(true);
+    });
+  });
+
+  // ORAIN-0687: invalid API key with empty user list shows correct message
+  describe('connectToJellyfin empty userList error (ORAIN-0687)', () => {
+    it('sets error to INVALID_API_KEY_ERROR when fetchUserList returns no users', async () => {
+      mockApi.loadSession.mockResolvedValue(null);
+      // /System/Info/Public succeeds, /Users/Me fails, fetchUserList (/Users + /Users/Public) both return []
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ ServerName: 'Test Server' }),
+        })
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({ ok: false });
+
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+
+      await act(async () => {
+        await result.current.connectToJellyfin('https://jellyfin.test', 'bad-key');
+      });
+
+      expect(result.current.isConnecting).toBe(false);
+      expect(result.current.error).toBe(INVALID_API_KEY_ERROR);
+      expect(result.current.showUserSelector).toBe(false);
     });
   });
 

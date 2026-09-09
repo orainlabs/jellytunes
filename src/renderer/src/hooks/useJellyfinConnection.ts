@@ -3,6 +3,12 @@ import type { JellyfinConfig, JellyfinUser } from '../appTypes';
 import { jellyfinHeaders } from '../utils/jellyfin';
 import { getAuthenticateHeader } from '../utils/authContext';
 
+// Exported so tests can assert on the exact value without a fragile source parser.
+// ORAIN-0687: replaced "Could not identify user. Please select manually." which
+// implied a selector (confusing when userList is empty) with a message that
+// correctly points to the API key as the likely cause.
+export const INVALID_API_KEY_ERROR = 'Could not authenticate. Check your API key and try again.';
+
 interface ConnectionState {
   jellyfinConfig: JellyfinConfig | null;
   userId: string | null;
@@ -295,7 +301,7 @@ export function useJellyfinConnection(
       setState((prev) => ({
         ...prev,
         isConnecting: false,
-        error: 'Could not authenticate. Check your API key and try again.',
+        error: INVALID_API_KEY_ERROR,
       }));
       return false;
     } catch (err) {
