@@ -610,9 +610,202 @@ describe('loadLibrary error preservation', () => {
   });
 });
 
-// ─── retryTab loading state (MEDIUM finding fix) ─────────────────────────────
+// ─── retryTab (ORAIN-0688) ───────────────────────────────────────────────────
+//
+// Bug: retryTab removes tab from loadedTabs, sets tabStates[tab]='loading',
+// then calls loadTab(tab) synchronously. React batches the two setState calls
+// in the same microtask, so loadedTabs.has(tab) is still true when loadTab
+// runs → loadTab early-returns and the tab is stuck in 'loading' forever.
+//
+// Fix: extract fetch logic to fetchTab(tab) (no guard), keep loadTab = guard
+// + fetchTab, retryTab calls fetchTab directly after resetting state.
+// Guard in loadTab is preserved to prevent re-fetch on tab-change / mount.
 
 describe('retryTab', () => {
+  // AC1: retryTab on a tab already in loadedTabs executes a real HTTP request
+  it('executes a fetch when retryTab is called on a tab already in loadedTabs', async () => {
+    // Simulate loadLibrary having added 'albums' to loadedTabs (the bug trigger):
+    // 'albums' is NOT in the initial loadedTabs (only 'artists' is).
+    // We put it there by calling loadTab('albums') first — it succeeds and adds it.
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('IncludeItemTypes=MusicAlbum')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+      });
+    });
+
+    const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+    // Prime loadedTabs so 'albums' is in it (simulates post-loadLibrary state)
+    await act(async () => {
+      await result.current.loadTab('albums');
+    });
+    expect(result.current.loadedTabs.has('albums')).toBe(true);
+
+    // Track how many fetch calls happen during retryTab
+    // Override mock so retry actually resolves
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('IncludeItemTypes=MusicAlbum')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              Items: [{ Id: 'album-1', Name: 'Album 1', Type: 'MusicAlbum' }],
+              TotalRecordCount: 1,
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+      });
+    });
+
+    await act(async () => {
+      await result.current.retryTab('albums');
+    });
+
+    // AC1: fetch was called at least once during retryTab
+    const albumFetches = mockFetch.mock.calls.filter((call) =>
+      (call[0] as string).includes('IncludeItemTypes=MusicAlbum'),
+    );
+    expect(albumFetches.length).toBeGreaterThan(1); // initial + retry
+  });
+
+  // AC2: after successful retry, tabStates === 'loaded' and pagination has items
+  it('sets tabStates to loaded and populates pagination after successful retry', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          Items: [
+            { Id: 'album-2', Name: 'Album 2', Type: 'MusicAlbum' },
+            { Id: 'album-3', Name: 'Album 3', Type: 'MusicAlbum' },
+          ],
+          TotalRecordCount: 2,
+        }),
+    });
+
+    const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+    // Load albums first so it's in loadedTabs
+    await act(async () => {
+      await result.current.loadTab('albums');
+    });
+    expect(result.current.loadedTabs.has('albums')).toBe(true);
+
+    await act(async () => {
+      await result.current.retryTab('albums');
+    });
+
+    // AC2: tabStates.albums === 'loaded'
+    expect(result.current.tabStates.albums).toBe('loaded');
+    // AC2: pagination.albums.items contains the returned items
+    expect(result.current.pagination.albums.items.length).toBeGreaterThan(0);
+  });
+
+  // AC3: after failed retry, tabStates === 'error' and never stuck in 'loading'
+  it('sets tabStates to error (not loading) after failed retry', async () => {
+    // First load succeeds to put albums in loadedTabs
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+    });
+
+    const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+    await act(async () => {
+      await result.current.loadTab('albums');
+    });
+    expect(result.current.loadedTabs.has('albums')).toBe(true);
+
+    // Retry fails
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+    await act(async () => {
+      await result.current.retryTab('albums');
+    });
+
+    // AC3: tabStates.albums === 'error', not 'loading'
+    expect(result.current.tabStates.albums).toBe('error');
+  });
+
+  // AC4: retry resolving with 0 items → tabStates === 'loaded' (empty state), not 'loading'
+  it('sets tabStates to loaded (not loading) when retry resolves with 0 items', async () => {
+    // First load succeeds to put albums in loadedTabs
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          Items: [{ Id: 'album-x', Name: 'Album X', Type: 'MusicAlbum' }],
+          TotalRecordCount: 1,
+        }),
+    });
+
+    const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+    await act(async () => {
+      await result.current.loadTab('albums');
+    });
+    expect(result.current.loadedTabs.has('albums')).toBe(true);
+
+    // Retry returns 0 items (HTTP 200, empty response)
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ Items: [], TotalRecordCount: 0 }),
+    });
+
+    await act(async () => {
+      await result.current.retryTab('albums');
+    });
+
+    // AC4: tabStates.albums === 'loaded' (empty state), not 'loading'
+    expect(result.current.tabStates.albums).toBe('loaded');
+  });
+
+  // AC5: loadTab guard is preserved — tab-change / mount must not re-fetch
+  it('loadTab does NOT re-fetch a tab already in loadedTabs (guard preserved)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          Items: [{ Id: 'artist-1', Name: 'Artist 1', AlbumCount: 5, ImageTags: {} }],
+          TotalRecordCount: 1,
+        }),
+    });
+
+    const { result } = renderHook(() => useLibrary(mockConfig, 'user-1'));
+
+    // Load library so all tabs are in loadedTabs (via microtask)
+    await act(async () => {
+      await result.current.loadLibrary('https://jellyfin.test', 'test-key', 'user-1');
+    });
+
+    const fetchCountBefore = mockFetch.mock.calls.length;
+
+    // Call loadTab on a tab that is in loadedTabs — must NOT fetch
+    await act(async () => {
+      await result.current.loadTab('artists');
+    });
+
+    // AC5: no new fetch calls were made (guard early-returned)
+    expect(mockFetch.mock.calls.length).toBe(fetchCountBefore);
+  });
+
+  // AC6: existing LibraryContent.states tests still pass — no regressions
+  // (covered by running the full test suite; documented here as an AC anchor)
+  // AC7: typecheck + tests pass — verified by CI gate
+});
+
+// ─── retryTab loading state (MEDIUM finding fix) ─────────────────────────────
+
+describe('retryTab (existing)', () => {
   it('sets tab state to loading before re-fetching', async () => {
     // First, manually set genres to error state via loadTab failure
     mockFetch.mockResolvedValue({ ok: false, status: 500 });

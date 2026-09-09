@@ -378,24 +378,15 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       return next;
     });
     setTabStates((prev) => ({ ...prev, [tab]: 'loading' }));
-    await loadTab(tab);
+    await fetchTab(tab);
   };
 
-  const loadTab = async (tab: LibraryTab): Promise<void> => {
+  // ── fetchTab: fetch logic without guard. Called directly by retryTab after
+  // resetting loadedTabs/tabStates, and indirectly by loadTab after its guard. ──
+  const fetchTab = async (tab: LibraryTab): Promise<void> => {
     if (!jellyfinConfig || !userId) return;
     const headers = jellyfinHeaders(jellyfinConfig.apiKey);
     const baseUrl = jellyfinConfig.url.replace(/\/$/, '');
-
-    if (loadedTabs.has(tab)) {
-      // Always restore saved scroll (including 0) so the observer doesn't
-      // inherit the previous tab's scroll position and fire spurious load-mores
-      setTimeout(() => {
-        if (contentScrollRef.current) {
-          contentScrollRef.current.scrollTop = pagination[tab].scrollPos;
-        }
-      }, 0);
-      return;
-    }
 
     try {
       if (tab === 'artists') {
@@ -529,6 +520,20 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
       logger.error(`Failed to load ${tab}: ` + (e instanceof Error ? e.message : String(e)));
       setTabStates((prev) => ({ ...prev, [tab]: 'error' }));
     }
+  };
+
+  const loadTab = async (tab: LibraryTab): Promise<void> => {
+    if (loadedTabs.has(tab)) {
+      // Always restore saved scroll (including 0) so the observer doesn't
+      // inherit the previous tab's scroll position and fire spurious load-mores
+      setTimeout(() => {
+        if (contentScrollRef.current) {
+          contentScrollRef.current.scrollTop = pagination[tab].scrollPos;
+        }
+      }, 0);
+      return;
+    }
+    await fetchTab(tab);
   };
 
   const loadMore = useCallback(
