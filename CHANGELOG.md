@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.7.0] — 2026-09-10
+
+### Added
+
+- **Log in with your Jellyfin username and password** ([#9](https://github.com/orainlabs/jellytunes/issues/9)). An API key is no longer required to use JellyTunes. Password is now the default mode on the login screen, and the API key route stays one click away behind _Use an API key instead (advanced)_. The mode you used last is remembered, password sessions are stored encrypted and reconnect on launch, and the server URL field is focused when the screen opens.
+
+### Changed
+
+- **Jellyfin 12 support** ([#13](https://github.com/orainlabs/jellytunes/issues/13)). Every request now carries the `Authorization: MediaBrowser` header instead of the legacy `X-Emby-Token`. Jellyfin 12 rejects `X-Emby-Token` with a 401 out of the box, which is why 0.6.0 stopped resolving the library after a server upgrade. The single header covers Jellyfin 10.10 through 12, and a stable per-install device ID is now generated and sent alongside it.
+- **HTTPS is required to log in**, for both password and API key. An API key sent over plaintext HTTP is an admin-capable, non-expiring credential, and a password is worse. Loopback addresses (`localhost`, `127.0.0.1`, `::1`) are exempt, since that traffic never leaves the machine. Sessions saved by an earlier version keep reconnecting as before; the gate applies when you log in.
+- The library screen title now uses the tab label, so the Album Artists tab reads correctly instead of showing `albumArtists`.
+- The About dialog tagline matches the one in the README and `package.json`.
+- macOS builds ship unsigned again. The ad-hoc signing added after issue [#12](https://github.com/orainlabs/jellytunes/issues/12) rested on a wrong diagnosis and was reverted after testing 0.5.0 and 0.6.0 on real Apple silicon hardware. The README now explains the "damaged" dialog Apple silicon users actually see and the `xattr -cr` fix.
+
+### Fixed
+
+- A library tab that fails to load shows an empty or error state with a Retry button instead of an endless skeleton, on all five tabs. Retry now really refetches: it used to reset the tab to loading and then hit a guard that skipped the fetch, leaving it spinning forever.
+- A login that cannot reach the server reports a readable message instead of `Failed to fetch`. The underlying error still goes to the log.
+- "Could not identify user. Please select manually." is replaced by guidance about the API key, which is what that situation actually calls for.
+- Genre browsing is scoped to the logged-in Jellyfin user, using the canonical userId query.
+- Cancelling a sync stops mid-download instead of finishing the tracks already in flight, and no longer leaves `*.jt-tmp-*` orphans in the destination when the cancel lands during conversion.
+- Password sessions refuse to auto-reconnect over plain HTTP, so a stored access token can't leak on restart.
+- Login screen polish: focus rings on the mode toggles, no native browser validation bubble, and focus lands in the same place in both modes.
+
+### Internal
+
+- The Cucumber BDD suite is retired in favour of a Playwright E2E suite that runs against provisioned Jellyfin containers on both v11 and v12, with deterministic FFmpeg fixtures, per-version compose stacks and per-version server config. 28 scenarios green on both majors.
+- Auth compatibility audit across Jellyfin 10.10 to 12 recorded in `docs/JELLYFIN_API.md`, including the `/Users/Me` 400 upstream quirk.
+- Snap-aware analytics: the `linux-snap` platform value and four Snap Store sections in the dashboard.
+- `main` is a rebase-only trunk; manual `git merge` is out.
+- CI: explicit `permissions` blocks on the checks and worker workflows, `wrangler-action` pinned to a release commit, browserslist database refreshed.
+
 ## [0.6.0] — 2026-07-28
 
 ### Added
