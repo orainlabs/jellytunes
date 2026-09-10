@@ -25,6 +25,6 @@ Two things people asked for in the same release. You no longer need to create an
 Full, current instructions for every platform live in the [installation guide](https://github.com/orainlabs/jellytunes#installation). Two things there are worth reading before you download:
 
 - **macOS.** JellyTunes isn't signed with an Apple Developer certificate. On Apple silicon macOS reports that as the app being _damaged_, which it is not. The guide names both dialogs, says which chip produces which, and gives the one-line fix.
-- **Linux.** Install from the Snap Store rather than from the assets below. The `.snap` is deliberately not attached here, because a file downloaded from GitHub carries no store signature and `snap install` rejects it. The `.deb` is in the assets, and so is the AppImage (legacy), which still runs but is deprecated — the [migration guide](https://github.com/orainlabs/jellytunes/blob/main/docs/INSTALLATION.md) walks you through moving to Snap or `.deb`.
+- **Linux.** Install from the Snap Store rather than from the assets below. The `.snap` is deliberately not attached here, because a file downloaded from GitHub carries no store signature and `snap install` rejects it. The `.deb` is in the assets, and so is the AppImage (legacy), which still runs but is deprecated. The [migration guide](https://github.com/orainlabs/jellytunes/blob/main/docs/INSTALLATION.md) walks you through moving to Snap or `.deb`.
 
 Want the full technical breakdown? See the [CHANGELOG.md](https://github.com/orainlabs/jellytunes/blob/main/CHANGELOG.md).
