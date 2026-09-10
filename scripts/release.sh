@@ -37,7 +37,7 @@ echo "Bumping to: $NEW_VERSION"
 
 # Commit and tag
 git add package.json
-git commit -m "chore: bump version to $NEW_VERSION"
+STUDIO_AUTO_MERGE=1 git commit -m "chore: bump version to $NEW_VERSION"
 git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
 
 # Push — GitHub Actions release workflow triggers on the tag
