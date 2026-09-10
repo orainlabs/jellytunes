@@ -142,7 +142,7 @@ export function LoginScreen({
                   />
                 </div>
 
-                {(error || fieldError) && (
+                {(error ?? fieldError) && (
                   <div
                     data-testid="error-message"
                     className="flex items-center gap-2 text-error text-body-md"
@@ -223,7 +223,7 @@ export function LoginScreen({
                   />
                 </div>
 
-                {(error || fieldError) && (
+                {(error ?? fieldError) && (
                   <div
                     data-testid="error-message"
                     className="flex items-center gap-2 text-error text-body-md"
