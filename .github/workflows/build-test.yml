@@ -90,6 +90,19 @@ jobs:
         env:
           npm_config_arch: ${{ matrix.arch }}
           npm_config_app_version: ${{ env.DEV_VERSION }}
+          # electron-builder spawns snapcraft with its stdout/stderr on a pipe
+          # that is only flushed if the process fails, so a slow Snap build is
+          # indistinguishable from a hung job: the step emits nothing at all
+          # between "executing snapcraft" and whatever ends it. That is what
+          # made runs 34575486832 and 34578845971 unreadable — both were
+          # cancelled by hand after 26 and 18 minutes of silence.
+          #
+          # Enabling electron-builder's debug namespace flips that stdio to
+          # "inherit" (builder-util/out/util.js), so snapcraft streams straight
+          # into the job log, and makes electron-builder pass --verbose to
+          # snapcraft on top. Linux only: the other platforms don't run
+          # snapcraft and the extra output just makes their logs harder to read.
+          DEBUG: ${{ matrix.platform == 'linux' && 'electron-builder' || '' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
