@@ -618,9 +618,14 @@ function createWindow(): void {
     autoHideMenuBar: process.platform === 'win32',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      // sandbox: false required for native modules (better-sqlite3, @ffmpeg-installer/ffmpeg)
-      // contextIsolation + no nodeIntegration still enforced for renderer security
-      sandbox: false,
+      // El sandbox del SO contiene un renderer comprometido aunque el atacante
+      // consiga ejecución de código nativo (corrupción de memoria en Chromium).
+      // contextIsolation y nodeIntegration operan dentro de V8 y NO sustituyen
+      // a esto: solo frenan escapes a nivel de JavaScript.
+      // Los módulos nativos (better-sqlite3, @ffmpeg-installer/ffmpeg) viven en
+      // el main process, que nunca está sandboxeado — no se ven afectados.
+      // Requiere que el preload se bundlee: ver electron.vite.config.ts.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
     },

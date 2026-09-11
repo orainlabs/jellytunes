@@ -15,7 +15,10 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    // Un preload sandboxeado solo resuelve `electron`, `events`, `timers` y
+    // `url`; cualquier paquete de node_modules debe ir bundleado o el preload
+    // muere al arrancar y el renderer se queda en blanco.
+    plugins: [externalizeDepsPlugin({ exclude: ['@electron-toolkit/preload'] })],
     build: {
       outDir: 'dist/preload',
       rollupOptions: {
