@@ -1,6 +1,13 @@
 packages:
   - .
 
+overrides:
+  # Electron 44 changed the v8::External::New signature (now requires a third
+  # argument). nan < 2.28 calls the old 2-arg overload and fails to compile
+  # usb-detection's native layer against it. nan 2.28.0 detects the new API
+  # via V8_EXTERNAL_POINTER_TAG_COUNT and uses the 3-arg overload.
+  nan: ^2.28.0
+
 allowBuilds:
   '@ffmpeg-installer/darwin-x64': true
   better-sqlite3: true
