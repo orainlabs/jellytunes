@@ -1,0 +1,14 @@
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      electron:
+        patterns: ["electron", "electron-*", "@electron/*", "@electron-toolkit/*"]
+      dev-minor-patch:
+        dependency-type: development
+        update-types: ["minor", "patch"]
