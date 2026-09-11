@@ -8,11 +8,11 @@ interface PackageManifest {
 const projectManifest = JSON.parse(readFileSync('package.json', 'utf8')) as PackageManifest;
 
 /**
- * Electron mantiene solo las 3 majors más recientes. A 2026-09-11: 42, 43 y 44.
- * Actualizar esta lista cuando la ventana se desplace — el test es un recordatorio
- * deliberado, no una comprobación en vivo contra releases.electronjs.org.
+ * Ventana de soporte de Electron a 2026-09-11: majors 42, 43 y 44 (Electron
+ * mantiene solo las 3 más recientes). Este dato no se puede comprobar de
+ * forma estática — ningún test sabe si la 44 sigue soportada más adelante —
+ * así que hay que revisarlo a mano cuando la ventana se desplace.
  */
-const SUPPORTED_MAJORS: readonly number[] = [42, 43, 44];
 const CHOSEN_MAJOR = 44;
 
 const parseMajor = (range: string): number => {
@@ -24,13 +24,7 @@ const parseMajor = (range: string): number => {
 };
 
 describe('Ventana de soporte de Electron', () => {
-  it('fija electron en una major mantenida', () => {
-    const major = parseMajor(projectManifest.devDependencies.electron);
-
-    expect(SUPPORTED_MAJORS).toContain(major);
-  });
-
-  it('apunta a la línea 44 elegida en ORAIN-0691', () => {
+  it('fija el pin de electron en package.json en la línea 44', () => {
     const major = parseMajor(projectManifest.devDependencies.electron);
 
     expect(major).toBe(CHOSEN_MAJOR);

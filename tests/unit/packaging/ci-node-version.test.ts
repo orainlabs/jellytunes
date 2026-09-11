@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -7,20 +8,28 @@ import { describe, expect, it } from 'vitest';
  * contra el ABI equivocado. El fallo es silencioso: device-watcher.ts cae a
  * polling sin romper el build.
  */
-const EXPECTED_NODE_VERSION = "node-version: '24'";
-const STALE_NODE_VERSION = "node-version: '20'";
+const EXPECTED_MAJOR = '24';
+const STALE_MAJOR = '20';
 
-const WORKFLOWS: readonly string[] = [
-  '.github/workflows/checks.yml',
-  '.github/workflows/build-test.yml',
-  '.github/workflows/release.yml',
-];
+// Acepta las tres formas válidas en YAML: '24', "24" y 24 (sin comillas).
+const expectedPattern = new RegExp(`node-version:\\s*['"]?${EXPECTED_MAJOR}['"]?\\s*$`, 'm');
+const stalePattern = new RegExp(`node-version:\\s*['"]?${STALE_MAJOR}['"]?\\s*$`, 'm');
+
+const workflowsDir = join('.github', 'workflows');
+const workflowsUsingSetupNode = readdirSync(workflowsDir)
+  .filter((file) => file.endsWith('.yml') || file.endsWith('.yaml'))
+  .map((file) => join(workflowsDir, file))
+  .filter((filePath) => readFileSync(filePath, 'utf8').includes('actions/setup-node'));
 
 describe('Versión de Node en CI', () => {
-  it.each(WORKFLOWS)('%s instala el Node del runtime de Electron', (workflowPath) => {
+  it('encuentra al menos un workflow que use actions/setup-node', () => {
+    expect(workflowsUsingSetupNode.length).toBeGreaterThan(0);
+  });
+
+  it.each(workflowsUsingSetupNode)('%s instala el Node del runtime de Electron', (workflowPath) => {
     const workflow = readFileSync(workflowPath, 'utf8');
 
-    expect(workflow).toContain(EXPECTED_NODE_VERSION);
-    expect(workflow).not.toContain(STALE_NODE_VERSION);
+    expect(workflow).toMatch(expectedPattern);
+    expect(workflow).not.toMatch(stalePattern);
   });
 });
