@@ -10,7 +10,6 @@ overrides:
 
 allowBuilds:
   '@ffmpeg-installer/darwin-x64': true
-  better-sqlite3: true
   electron: true
   esbuild: true
   sharp: true
@@ -22,10 +21,16 @@ ignoredBuiltDependencies:
   # `electron-builder install-app-deps` (postinstall) which uses @electron/rebuild
   # + node-gyp@12 — verified locally on 2026-07-22.
   - usb-detection
+  # better-sqlite3 13.0.3 dropped prebuild-install (only dep is node-addon-api) and
+  # declares no install script, so pnpm falls back to `node-gyp rebuild` against its
+  # binding.gyp — same node-gyp@11 that can't parse Visual Studio 18 on the
+  # windows-2025-vs2026 runner. Native build is handled by
+  # `electron-builder install-app-deps` (postinstall) which uses @electron/rebuild
+  # + node-gyp@12, same precedent as usb-detection above.
+  - better-sqlite3
 
 onlyBuiltDependencies:
   - '@ffmpeg-installer/darwin-x64'
-  - better-sqlite3
   - electron
   - esbuild
   - sharp
