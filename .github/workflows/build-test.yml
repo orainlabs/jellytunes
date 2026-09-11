@@ -36,7 +36,7 @@ jobs:
 
       - uses: actions/setup-node@0355742c943ddb13ca8a6b700f824231caa91e75
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'pnpm'
 
       - name: Setup Python
