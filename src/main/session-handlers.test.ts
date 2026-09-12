@@ -360,14 +360,115 @@ describe('session-handlers (ORAIN-0564 SO-2)', () => {
       const log = makeLogger();
       await saveSession({ provider, filePath, plaintext: 'x', fs, log });
       expect(existsSync(filePath)).toBe(true);
-      await clearSession({ filePath, fs, log });
+      await clearSession({ provider, filePath, fs, log });
       expect(existsSync(filePath)).toBe(false);
     });
 
     it('is a no-op when the file does not exist (no throw)', async () => {
       const fs = makeFs(filePath);
       const log = makeLogger();
-      await expect(clearSession({ filePath, fs, log })).resolves.not.toThrow();
+      await expect(clearSession({ provider: null, filePath, fs, log })).resolves.not.toThrow();
+    });
+
+    // ORAIN-0706 HIGH-2: httpConfirmedHosts must survive clearSession/logout.
+    it('preserves httpConfirmedHosts when clearing a session (ORAIN-0706)', async () => {
+      const provider = makeProvider();
+      const fs = makeFs(filePath);
+      const log = makeLogger();
+
+      // Pre-populate the file with a full session + httpConfirmedHosts.
+      await saveSession({
+        provider,
+        filePath,
+        plaintext: JSON.stringify({
+          authKind: 'apikey',
+          url: 'https://jellyfin.test',
+          apiKey: 'k1',
+          userId: 'u1',
+          httpConfirmedHosts: { 'jellyfin.example.com:80': true },
+        }),
+        fs,
+        log,
+      });
+      expect(existsSync(filePath)).toBe(true);
+
+      await clearSession({ provider, filePath, fs, log });
+
+      // File still exists (not unlinked).
+      expect(existsSync(filePath)).toBe(true);
+      // The stub on disk contains only httpConfirmedHosts.
+      const loaded = await loadSession({ provider, filePath, fs, log });
+      expect(loaded).toBe(
+        JSON.stringify({ httpConfirmedHosts: { 'jellyfin.example.com:80': true } }),
+      );
+      // No credential fields.
+      const parsed = JSON.parse(loaded!);
+      expect(parsed).not.toHaveProperty('authKind');
+      expect(parsed).not.toHaveProperty('url');
+      expect(parsed).not.toHaveProperty('apiKey');
+      expect(parsed).not.toHaveProperty('accessToken');
+      expect(parsed).not.toHaveProperty('userId');
+    });
+
+    it('httpConfirmedHosts survives clearSession even when no other session fields exist', async () => {
+      const provider = makeProvider();
+      const fs = makeFs(filePath);
+      const log = makeLogger();
+
+      // File already contains only httpConfirmedHosts (already cleared once).
+      await saveSession({
+        provider,
+        filePath,
+        plaintext: JSON.stringify({ httpConfirmedHosts: { 'jellyfin.example.com:80': true } }),
+        fs,
+        log,
+      });
+
+      await clearSession({ provider, filePath, fs, log });
+
+      const loaded = await loadSession({ provider, filePath, fs, log });
+      expect(loaded).toBe(
+        JSON.stringify({ httpConfirmedHosts: { 'jellyfin.example.com:80': true } }),
+      );
+    });
+
+    it('httpConfirmedHosts absent from stub when it was absent from session (fail-open for map)', async () => {
+      const provider = makeProvider();
+      const fs = makeFs(filePath);
+      const log = makeLogger();
+
+      // Session without httpConfirmedHosts.
+      await saveSession({
+        provider,
+        filePath,
+        plaintext: JSON.stringify({
+          authKind: 'apikey',
+          url: 'https://jellyfin.test',
+          apiKey: 'k1',
+          userId: 'u1',
+        }),
+        fs,
+        log,
+      });
+
+      await clearSession({ provider, filePath, fs, log });
+
+      const loaded = await loadSession({ provider, filePath, fs, log });
+      // Stub with no fields is valid — user will be prompted again, which is the
+      // correct fail-open behaviour (no worse than before the feature existed).
+      expect(loaded).toBe('{}');
+    });
+
+    it('unlinks outright when provider is null (no storage to protect)', async () => {
+      const fs = makeFs(filePath);
+      const log = makeLogger();
+      await saveSession({ provider: null, filePath, plaintext: 'x', fs, log });
+      // With null provider saveSession doesn't write anything.
+      // Write manually to set up the test.
+      writeFileSync(filePath, 'x');
+      expect(existsSync(filePath)).toBe(true);
+      await clearSession({ provider: null, filePath, fs, log });
+      expect(existsSync(filePath)).toBe(false);
     });
   });
 });

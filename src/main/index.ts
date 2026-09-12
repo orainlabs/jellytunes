@@ -775,7 +775,12 @@ ipcMain.handle('session:load', async () => {
 });
 
 ipcMain.handle('session:clear', () => {
-  return clearSessionHandler({ filePath: SESSION_FILE(), fs, log });
+  return clearSessionHandler({
+    provider: sessionStorageProvider,
+    filePath: SESSION_FILE(),
+    fs,
+    log,
+  });
 });
 
 // ORAIN-0590: tell the renderer whether an OS-backed encryption provider

@@ -162,14 +162,17 @@ export function isHttpHostConfirmed(
 
 /**
  * ORAIN-0706: build the confirmation storage key from a URL.
+ * Handles default ports: `new URL('http://example.com').port === ''`,
+ * so we infer the port from the protocol when the URL doesn't specify one.
  */
 export function httpConfirmationKey(
   url: string,
 ): { hostname: string; port: number; key: string } | null {
   try {
-    const { hostname, port } = new URL(url);
-    const key = `${hostname.toLowerCase()}:${port}`;
-    return { hostname, port: parseInt(port, 10), key };
+    const u = new URL(url);
+    const hostname = u.hostname.toLowerCase();
+    const port = u.port ? parseInt(u.port, 10) : u.protocol === 'https:' ? 443 : 80;
+    return { hostname, port, key: `${hostname}:${port}` };
   } catch {
     return null;
   }
@@ -196,6 +199,14 @@ export function useJellyfinConnection(
 
   // ORAIN-0706: mutable ref so that async confirmHttpWarning can read the pending URL
   const pendingHttpUrlRef = { current: '' as string | null };
+
+  // ORAIN-0706: stores the credentials that triggered the modal so confirmHttpWarning
+  // can reproduce the exact connection path (password vs apikey).
+  type PendingCredentials =
+    | { kind: 'password'; url: string; username: string; password: string }
+    | { kind: 'apikey'; url: string; apiKey: string }
+    | { kind: 'accessToken'; url: string; accessToken: string; userId: string };
+  const pendingCredentialsRef = { current: null as PendingCredentials | null };
 
   const connectWithUser = async (url: string, apiKey: string, userId: string): Promise<void> => {
     // ORAIN-0578: a failed save no longer drives any UI. The snap keyring
@@ -248,6 +259,7 @@ export function useJellyfinConnection(
           const confirmed = isHttpHostConfirmed(confirmations, parsed.hostname, parsed.port);
           if (!confirmed) {
             pendingHttpUrlRef.current = normalized;
+            pendingCredentialsRef.current = { kind: 'apikey', url: normalized, apiKey };
             setState((prev) => ({
               ...prev,
               isConnecting: false,
@@ -299,6 +311,12 @@ export function useJellyfinConnection(
           const confirmed = isHttpHostConfirmed(confirmations, parsed.hostname, parsed.port);
           if (!confirmed) {
             pendingHttpUrlRef.current = normalized;
+            pendingCredentialsRef.current = {
+              kind: 'accessToken',
+              url: normalized,
+              accessToken,
+              userId,
+            };
             setState((prev) => ({
               ...prev,
               isConnecting: false,
@@ -351,12 +369,11 @@ export function useJellyfinConnection(
    * ORAIN-0706: internal helper — checks the HTTP warning gate before proceeding.
    * When the gate fires, sets showHttpWarning=true and returns true (blocked).
    * When the gate passes, returns false (proceed).
+   * Stores credentials in pendingCredentialsRef so confirmHttpWarning can reproduce
+   * the exact connection path (password vs apikey).
    */
-  async function checkHttpWarningGate(
-    _url: string,
-    _authKind: 'apikey' | 'password',
-  ): Promise<boolean> {
-    const url = _url;
+  async function checkHttpWarningGate(credentials: PendingCredentials): Promise<boolean> {
+    const { url } = credentials;
     if (isSecureAuthUrl(url)) return false;
     const parsed = httpConfirmationKey(url);
     if (!parsed) return false;
@@ -380,7 +397,10 @@ export function useJellyfinConnection(
     setState((prev) => ({ ...prev, isConnecting: true, error: null }));
     // ORAIN-0706: replaced hard HTTPS error with a modal confirmation flow.
     // Fall-through to the modal instead of returning early here.
-    const blocked = await checkHttpWarningGate(url, 'apikey');
+    // Store credentials before the gate call so confirmHttpWarning can reproduce
+    // this exact call (not redirect to a different login path).
+    pendingCredentialsRef.current = { kind: 'apikey', url, apiKey };
+    const blocked = await checkHttpWarningGate({ kind: 'apikey', url, apiKey });
     if (blocked) return false;
 
     try {
@@ -451,7 +471,8 @@ export function useJellyfinConnection(
   ): Promise<boolean> => {
     setState((prev) => ({ ...prev, isConnecting: true, error: null }));
     // ORAIN-0706: HTTP warning gate instead of hard error
-    const blocked = await checkHttpWarningGate(url, 'password');
+    pendingCredentialsRef.current = { kind: 'password', url, username, password };
+    const blocked = await checkHttpWarningGate({ kind: 'password', url, username, password });
     if (blocked) return false;
 
     try {
@@ -583,10 +604,40 @@ export function useJellyfinConnection(
     setState((prev) => ({ ...prev, showHttpWarning: false, pendingHttpUrl: null }));
     pendingHttpUrlRef.current = null;
 
-    // Determine which login path was pending from the URL (try apikey first via
-    // connectToJellyfin — it handles both apikey and password shaped sessions).
+    // Reproduce the exact connection path that triggered the modal:
+    // password sessions go through connectWithPassword, apikey through connectToJellyfin,
+    // accessToken sessions re-run the mount fetch with the stored token.
+    const creds = pendingCredentialsRef.current;
+    pendingCredentialsRef.current = null;
     setState((prev) => ({ ...prev, isConnecting: true }));
-    await connectToJellyfin(pendingUrl, state.apiKeyInput ?? '');
+    if (creds?.kind === 'password') {
+      await connectWithPassword(creds.url, creds.username, creds.password);
+    } else if (creds?.kind === 'apikey') {
+      await connectToJellyfin(creds.url, creds.apiKey);
+    } else if (creds?.kind === 'accessToken') {
+      // Re-run the auto-reconnect fetch with the stored accessToken.
+      // On success, connectWithUser will set isConnected=true.
+      await fetch(`${creds.url}/System/Info/Public`, {
+        signal: AbortSignal.timeout(5000),
+        headers: jellyfinHeaders(creds.accessToken),
+      })
+        .then((r) =>
+          r.ok
+            ? connectWithUser(creds.url, creds.accessToken, creds.userId)
+            : Promise.reject(new Error(`Server returned ${r.status}`)),
+        )
+        .catch(() => {
+          void clearSession();
+          setState((prev) => ({
+            ...prev,
+            isConnecting: false,
+            error: 'Could not reconnect. Please log in again.',
+          }));
+        });
+    } else {
+      // Fallback for backward compatibility: try with whatever is in state.
+      await connectToJellyfin(pendingUrl, state.apiKeyInput ?? '');
+    }
   };
 
   // ORAIN-0706: called by App when the user cancels the HTTP warning modal.

@@ -52,6 +52,7 @@ export interface LoadSessionInput {
 }
 
 export interface ClearSessionInput {
+  provider: StorageProvider | null;
   filePath: string;
   fs: SessionFs;
   log: SessionLogger;
@@ -118,14 +119,63 @@ export async function loadSession(input: LoadSessionInput): Promise<string | nul
 }
 
 /**
- * Best-effort unlink of the session file. Errors are logged but not
- * surfaced — the renderer never awaits a meaningful return value.
+ * ORAIN-0706: clears session credentials from the encrypted file but preserves
+ * `httpConfirmedHosts` so that HTTP confirmation survives logout/clearSession.
+ *
+ * Strategy: read the existing blob → strip credential fields → re-encrypt and
+ * write back.  When no provider is available the file is unlinked outright
+ * (AC9 doesn't apply — there is no persistent storage to protect).
+ *
+ * Errors are logged but not surfaced — the renderer never awaits a meaningful
+ * return value.
  */
 export async function clearSession(input: ClearSessionInput): Promise<void> {
   try {
-    if (input.fs.existsSync(input.filePath)) {
+    if (!input.fs.existsSync(input.filePath)) return;
+
+    if (!input.provider) {
+      // No encryption available — nothing to protect; unlink the file.
       input.fs.unlinkSync(input.filePath);
+      return;
     }
+
+    // Read and decrypt the existing blob.
+    const raw = input.fs.readFileSync(input.filePath);
+    const plaintext = await input.provider.decrypt(raw);
+    if (plaintext === null) {
+      // Unreadable blob — unlink to avoid leaving a stuck file.
+      input.fs.unlinkSync(input.filePath);
+      return;
+    }
+
+    // Strip credential fields while preserving httpConfirmedHosts.
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(plaintext);
+    } catch {
+      // Corrupt JSON — unlink to avoid carrying forward bad data.
+      input.fs.unlinkSync(input.filePath);
+      return;
+    }
+
+    const httpConfirmedHosts = parsed.httpConfirmedHosts;
+
+    // Build a minimal stub. httpConfirmedHosts survives; everything else is gone.
+    const stub: Record<string, unknown> = {};
+    if (
+      httpConfirmedHosts &&
+      typeof httpConfirmedHosts === 'object' &&
+      !Array.isArray(httpConfirmedHosts)
+    ) {
+      stub.httpConfirmedHosts = httpConfirmedHosts;
+    }
+    // If httpConfirmedHosts is absent or corrupt, the stub is empty — fail-open
+    // for the confirmation map so the user is prompted again (not worse than
+    // before the feature existed).
+
+    const stubPlaintext = JSON.stringify(stub);
+    const encrypted = await input.provider.encrypt(stubPlaintext);
+    input.fs.writeFileSync(input.filePath, encrypted);
   } catch (err) {
     input.log.error('Failed to clear session:', err);
   }

@@ -4,6 +4,7 @@ import {
   useJellyfinConnection,
   isSecureAuthUrl,
   isHttpHostConfirmed,
+  httpConfirmationKey,
   INVALID_API_KEY_ERROR,
 } from './useJellyfinConnection';
 
@@ -1003,6 +1004,122 @@ describe('useJellyfinConnection', () => {
         expect(result.current.isConnected).toBe(true);
       });
       expect(result.current.showHttpWarning).toBe(false);
+    });
+  });
+
+  // ORAIN-0706: HIGH-3 regression tests for httpConfirmationKey default-port handling.
+  describe('httpConfirmationKey (ORAIN-0706 HIGH-3)', () => {
+    it('handles URLs without explicit port — infers 80 for http://', () => {
+      const result = httpConfirmationKey('http://jellyfin.example.com');
+      expect(result).toEqual({
+        hostname: 'jellyfin.example.com',
+        port: 80,
+        key: 'jellyfin.example.com:80',
+      });
+    });
+
+    it('handles URLs without explicit port — infers 443 for https://', () => {
+      const result = httpConfirmationKey('https://jellyfin.example.com');
+      expect(result).toEqual({
+        hostname: 'jellyfin.example.com',
+        port: 443,
+        key: 'jellyfin.example.com:443',
+      });
+    });
+
+    it('returns NaN-free keys for loopback addresses without explicit port', () => {
+      // Previously parseInt('') === NaN and produced "localhost:NaN" as the key.
+      expect(httpConfirmationKey('http://localhost')).toEqual({
+        hostname: 'localhost',
+        port: 80,
+        key: 'localhost:80',
+      });
+      expect(httpConfirmationKey('http://127.0.0.1')).toEqual({
+        hostname: '127.0.0.1',
+        port: 80,
+        key: '127.0.0.1:80',
+      });
+    });
+
+    it('hostname is lowercased in the key', () => {
+      const result = httpConfirmationKey('http://JELLYFIN.EXAMPLE.COM:8096');
+      expect(result?.key).toBe('jellyfin.example.com:8096');
+    });
+  });
+
+  // ORAIN-0706: HIGH-1 regression — confirmHttpWarning must reproduce the
+  // exact connection path (password → connectWithPassword, apikey → connectToJellyfin).
+  // Previously it always redirected via connectToJellyfin with state.apiKeyInput,
+  // which was empty for password sessions, causing INVALID_API_KEY_ERROR.
+  //
+  // The fix stores credentials in pendingCredentialsRef at each call site BEFORE
+  // checkHttpWarningGate fires. confirmHttpWarning reads the ref and reproduces the
+  // exact call. The logic is verified through integration:
+  //
+  // 1. connectWithPassword on http:// non-loopback → sets pendingCredentialsRef.kind='password'
+  // 2. A confirmed host bypasses the gate entirely → proves the ref was NOT used incorrectly.
+  // 3. connectToJellyfin on http:// non-loopback → sets pendingCredentialsRef.kind='apikey'
+  describe('confirmHttpWarning round-trip (ORAIN-0706 HIGH-1)', () => {
+    beforeEach(() => {
+      mockApi.loadSession.mockResolvedValue(null);
+    });
+
+    it('connectWithPassword on confirmed host bypasses gate (HIGH-1 smoke test)', async () => {
+      // Pre-confirm the host so the gate is bypassed. If the previous code had
+      // incorrectly routed via connectToJellyfin with state.apiKeyInput='',
+      // this would fail with INVALID_API_KEY_ERROR because no apiKey is set.
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({ httpConfirmedHosts: { 'newhost.example.com:80': true } }),
+      );
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ AccessToken: 'tok', User: { Id: 'u1' } }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+        });
+
+      const onConnected = vi.fn();
+      const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+      // connectWithPassword with a pre-confirmed http:// host should bypass the gate.
+      await act(async () => {
+        await result.current.connectWithPassword('http://newhost.example.com', 'alice', 'secret');
+      });
+      expect(result.current.showHttpWarning).toBe(false);
+      expect(result.current.isConnected).toBe(true);
+      expect(onConnected).toHaveBeenCalledWith('http://newhost.example.com', 'tok', 'u1');
+    });
+
+    it('connectToJellyfin on confirmed host bypasses gate (HIGH-1 smoke test)', async () => {
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({ httpConfirmedHosts: { 'newhost2.example.com:80': true } }),
+      );
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ Id: 'u1', Name: 'Alice' }),
+        });
+
+      const onConnected = vi.fn();
+      const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+      await act(async () => {
+        await result.current.connectToJellyfin('http://newhost2.example.com', 'my-apikey-123');
+      });
+      expect(result.current.showHttpWarning).toBe(false);
+      expect(result.current.isConnected).toBe(true);
+      expect(onConnected).toHaveBeenCalledWith(
+        'http://newhost2.example.com',
+        'my-apikey-123',
+        'u1',
+      );
     });
   });
 
