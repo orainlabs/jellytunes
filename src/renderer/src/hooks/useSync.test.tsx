@@ -15,6 +15,7 @@ const mockAlbums: Album[] = [
     AlbumArtist: 'The Beatles',
     ProductionYear: 1969,
     ImageTags: {},
+    ChildCount: 3,
   },
 ];
 const mockPlaylists: Playlist[] = [
@@ -456,36 +457,156 @@ describe('useSync', () => {
       expect(result.current.showPreview).toBe(true);
       const data = result.current.previewData!;
 
-      // Real unique tracks = 10. Without fix: artist-1 → Set(10), albumArtist-aa1 →
-      // getItemTrackCount('albumArtist-aa1') → 10 (raw, no dedup) → alreadySyncedCount = 20 (inflated).
-      // With fix: artist-1 → Set(10), albumArtist-aa1 → Set(0) (all seen) → alreadySyncedCount = 10 (correct).
+      // Real unique tracks = 10. Without fix: each item → getItemTrackCount → 10 (raw, no dedup)
+      // → alreadySyncedCount = 40 (inflated 4×).
+      // With fix: first item → Set(10), rest → Set(0) (all seen) → alreadySyncedCount = 10 (correct).
       expect(data.alreadySyncedCount).toBe(10);
+    });
+
+    it('willRemoveCount uses countRemoveTracks when selectedTracks is empty (delete-only path)', async () => {
+      // MEDIUM-2 fix: when selectedTracks is empty, the delete-only branch is taken
+      // (useSync.ts:342) which calls registry.countRemoveTracks(toDeleteIds, syncFolder)
+      // directly — bypassing the itemTrackMap aggregation path (line 473).
+      // deviceSyncedTracks stores records keyed by the album/playlist ID that owns each
+      // track on the device (not artist ID), so we use album-1 here.
+      const registry = getTrackRegistry();
+      registry.invalidateAll();
+
+      // handleSelectSyncFolder does NOT load deviceSyncedTracks — only getSyncedItems.
+      // We must load it explicitly so countRemoveBytes/countRemoveTracks find the records.
+      const fullApi = createMockApi({
+        getSyncedTracks: vi.fn().mockResolvedValue(
+          Array.from({ length: 10 }, (_, i) => ({
+            trackId: `track-${i + 1}`,
+            itemId: 'album-1',
+            fileSize: 4_000_000,
+            destinationPath: `/Volumes/USB/music/track-${i + 1}.mp3`,
+          })),
+        ),
+      });
+      Object.defineProperty(window, 'api', { value: fullApi, writable: true });
+
+      const props = {
+        ...defaultProps,
+        // album-1 is in previouslySyncedItems but NOT in selectedTracks → toDeleteIds = ['album-1']
+        // selectedTracks = {} → delete-only branch (line 342), NOT aggregation (line 473)
+        selectedTracks: new Set<string>(),
+        previouslySyncedItems: new Set(['album-1']),
+        syncedItemsInfo: [],
+        outOfSyncItems: new Set<string>(),
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      // set syncFolder (required for the delete-only branch)
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+
+      // Load device synced tracks: 10 tracks from album-1 (via registry directly)
+      await act(async () => {
+        await registry.loadDeviceSyncedTracks('/Volumes/USB');
+      });
+      // countRemoveTracks(['album-1']) → 10 (from deviceSyncedTracks keyed by album-1)
+      const removeCount = registry.countRemoveTracks(['album-1'], '/Volumes/USB');
+      expect(removeCount).toBe(10);
+
+      // handleStartSync enters delete-only path → willRemoveCount = countRemoveTracks result
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.showPreview).toBe(true);
+      expect(result.current.previewData!.willRemoveCount).toBe(10);
     });
 
     it('willRemoveCount is NOT affected by the itemTrackMap fix (unchanged behaviour)', async () => {
       // willRemoveCount is set via registry.countRemoveTracks(toDeleteIds, syncFolder)
       // (line 356 in useSync.ts), which reads deviceSyncedTracks directly.
-      // It NEVER uses itemTrackMap.  This test exercises countRemoveTracks to confirm
-      // the calculation path is independent of itemTrackMap.
+      // It NEVER uses itemTrackMap.  This test confirms the calculation path is
+      // independent of itemTrackMap by driving handleStartSync with a delete-only
+      // scenario and asserting willRemoveCount = countRemoveTracks result.
       const registry = getTrackRegistry();
+      // Invalidate ALL registry state — loadDeviceSyncedTracks returns early if
+      // deviceSyncedTracks already has data, so this must be called BEFORE it.
       registry.invalidateAll();
 
-      // Use a full mock API so loadDeviceSyncedTracks can call getSyncedTracks
       const fullApi = createMockApi({
         getSyncedTracks: vi.fn().mockResolvedValue([]),
       });
       Object.defineProperty(window, 'api', { value: fullApi, writable: true });
 
-      // Load device synced tracks (empty → toDeleteIds produce 0)
-      await registry.loadDeviceSyncedTracks('/Volumes/USB');
+      // deviceSyncedTracks[/Volumes/USB] = {} (empty, forceReload to bypass cache)
+      await registry.loadDeviceSyncedTracks('/Volumes/USB', true);
 
-      const toDeleteIds = ['album-1'];
-      const removeCount = registry.countRemoveTracks(toDeleteIds, '/Volumes/USB');
+      const props = {
+        ...defaultProps,
+        // selectedTracks = {} → delete-only branch (line 342)
+        selectedTracks: new Set<string>(),
+        // previouslySyncedItems = {album-1}, selectedTracks = {} → toDeleteIds = ['album-1']
+        previouslySyncedItems: new Set(['album-1']),
+        syncedItemsInfo: [],
+        outOfSyncItems: new Set<string>(),
+      };
+      const { result } = renderHook(() => useSync(props));
 
-      // countRemoveTracks iterates deviceSyncedTracks, not itemTrackMap.
-      // Returns 0 when deviceSyncedTracks is empty — confirmed independent of itemTrackMap.
-      expect(removeCount).toBe(0);
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      // countRemoveTracks(['album-1']) → 0 (deviceSyncedTracks is empty).
+      // This is the correct fallback path — independent of itemTrackMap.
+      expect(result.current.showPreview).toBe(true);
+      expect(result.current.previewData!.willRemoveCount).toBe(0);
     });
+  });
+
+  it('brand-new item with convertToMp3=true falls back to getItemTrackCount (not inflated)', async () => {
+    // MEDIUM-3: when isTickEstimate=true and a brand-new item (not in syncedItemsInfo)
+    // has convertToMp3=true, the background fetch is skipped and itemTrackMap has no
+    // entry. The aggregation must fall back to getItemTrackCount which uses
+    // album.ChildCount / playlist.ChildCount (not inflated by dedup artifacts).
+    const registry = getTrackRegistry();
+    registry.invalidateAll();
+
+    // Clear deviceSyncedTracks (invalidateAll() does NOT clear it).
+    // loadDeviceSyncedTracks returns early if already loaded (line 132), so we use
+    // forceReload=true to bypass the cache and reload with an empty response.
+    const fullApi = createMockApi({
+      getSyncedTracks: vi.fn().mockResolvedValue([]),
+      getTracksForItem: vi.fn().mockResolvedValue({ tracks: [], errors: [] }),
+    });
+    Object.defineProperty(window, 'api', { value: fullApi, writable: true });
+    await registry.loadDeviceSyncedTracks('/Volumes/USB', true);
+
+    const props = {
+      ...defaultProps,
+      // album-1 is selected as a NEW item (not in syncedItemsInfo)
+      selectedTracks: new Set(['album-1']),
+      // album-1 is brand-new: not synced, not out-of-sync
+      syncedItemsInfo: [],
+      outOfSyncItems: new Set<string>(),
+      // isTickEstimate=true skips background fetch → itemTrackMap has no entry for album-1
+      isTickEstimate: true,
+    };
+    const { result } = renderHook(() => useSync(props));
+
+    await act(async () => {
+      await result.current.handleSelectSyncFolder('/Volumes/USB');
+    });
+
+    // deviceSyncedTracks = {} and itemTracks has no album-1.
+    // getItemTrackCount('album-1') → album.ChildCount = 3 (not inflated).
+    await act(async () => {
+      await result.current.handleStartSync();
+    });
+
+    expect(result.current.showPreview).toBe(true);
+    // album-1 has ChildCount = 3 in mockAlbums.
+    expect(result.current.previewData!.newTracksCount).toBe(3);
   });
 
   describe('handleStartSync preview data', () => {
