@@ -387,7 +387,10 @@ export function useSync({
           uniqueTrackIds.add(tid);
         }
       }
-      if (uniqueTrackIds.size > 0) {
+      // Always record an entry when the item has been fetched (trackIds.length > 0),
+      // even if all its tracks were already claimed by an earlier item.
+      // This distinguishes "all tracks reclaimed → 0" from "not yet fetched → use fallback".
+      if (trackIds.length > 0) {
         itemTrackMap.set(itemId, uniqueTrackIds);
       }
     }

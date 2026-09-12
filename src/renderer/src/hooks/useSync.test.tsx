@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSync } from './useSync';
 import type { Artist, Album, Playlist } from '../appTypes';
-import type { SyncedItemInfo } from './useDeviceSelections';
 import { getTrackRegistry } from './useTrackRegistry';
 
 const mockArtists: Artist[] = [
@@ -29,7 +28,7 @@ const defaultProps = {
   selectedArtists: new Set<string>(),
   selectedAlbumArtists: new Set<string>(),
   previouslySyncedItems: new Set<string>(),
-  syncedItemsInfo: [] as SyncedItemInfo[],
+  syncedItemsInfo: [],
   outOfSyncItems: new Set<string>(),
   artists: mockArtists,
   albums: mockAlbums,
@@ -357,6 +356,135 @@ describe('useSync', () => {
       // Verify revalidateDevice is called with the current coverArtMode from state
       // This prevents the bug where stale 'embed' was used instead of 'companion'
       expect(revalidateDevice).toHaveBeenCalledWith({ coverArtMode: 'companion' });
+    });
+  });
+
+  describe('overlapping-selection deduplication', () => {
+    /**
+     * Regression test for ORAIN-0707.
+     *
+     * Bug: when multiple selected items resolve to the same pool of tracks
+     * (e.g. artist + albumArtist referencing the same person), the second item
+     * processed has all its tracks already claimed by the first one.
+     * itemTrackMap.set() was gated on uniqueTrackIds.size > 0, so no entry was
+     * added for the second item.  Aggregation then fell back to getItemTrackCount
+     * which returns the raw un-deduplicated count, inflating the displayed
+     * "Already on device" counter.
+     *
+     * Fix: always save an entry (even an empty Set) when trackIds.length > 0,
+     * distinguishing "all tracks reclaimed → 0" from "not yet fetched → use fallback".
+     */
+    it('alreadySyncedCount is NOT inflated when two selected items share the same tracks', async () => {
+      const registry = getTrackRegistry();
+      registry.invalidateAll();
+
+      // Both artist-1 and albumArtist-aa1 resolve to the same 10 tracks
+      const sharedTracks = [
+        'track-1',
+        'track-2',
+        'track-3',
+        'track-4',
+        'track-5',
+        'track-6',
+        'track-7',
+        'track-8',
+        'track-9',
+        'track-10',
+      ];
+      const trackObjects = sharedTracks.map((id) => ({
+        id,
+        name: id,
+        path: `/music/${id}.mp3`,
+        format: 'mp3',
+        size: 4_000_000,
+      }));
+
+      const apiWithTracks = createMockApi({
+        getSyncedTracks: vi.fn().mockResolvedValue(
+          sharedTracks.map((id) => ({
+            trackId: id,
+            itemId: 'artist-1',
+            fileSize: 4_000_000,
+            destinationPath: `/Volumes/USB/music/${id}.mp3`,
+          })),
+        ),
+        getTracksForItem: vi.fn().mockResolvedValue({ tracks: trackObjects, errors: [] }),
+      });
+      Object.defineProperty(window, 'api', { value: apiWithTracks, writable: true });
+
+      const props = {
+        ...defaultProps,
+        // artist-1 and albumArtist-aa1 both resolve to the same 10 tracks
+        selectedTracks: new Set(['artist-1', 'albumArtist-aa1']),
+        // albumArtists is a separate list (albumArtist has different Name → AlbumArtist filter returns 0)
+        albumArtists: [{ Id: 'albumArtist-aa1', Name: 'Artist AA', AlbumCount: 0, ImageTags: {} }],
+        // Both are synced → alreadySyncedItemIds = [artist-1, albumArtist-aa1]
+        syncedItemsInfo: [
+          { id: 'artist-1', name: 'The Beatles', type: 'artist' as const },
+          { id: 'albumArtist-aa1', name: 'Artist AA', type: 'albumArtist' as const },
+        ],
+        outOfSyncItems: new Set<string>(),
+      };
+
+      const { result } = renderHook(() => useSync(props));
+
+      // Load device synced tracks (populates registry.itemTracks for artist-1)
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+
+      // Populate registry with overlapping tracks for both items
+      await act(async () => {
+        await registry.ensureItemTracks('artist-1', 'artist', {
+          serverUrl: 'https://jellyfin.test',
+          apiKey: 'test-key',
+          userId: 'user-1',
+        });
+      });
+      await act(async () => {
+        await registry.ensureItemTracks('albumArtist-aa1', 'albumArtist', {
+          serverUrl: 'https://jellyfin.test',
+          apiKey: 'test-key',
+          userId: 'user-1',
+        });
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.showPreview).toBe(true);
+      const data = result.current.previewData!;
+
+      // Real unique tracks = 10. Without fix: artist-1 → Set(10), albumArtist-aa1 →
+      // getItemTrackCount('albumArtist-aa1') → 10 (raw, no dedup) → alreadySyncedCount = 20 (inflated).
+      // With fix: artist-1 → Set(10), albumArtist-aa1 → Set(0) (all seen) → alreadySyncedCount = 10 (correct).
+      expect(data.alreadySyncedCount).toBe(10);
+    });
+
+    it('willRemoveCount is NOT affected by the itemTrackMap fix (unchanged behaviour)', async () => {
+      // willRemoveCount is set via registry.countRemoveTracks(toDeleteIds, syncFolder)
+      // (line 356 in useSync.ts), which reads deviceSyncedTracks directly.
+      // It NEVER uses itemTrackMap.  This test exercises countRemoveTracks to confirm
+      // the calculation path is independent of itemTrackMap.
+      const registry = getTrackRegistry();
+      registry.invalidateAll();
+
+      // Use a full mock API so loadDeviceSyncedTracks can call getSyncedTracks
+      const fullApi = createMockApi({
+        getSyncedTracks: vi.fn().mockResolvedValue([]),
+      });
+      Object.defineProperty(window, 'api', { value: fullApi, writable: true });
+
+      // Load device synced tracks (empty → toDeleteIds produce 0)
+      await registry.loadDeviceSyncedTracks('/Volumes/USB');
+
+      const toDeleteIds = ['album-1'];
+      const removeCount = registry.countRemoveTracks(toDeleteIds, '/Volumes/USB');
+
+      // countRemoveTracks iterates deviceSyncedTracks, not itemTrackMap.
+      // Returns 0 when deviceSyncedTracks is empty — confirmed independent of itemTrackMap.
+      expect(removeCount).toBe(0);
     });
   });
 
