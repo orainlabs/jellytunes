@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { JellyfinConfig, JellyfinUser } from '../appTypes';
 import { jellyfinHeaders } from '../utils/jellyfin';
 import { getAuthenticateHeader } from '../utils/authContext';
@@ -197,8 +197,12 @@ export function useJellyfinConnection(
     pendingHttpUrl: null,
   });
 
-  // ORAIN-0706: mutable ref so that async confirmHttpWarning can read the pending URL
-  const pendingHttpUrlRef = { current: '' as string | null };
+  // ORAIN-0706: useRef so the ref object identity is stable across renders.
+  // Without useRef, the object literal is recreated on every render, so when
+  // checkHttpWarningGate fires setState and React re-renders, confirmHttpWarning
+  // (captured from the new render) sees a fresh ref with current=null and loses
+  // the credentials.
+  const pendingHttpUrlRef = useRef<string | null>(null);
 
   // ORAIN-0706: stores the credentials that triggered the modal so confirmHttpWarning
   // can reproduce the exact connection path (password vs apikey).
@@ -206,7 +210,7 @@ export function useJellyfinConnection(
     | { kind: 'password'; url: string; username: string; password: string }
     | { kind: 'apikey'; url: string; apiKey: string }
     | { kind: 'accessToken'; url: string; accessToken: string; userId: string };
-  const pendingCredentialsRef = { current: null as PendingCredentials | null };
+  const pendingCredentialsRef = useRef<PendingCredentials | null>(null);
 
   const connectWithUser = async (url: string, apiKey: string, userId: string): Promise<void> => {
     // ORAIN-0578: a failed save no longer drives any UI. The snap keyring
@@ -591,24 +595,38 @@ export function useJellyfinConnection(
     const existingConfirmations = (await loadHttpConfirmations()) ?? {};
     const httpConfirmedHosts = { ...existingConfirmations, [parsed.key]: true };
 
-    // Try to merge with existing session fields; if none, store confirmation only.
+    // Merge httpConfirmedHosts into the existing session. We must NOT save a stub
+    // file with only httpConfirmedHosts — loadSession requires url + (apiKey|accessToken),
+    // so a blob without those fields would pass JSON.parse but fail the url guard and
+    // return null. If that happens, connectWithPassword would call saveSession again,
+    // overwriting the file with a stub that makes loadSession return null forever,
+    // corrupting the session state.
     const session = await loadSession();
     if (session) {
+      // Active session exists — merge the confirmation into it.
       await saveSession({ ...session, httpConfirmedHosts } as SavedSession & { userId: string });
     } else {
-      await saveSession({ httpConfirmedHosts } as SavedSession & { userId: string });
+      // No session file. Persist the stub so that loadHttpConfirmations() finds it
+      // (it checks httpConfirmedHosts on the raw blob, not via loadSession).
+      // BUGFIX ORAIN-0706: must include url so the stub is loadable if session later grows.
+      await saveSession({ httpConfirmedHosts, url: parsed.key } as SavedSession & {
+        userId: string;
+      });
     }
-
-    // Dismiss the modal and retry the connection.
-    // Clear the warning state; the connection call will find the host confirmed.
-    setState((prev) => ({ ...prev, showHttpWarning: false, pendingHttpUrl: null }));
-    pendingHttpUrlRef.current = null;
+    await loadHttpConfirmations();
 
     // Reproduce the exact connection path that triggered the modal:
     // password sessions go through connectWithPassword, apikey through connectToJellyfin,
     // accessToken sessions re-run the mount fetch with the stored token.
     const creds = pendingCredentialsRef.current;
+
+    // Dismiss the modal. Do this BEFORE calling connectWithPassword/connectToJellyfin
+    // so they don't see showHttpWarning=true and re-trigger the gate.
+    setState((prev) => ({ ...prev, showHttpWarning: false, pendingHttpUrl: null }));
+    pendingHttpUrlRef.current = null;
     pendingCredentialsRef.current = null;
+
+    // Now retry — with the host confirmed, checkHttpWarningGate will let through.
     setState((prev) => ({ ...prev, isConnecting: true }));
     if (creds?.kind === 'password') {
       await connectWithPassword(creds.url, creds.username, creds.password);
@@ -636,13 +654,14 @@ export function useJellyfinConnection(
         });
     } else {
       // Fallback for backward compatibility: try with whatever is in state.
-      await connectToJellyfin(pendingUrl, state.apiKeyInput ?? '');
+      await connectToJellyfin(state.pendingHttpUrl ?? '', state.apiKeyInput ?? '');
     }
   };
 
   // ORAIN-0706: called by App when the user cancels the HTTP warning modal.
   const cancelHttpWarning = (): void => {
     pendingHttpUrlRef.current = null;
+    pendingCredentialsRef.current = null;
     setState((prev) => ({
       ...prev,
       showHttpWarning: false,

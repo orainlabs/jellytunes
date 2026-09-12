@@ -916,6 +916,161 @@ describe('useJellyfinConnection', () => {
       expect(result.current.showHttpWarning).toBe(true);
     });
 
+    // ORAIN-0706 HIGH-2: round-trip tests for confirmHttpWarning.
+    // These cover the full flow: modal fires → user confirms → connection retries.
+    // Strategy: vi.spyOn lets us intercept window.api.loadSession independently of
+    // the mockApi object, controlling return values per call without affecting other mocks.
+
+    it('confirmHttpWarning round-trip: connectWithPassword sends correct body.Username and body.Pw', async () => {
+      // loadSession call sequence (all BEFORE confirmHttpWarning is called):
+      // 1. checkHttpWarningGate → null (modal fires)
+      // 2. confirmHttpWarning → null → persists stub
+      // 3. retry path inside confirmHttpWarning → stub with httpConfirmedHosts
+      let callCount = 0;
+      mockApi.loadSession.mockImplementation(async () => {
+        callCount++;
+        if (callCount < 3) return null;
+        return JSON.stringify({ httpConfirmedHosts: { 'jellyfin.lan:80': true } });
+      });
+
+      mockFetch
+        // confirmHttpWarning → connectWithPassword → /Users/AuthenticateByName
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ AccessToken: 'tok', User: { Id: 'u1' } }),
+        })
+        // /System/Info/Public inside connectWithPassword
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+        });
+
+      const onConnected = vi.fn();
+      const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+      // Trigger the modal
+      await act(async () => {
+        await result.current.connectWithPassword('http://jellyfin.lan', 'alice', 'my-secret');
+      });
+      await waitFor(() => {
+        expect(result.current.showHttpWarning).toBe(true);
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      // Confirm — stub with confirmed host is now persisted; connection retries and passes gate
+      await act(async () => {
+        await result.current.confirmHttpWarning();
+      });
+      await waitFor(() => {
+        expect(result.current.isConnected).toBe(true);
+      });
+
+      const authCall = mockFetch.mock.calls.find(([url]) =>
+        String(url).includes('/Users/AuthenticateByName'),
+      );
+      expect(authCall).toBeDefined();
+      const authBody = JSON.parse((authCall![1] as RequestInit).body as string);
+      expect(authBody).toEqual({ Username: 'alice', Pw: 'my-secret' });
+      expect(onConnected).toHaveBeenCalledWith('http://jellyfin.lan', 'tok', 'u1');
+    });
+
+    it('confirmHttpWarning round-trip: connectToJellyfin (apikey) sends correct Authorization header', async () => {
+      // Call sequence: 1=gate(null→modal), 2=confirm(null→persist), 3+=retry with httpConfirmedHosts
+      let callCount = 0;
+      mockApi.loadSession.mockImplementation(async () => {
+        callCount++;
+        if (callCount < 3) return null;
+        return JSON.stringify({ httpConfirmedHosts: { 'jellyfin.lan:80': true } });
+      });
+
+      mockFetch
+        // confirmHttpWarning → connectToJellyfin → /System/Info/Public
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+        })
+        // /Users/Me
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ Id: 'u1', Name: 'Alice' }),
+        });
+
+      const onConnected = vi.fn();
+      const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+      await act(async () => {
+        await result.current.connectToJellyfin('http://jellyfin.lan', 'apikey-xyz');
+      });
+      await waitFor(() => {
+        expect(result.current.showHttpWarning).toBe(true);
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await result.current.confirmHttpWarning();
+      });
+      await waitFor(() => {
+        expect(result.current.isConnected).toBe(true);
+      });
+
+      const usersCall = mockFetch.mock.calls.find(([url]) => String(url).includes('/Users/Me'));
+      expect(usersCall).toBeDefined();
+      const headers = (usersCall![1] as RequestInit).headers as Record<string, string>;
+      // ORAIN-0687: uses Authorization header (not X-MediaBrowser-Token)
+      expect(headers['Authorization']).toContain('apikey-xyz');
+      expect(onConnected).toHaveBeenCalledWith('http://jellyfin.lan', 'apikey-xyz', 'u1');
+    });
+
+    it('confirmHttpWarning round-trip: auto-reconnect password session calls connectWithUser with accessToken', async () => {
+      // mount effect: loadSession returns password session → modal fires (unconfirmed host)
+      // confirmHttpWarning → stub persisted → mount effect retries → /System/Info/Public → connectWithUser
+      let mountCallCount = 0;
+      mockApi.loadSession.mockImplementation(async () => {
+        mountCallCount++;
+        // Calls 1–2: mount + gate (null → modal fires). Call 3+: after confirmHttpWarning.
+        if (mountCallCount < 3) {
+          return JSON.stringify({
+            authKind: 'password',
+            url: 'http://jellyfin.lan',
+            accessToken: 'stored-tok',
+            userId: 'u1',
+          });
+        }
+        return JSON.stringify({ httpConfirmedHosts: { 'jellyfin.lan:80': true } });
+      });
+
+      mockFetch
+        // First mount attempt: /System/Info/Public (unconfirmed → modal, no fetch)
+        // After confirm + stub persisted: /System/Info/Public with accessToken
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+        })
+        // /System/Info/Public after confirm (retry)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+        });
+
+      const onConnected = vi.fn();
+      const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+      await waitFor(() => {
+        expect(result.current.showHttpWarning).toBe(true);
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await result.current.confirmHttpWarning();
+      });
+      await waitFor(() => {
+        expect(result.current.isConnected).toBe(true);
+      });
+
+      // connectWithUser must be called with the stored accessToken, NOT apiKey.
+      expect(onConnected).toHaveBeenCalledWith('http://jellyfin.lan', 'stored-tok', 'u1');
+    });
+
     it('httpConfirmedHosts is NOT cleared by clearSession (logout)', async () => {
       // Simulate a confirmed host in session
       mockApi.loadSession.mockResolvedValue(
