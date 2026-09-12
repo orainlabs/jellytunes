@@ -20,6 +20,9 @@ interface ConnectionState {
   pendingConfig: { url: string; apiKey: string } | null;
   urlInput: string;
   apiKeyInput: string;
+  // ORAIN-0706: HTTP warning modal state
+  showHttpWarning: boolean;
+  pendingHttpUrl: string | null;
 }
 
 /**
@@ -28,6 +31,11 @@ interface ConnectionState {
  *
  *   - apikey:    { authKind: 'apikey',    url, apiKey, userId }
  *   - password:  { authKind: 'password',  url, accessToken, userId }   // NEVER the password
+ *
+ * ORAIN-0706: an optional `httpConfirmedHosts` map is stored alongside
+ * the session, keyed by `hostname:port` (lowercase hostname), to remember
+ * which insecure (http:// non-loopback) servers the user has explicitly
+ * confirmed. This map survives clearSession/logout — it is never cleared.
  */
 interface SavedSession {
   authKind?: 'apikey' | 'password';
@@ -35,6 +43,8 @@ interface SavedSession {
   apiKey?: string;
   accessToken?: string;
   userId?: string;
+  // ORAIN-0706
+  httpConfirmedHosts?: Record<string, true>;
 }
 
 // Session is stored encrypted via main-process safeStorage IPC (not localStorage)
@@ -64,6 +74,26 @@ async function loadSession(): Promise<SavedSession | null> {
     // be present for the session to be usable.
     if (!parsed.apiKey && !parsed.accessToken) return null;
     return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ORAIN-0706: load the raw encrypted storage to read httpConfirmedHosts only.
+ * Returns null if the file is absent or corrupt (fail-closed — unconfirmed).
+ * Unlike loadSession(), this does NOT require apiKey/accessToken to be present,
+ * because httpConfirmedHosts may exist independently of any active session.
+ */
+async function loadHttpConfirmations(): Promise<Record<string, true> | null> {
+  try {
+    const raw = await window.api.loadSession();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.httpConfirmedHosts === 'object' && parsed.httpConfirmedHosts !== null) {
+      return parsed.httpConfirmedHosts;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -113,6 +143,38 @@ export function isSecureAuthUrl(url: string): boolean {
   }
 }
 
+/**
+ * ORAIN-0706: check whether a http:// non-loopback host has been previously
+ * confirmed by the user. Returns true if `hostname:port` is in the confirmed map.
+ * Key matching is case-insensitive on hostname.
+ */
+export function isHttpHostConfirmed(
+  httpConfirmedHosts: Record<string, true> | null | undefined,
+  hostname: string,
+  port: number,
+): boolean {
+  if (!httpConfirmedHosts) return false;
+  const key = `${hostname.toLowerCase()}:${port}`;
+  // ORAIN-0706: both the stored key and lookup key are lowercased so that
+  // the hostname comparison is case-insensitive (hostname is case-insensitive per RFC).
+  return Boolean(Object.keys(httpConfirmedHosts).some((k) => k.toLowerCase() === key));
+}
+
+/**
+ * ORAIN-0706: build the confirmation storage key from a URL.
+ */
+export function httpConfirmationKey(
+  url: string,
+): { hostname: string; port: number; key: string } | null {
+  try {
+    const { hostname, port } = new URL(url);
+    const key = `${hostname.toLowerCase()}:${port}`;
+    return { hostname, port: parseInt(port, 10), key };
+  } catch {
+    return null;
+  }
+}
+
 export function useJellyfinConnection(
   onConnected: (url: string, apiKey: string, userId: string) => void,
 ) {
@@ -128,7 +190,12 @@ export function useJellyfinConnection(
     pendingConfig: null,
     urlInput: '',
     apiKeyInput: '',
+    showHttpWarning: false,
+    pendingHttpUrl: null,
   });
+
+  // ORAIN-0706: mutable ref so that async confirmHttpWarning can read the pending URL
+  const pendingHttpUrlRef = { current: '' as string | null };
 
   const connectWithUser = async (url: string, apiKey: string, userId: string): Promise<void> => {
     // ORAIN-0578: a failed save no longer drives any UI. The snap keyring
@@ -150,7 +217,8 @@ export function useJellyfinConnection(
 
   // Auto-connect on mount if an encrypted session is saved
   useEffect(() => {
-    void loadSession().then((session) => {
+    void (async () => {
+      const session = await loadSession();
       if (!session) {
         setState((prev) => ({ ...prev, isConnecting: false }));
         return;
@@ -169,7 +237,27 @@ export function useJellyfinConnection(
         apiKeyInput: apiKey ?? '',
       }));
 
+      // ORAIN-0706: before attempting any network, check if we need to show
+      // the HTTP warning modal. This gates ALL four reconnect paths.
+
       if (userId && apiKey) {
+        // ORAIN-0706: apikey fast path — check gate before making network request
+        const parsed = httpConfirmationKey(normalized);
+        if (!isSecureAuthUrl(normalized) && parsed) {
+          const confirmations = await loadHttpConfirmations();
+          const confirmed = isHttpHostConfirmed(confirmations, parsed.hostname, parsed.port);
+          if (!confirmed) {
+            pendingHttpUrlRef.current = normalized;
+            setState((prev) => ({
+              ...prev,
+              isConnecting: false,
+              showHttpWarning: true,
+              pendingHttpUrl: normalized,
+            }));
+            return;
+          }
+          // Host confirmed — fall through to connect
+        }
         // Fast path: we have userId + apiKey, just validate server is reachable
         void fetch(`${normalized}/System/Info/Public`, { signal: AbortSignal.timeout(5000) })
           .then((r) =>
@@ -204,21 +292,21 @@ export function useJellyfinConnection(
         // server-down from token-revoked, because that distinction would
         // leak which user exists.
         //
-        // ORAIN-0564 SO-2 QA: same HTTPS gate as `connectWithPassword`. A
-        // stored password session URL must be https:// — otherwise we would
-        // leak the accessToken over plaintext HTTP on every restart.
-        // connectWithPassword already refuses to save an http:// URL, so
-        // today this branch is unreachable; the gate is a defense against a
-        // future regression that lets a non-HTTPS password session land in
-        // the encrypted file.
-        if (!isSecureAuthUrl(normalized)) {
-          void clearSession();
-          setState((prev) => ({
-            ...prev,
-            isConnecting: false,
-            error: 'Stored session URL is not HTTPS; refusing to reconnect.',
-          }));
-          return;
+        // ORAIN-0706: same HTTP warning gate for password sessions.
+        const parsed = httpConfirmationKey(normalized);
+        if (!isSecureAuthUrl(normalized) && parsed) {
+          const confirmations = await loadHttpConfirmations();
+          const confirmed = isHttpHostConfirmed(confirmations, parsed.hostname, parsed.port);
+          if (!confirmed) {
+            pendingHttpUrlRef.current = normalized;
+            setState((prev) => ({
+              ...prev,
+              isConnecting: false,
+              showHttpWarning: true,
+              pendingHttpUrl: normalized,
+            }));
+            return;
+          }
         }
         void fetch(`${normalized}/System/Info/Public`, {
           signal: AbortSignal.timeout(5000),
@@ -241,7 +329,7 @@ export function useJellyfinConnection(
         // Legacy session without userId — try /Users/Me
         void connectToJellyfin(normalized, apiKey ?? '');
       }
-    });
+    })();
   }, []); // intentional: run once on mount
 
   const fetchUserList = async (baseUrl: string, apiKey: string): Promise<JellyfinUser[]> => {
@@ -259,18 +347,42 @@ export function useJellyfinConnection(
     return [];
   };
 
+  /**
+   * ORAIN-0706: internal helper — checks the HTTP warning gate before proceeding.
+   * When the gate fires, sets showHttpWarning=true and returns true (blocked).
+   * When the gate passes, returns false (proceed).
+   */
+  async function checkHttpWarningGate(
+    _url: string,
+    _authKind: 'apikey' | 'password',
+  ): Promise<boolean> {
+    const url = _url;
+    if (isSecureAuthUrl(url)) return false;
+    const parsed = httpConfirmationKey(url);
+    if (!parsed) return false;
+    // ORAIN-0706: always check loadHttpConfirmations directly — the confirmation
+    // map survives logout/clearSession even when loadSession() returns null.
+    const confirmations = await loadHttpConfirmations();
+    const confirmed = isHttpHostConfirmed(confirmations, parsed.hostname, parsed.port);
+    if (confirmed) return false;
+    // Block — show the modal
+    pendingHttpUrlRef.current = url;
+    setState((prev) => ({
+      ...prev,
+      isConnecting: false,
+      showHttpWarning: true,
+      pendingHttpUrl: url,
+    }));
+    return true;
+  }
+
   const connectToJellyfin = async (url: string, apiKey: string): Promise<boolean> => {
     setState((prev) => ({ ...prev, isConnecting: true, error: null }));
-    // ORAIN-0680: same HTTPS gate as connectWithPassword — an API key over
-    // plaintext HTTP exposes an admin-capable, non-expiring credential.
-    if (!isSecureAuthUrl(url)) {
-      setState((prev) => ({
-        ...prev,
-        isConnecting: false,
-        error: 'HTTPS is required for API key authentication.',
-      }));
-      return false;
-    }
+    // ORAIN-0706: replaced hard HTTPS error with a modal confirmation flow.
+    // Fall-through to the modal instead of returning early here.
+    const blocked = await checkHttpWarningGate(url, 'apikey');
+    if (blocked) return false;
+
     try {
       const normalizedUrl = url.replace(/\/$/, '');
       const headers = jellyfinHeaders(apiKey);
@@ -330,9 +442,7 @@ export function useJellyfinConnection(
   /**
    * ORAIN-0564 SO-1: connect by username + password.
    *
-   * Refuses to transmit over `http://` (returns an error and skips the
-   * request). The 401 path is generic — we don't leak whether the user
-   * exists, and there is no retry loop: the caller decides what to do.
+   * ORAIN-0706: replaced the hard HTTPS error with a modal confirmation flow.
    */
   const connectWithPassword = async (
     url: string,
@@ -340,15 +450,11 @@ export function useJellyfinConnection(
     password: string,
   ): Promise<boolean> => {
     setState((prev) => ({ ...prev, isConnecting: true, error: null }));
+    // ORAIN-0706: HTTP warning gate instead of hard error
+    const blocked = await checkHttpWarningGate(url, 'password');
+    if (blocked) return false;
+
     try {
-      if (!isSecureAuthUrl(url)) {
-        setState((prev) => ({
-          ...prev,
-          isConnecting: false,
-          error: 'HTTPS is required for password authentication.',
-        }));
-        return false;
-      }
       const normalizedUrl = url.replace(/\/$/, '');
       const authHeader = getAuthenticateHeader();
       const response = await fetch(`${normalizedUrl}/Users/AuthenticateByName`, {
@@ -450,6 +556,49 @@ export function useJellyfinConnection(
     }));
   };
 
+  // ORAIN-0706: called by App when the user confirms the HTTP warning modal.
+  // Persists the host confirmation and re-attempts the connection.
+  const confirmHttpWarning = async (): Promise<void> => {
+    const pendingUrl = pendingHttpUrlRef.current;
+    if (!pendingUrl) return;
+
+    const parsed = httpConfirmationKey(pendingUrl);
+    if (!parsed) return;
+
+    // ORAIN-0706: read httpConfirmedHosts separately so we can persist even when
+    // no active session exists (confirmation survives logout/clearSession).
+    const existingConfirmations = (await loadHttpConfirmations()) ?? {};
+    const httpConfirmedHosts = { ...existingConfirmations, [parsed.key]: true };
+
+    // Try to merge with existing session fields; if none, store confirmation only.
+    const session = await loadSession();
+    if (session) {
+      await saveSession({ ...session, httpConfirmedHosts } as SavedSession & { userId: string });
+    } else {
+      await saveSession({ httpConfirmedHosts } as SavedSession & { userId: string });
+    }
+
+    // Dismiss the modal and retry the connection.
+    // Clear the warning state; the connection call will find the host confirmed.
+    setState((prev) => ({ ...prev, showHttpWarning: false, pendingHttpUrl: null }));
+    pendingHttpUrlRef.current = null;
+
+    // Determine which login path was pending from the URL (try apikey first via
+    // connectToJellyfin — it handles both apikey and password shaped sessions).
+    setState((prev) => ({ ...prev, isConnecting: true }));
+    await connectToJellyfin(pendingUrl, state.apiKeyInput ?? '');
+  };
+
+  // ORAIN-0706: called by App when the user cancels the HTTP warning modal.
+  const cancelHttpWarning = (): void => {
+    pendingHttpUrlRef.current = null;
+    setState((prev) => ({
+      ...prev,
+      showHttpWarning: false,
+      pendingHttpUrl: null,
+    }));
+  };
+
   return {
     ...state,
     connectToJellyfin,
@@ -457,6 +606,8 @@ export function useJellyfinConnection(
     handleUserSelect,
     handleUserSelectorCancel,
     disconnect,
+    confirmHttpWarning,
+    cancelHttpWarning,
     setUrlInput: (v: string) => setState((prev) => ({ ...prev, urlInput: v })),
     setApiKeyInput: (v: string) => setState((prev) => ({ ...prev, apiKeyInput: v })),
   };

@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import {
   useJellyfinConnection,
   isSecureAuthUrl,
+  isHttpHostConfirmed,
   INVALID_API_KEY_ERROR,
 } from './useJellyfinConnection';
 
@@ -306,7 +307,9 @@ describe('useJellyfinConnection', () => {
       expect(onConnected).toHaveBeenCalledWith('https://jellyfin.test', 'pw-token-abc', 'user-1');
     });
 
-    it('blocks non-loopback http:// URLs and never calls fetch', async () => {
+    // ORAIN-0706: replaced the hard HTTPS error with a blocking modal.
+    // The old "blocks non-loopback http:// URLs" test now expects showHttpWarning.
+    it('shows modal for non-loopback http:// URLs instead of hard error (connectWithPassword)', async () => {
       mockApi.loadSession.mockResolvedValue(null);
 
       const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
@@ -317,7 +320,9 @@ describe('useJellyfinConnection', () => {
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(result.current.isConnected).toBe(false);
-      expect(result.current.error).toMatch(/https/i);
+      // Modal shown — no hard error message, connection was blocked
+      expect(result.current.showHttpWarning).toBe(true);
+      expect(result.current.pendingHttpUrl).toBe('http://jellyfin.test');
     });
 
     it('allows password auth over http:// to a loopback host (E2E containers)', async () => {
@@ -499,11 +504,9 @@ describe('useJellyfinConnection', () => {
       expect(mockApi.saveSession).not.toHaveBeenCalled();
     });
 
-    it('refuses to reconnect over http:// (clears session, never fetches)', async () => {
-      // ORAIN-0564 SO-2 QA: a stored password session URL that isn't HTTPS
-      // must NOT be used to leak the accessToken over plaintext HTTP on every
-      // restart. Defends against a future regression that stores an http://
-      // URL into a password session.
+    // ORAIN-0706: the hard "Stored session URL is not HTTPS" error is replaced by
+    // the warning modal. Session is NOT cleared — we wait for the user's confirmation.
+    it('shows modal instead of hard error for http:// password reconnect (does not clear session)', async () => {
       mockApi.loadSession.mockResolvedValue(
         JSON.stringify({
           authKind: 'password',
@@ -521,17 +524,17 @@ describe('useJellyfinConnection', () => {
       });
 
       expect(mockFetch).not.toHaveBeenCalled();
-      expect(mockApi.clearSession).toHaveBeenCalled();
+      // ORAIN-0706: session is preserved, modal is shown
+      expect(result.current.showHttpWarning).toBe(true);
+      expect(result.current.pendingHttpUrl).toBe('http://jellyfin.insecure.test');
       expect(result.current.isConnected).toBe(false);
-      expect(result.current.error).toMatch(/Stored session URL is not HTTPS/);
       expect(onConnected).not.toHaveBeenCalled();
-      expect(mockApi.saveSession).not.toHaveBeenCalled();
     });
   });
 
-  // ORAIN-0680 — API key mode must block http:// non-loopback, same as password.
-  describe('connectToJellyfin HTTPS gate', () => {
-    it('blocks http:// non-loopback and never calls fetch', async () => {
+  // ORAIN-0706: replaced the hard HTTPS error with a blocking modal.
+  describe('connectToJellyfin HTTP warning modal (ORAIN-0706)', () => {
+    it('shows modal for http:// non-loopback instead of hard error', async () => {
       mockApi.loadSession.mockResolvedValue(null);
 
       const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
@@ -542,7 +545,8 @@ describe('useJellyfinConnection', () => {
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(result.current.isConnected).toBe(false);
-      expect(result.current.error).toMatch(/https/i);
+      expect(result.current.showHttpWarning).toBe(true);
+      expect(result.current.pendingHttpUrl).toBe('http://jellyfin.test');
     });
 
     it('allows http:// loopback hosts (localhost)', async () => {
@@ -685,6 +689,320 @@ describe('useJellyfinConnection', () => {
 
       expect(result.current.error).toBe('Invalid username or password');
       expect(mockApi.logError).not.toHaveBeenCalled();
+    });
+  });
+
+  // ORAIN-0706: pure unit tests for the confirmation helpers
+  describe('isHttpHostConfirmed (ORAIN-0706)', () => {
+    it('returns true when hostname:port is confirmed', () => {
+      const confirmed: Record<string, true> = { 'jellyfin.example.com:8096': true };
+      expect(isHttpHostConfirmed(confirmed, 'jellyfin.example.com', 8096)).toBe(true);
+    });
+
+    it('is case-insensitive on hostname', () => {
+      const confirmed: Record<string, true> = { 'Jellyfin.Example.COM:8096': true };
+      expect(isHttpHostConfirmed(confirmed, 'jellyfin.example.com', 8096)).toBe(true);
+      expect(isHttpHostConfirmed(confirmed, 'JELLYFIN.EXAMPLE.COM', 8096)).toBe(true);
+    });
+
+    it('returns false when host is not confirmed', () => {
+      const confirmed: Record<string, true> = { 'other.example.com:8096': true };
+      expect(isHttpHostConfirmed(confirmed, 'jellyfin.example.com', 8096)).toBe(false);
+    });
+
+    it('returns false when port differs', () => {
+      const confirmed: Record<string, true> = { 'jellyfin.example.com:8096': true };
+      expect(isHttpHostConfirmed(confirmed, 'jellyfin.example.com', 9096)).toBe(false);
+    });
+
+    it('returns false when httpConfirmedHosts is undefined', () => {
+      expect(isHttpHostConfirmed(undefined, 'jellyfin.example.com', 8096)).toBe(false);
+    });
+  });
+
+  // ORAIN-0706: http:// non-loopback now shows a warning modal instead of a hard
+  // error. The hook exposes `showHttpWarning` and `pendingHttpUrl` to the UI.
+  // The caller (App) renders the modal and calls `confirmHttpWarning` or
+  // `cancelHttpWarning`.
+  describe('insecure HTTP warning (ORAIN-0706)', () => {
+    beforeEach(() => {
+      mockApi.loadSession.mockResolvedValue(null);
+    });
+
+    it('does NOT set showHttpWarning for https:// URLs (password)', async () => {
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword('https://jellyfin.example.com', 'alice', 'secret');
+      });
+      expect(result.current.showHttpWarning).toBe(false);
+    });
+
+    it('sets showHttpWarning=true and stores the URL for http:// non-loopback (password)', async () => {
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword('http://jellyfin.example.com', 'alice', 'secret');
+      });
+      expect(result.current.showHttpWarning).toBe(true);
+      expect(result.current.pendingHttpUrl).toBe('http://jellyfin.example.com');
+      // No fetch was sent
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('sets showHttpWarning=true for http:// non-loopback (connectToJellyfin)', async () => {
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectToJellyfin('http://192.168.1.50', 'apikey-abc');
+      });
+      expect(result.current.showHttpWarning).toBe(true);
+      expect(result.current.pendingHttpUrl).toBe('http://192.168.1.50');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('sets showHttpWarning=true for http:// non-loopback (auto-reconnect apikey fast path)', async () => {
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({
+          authKind: 'apikey',
+          url: 'http://192.168.1.50',
+          apiKey: 'k',
+          userId: 'u1',
+        }),
+      );
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await waitFor(() => {
+        expect(result.current.showHttpWarning).toBe(true);
+      });
+      expect(result.current.pendingHttpUrl).toBe('http://192.168.1.50');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('sets showHttpWarning=true for http:// non-loopback (auto-reconnect password)', async () => {
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({
+          authKind: 'password',
+          url: 'http://192.168.1.50',
+          accessToken: 'tok',
+          userId: 'u1',
+        }),
+      );
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await waitFor(() => {
+        expect(result.current.showHttpWarning).toBe(true);
+      });
+      expect(result.current.pendingHttpUrl).toBe('http://192.168.1.50');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('cancelHttpWarning resets showHttpWarning and pendingHttpUrl', async () => {
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword('http://jellyfin.example.com', 'alice', 'secret');
+      });
+      expect(result.current.showHttpWarning).toBe(true);
+      act(() => {
+        result.current.cancelHttpWarning();
+      });
+      expect(result.current.showHttpWarning).toBe(false);
+      expect(result.current.pendingHttpUrl).toBeNull();
+    });
+
+    it('isConnected stays false after cancelHttpWarning (no hang in connecting state)', async () => {
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword('http://jellyfin.example.com', 'alice', 'secret');
+      });
+      act(() => {
+        result.current.cancelHttpWarning();
+      });
+      expect(result.current.isConnected).toBe(false);
+      expect(result.current.isConnecting).toBe(false);
+    });
+
+    it('allows http:// loopback to connect without showHttpWarning', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ AccessToken: 'tok', User: { Id: 'u1' } }),
+      });
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword('http://localhost:8096', 'alice', 'secret');
+      });
+      expect(result.current.showHttpWarning).toBe(false);
+      expect(result.current.isConnected).toBe(true);
+    });
+  });
+
+  // ORAIN-0706: HTTP confirmation persistence — keyed by hostname:port (case-insensitive).
+  // Persists separately from session; survives clearSession.
+  describe('insecure HTTP confirmation persistence (ORAIN-0706)', () => {
+    beforeEach(() => {
+      mockApi.loadSession.mockResolvedValue(null);
+    });
+
+    it('showHttpWarning does not fire for a confirmed http:// host on connectWithPassword', async () => {
+      // Simulate previously confirmed hosts: storage contains the entry
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({ httpConfirmedHosts: { 'jellyfin.example.com:8096': true } }),
+      );
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ AccessToken: 'tok', User: { Id: 'u1' } }),
+      });
+
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword(
+          'http://jellyfin.example.com:8096',
+          'alice',
+          'secret',
+        );
+      });
+
+      expect(result.current.showHttpWarning).toBe(false);
+      // Connection proceeds
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it('showHttpWarning fires for a NEW port on a confirmed host', async () => {
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({ httpConfirmedHosts: { 'jellyfin.example.com:8096': true } }),
+      );
+
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword(
+          'http://jellyfin.example.com:9090',
+          'alice',
+          'secret',
+        );
+      });
+      // Different port → not confirmed → modal
+      expect(result.current.showHttpWarning).toBe(true);
+    });
+
+    it('showHttpWarning is case-insensitive on hostname', async () => {
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({ httpConfirmedHosts: { 'Jellyfin.Example.COM:8096': true } }),
+      );
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ AccessToken: 'tok', User: { Id: 'u1' } }),
+      });
+
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword(
+          'http://jellyfin.example.com:8096',
+          'alice',
+          'secret',
+        );
+      });
+
+      // showHttpWarning should be false because 'jellyfin.example.com:8096'
+      // (lowercase) matches the stored 'Jellyfin.Example.COM:8096' (case-insensitive)
+      expect(result.current.showHttpWarning).toBe(false);
+    });
+
+    it('corrupt httpConfirmedHosts storage is treated as empty (fail-closed)', async () => {
+      // JSON parse error → fail-closed
+      mockApi.loadSession.mockResolvedValue('{ broken json }');
+
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result.current.connectWithPassword('http://jellyfin.example.com', 'alice', 'secret');
+      });
+
+      // Treat as unconfirmed → show warning
+      expect(result.current.showHttpWarning).toBe(true);
+    });
+
+    it('httpConfirmedHosts is NOT cleared by clearSession (logout)', async () => {
+      // Simulate a confirmed host in session
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({
+          httpConfirmedHosts: { 'jellyfin.example.com:8096': true },
+          // also a pre-existing session to clear
+          url: 'https://other.example.com',
+          apiKey: 'k',
+          userId: 'u1',
+        }),
+      );
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ServerName: 'Test' }),
+      });
+
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await waitFor(() => {
+        expect(result.current.isConnected).toBe(true);
+      });
+
+      // Disconnect (logout)
+      act(() => {
+        result.current.disconnect();
+      });
+
+      // loadSession is called again (from App remount), now returning the confirmed
+      // hosts record only (simulating the next App mount after logout)
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({ httpConfirmedHosts: { 'jellyfin.example.com:8096': true } }),
+      );
+
+      // Attempt to connect again to the confirmed http:// host — should NOT show warning
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ AccessToken: 'tok', User: { Id: 'u1' } }),
+      });
+
+      const { result: result2 } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await act(async () => {
+        await result2.current.connectWithPassword(
+          'http://jellyfin.example.com:8096',
+          'alice',
+          'secret',
+        );
+      });
+
+      expect(result2.current.showHttpWarning).toBe(false);
+    });
+  });
+
+  // ORAIN-0706: auto-reconnect apikey fast path now passes through isSecureAuthUrl
+  describe('auto-reconnect apikey HTTPS gate (ORAIN-0706)', () => {
+    it('does NOT auto-reconnect apikey session over http:// non-loopback — shows warning', async () => {
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({
+          authKind: 'apikey',
+          url: 'http://192.168.1.50',
+          apiKey: 'apikey-abc',
+          userId: 'user-1',
+        }),
+      );
+
+      const { result } = renderHook(() => useJellyfinConnection(vi.fn()));
+      await waitFor(() => {
+        expect(result.current.showHttpWarning).toBe(true);
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockApi.clearSession).not.toHaveBeenCalled();
+    });
+
+    it('auto-reconnects apikey session over http:// loopback without warning', async () => {
+      mockApi.loadSession.mockResolvedValue(
+        JSON.stringify({
+          authKind: 'apikey',
+          url: 'http://localhost:8096',
+          apiKey: 'apikey-abc',
+          userId: 'user-1',
+        }),
+      );
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const onConnected = vi.fn();
+      const { result } = renderHook(() => useJellyfinConnection(onConnected));
+      await waitFor(() => {
+        expect(result.current.isConnected).toBe(true);
+      });
+      expect(result.current.showHttpWarning).toBe(false);
     });
   });
 

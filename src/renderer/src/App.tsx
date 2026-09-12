@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useJellyfinConnection, loadSavedAuthKind } from './hooks/useJellyfinConnection';
+import {
+  useJellyfinConnection,
+  loadSavedAuthKind,
+  httpConfirmationKey,
+} from './hooks/useJellyfinConnection';
 import type {
   ActiveSection,
   LibraryTab,
@@ -14,6 +18,7 @@ import { assertExhaustive } from './utils/assertExhaustive';
 
 import { AppHeader } from './components/AppHeader';
 import { SyncSuccessModal } from './components/SyncSuccessModal';
+import { InsecureConnectionModal } from './components/InsecureConnectionModal';
 import { Sidebar } from './components/Sidebar';
 import { LibraryContent } from './components/LibraryContent';
 import { DeviceSyncPanel } from './components/DeviceSyncPanel';
@@ -794,11 +799,26 @@ function App(): JSX.Element {
   })();
 
   return (
-    <div className="h-screen flex flex-col bg-surface text-on_surface">
-      <NoSessionStorageBanner available={sessionStorageAvailable} />
-      <SnapPermissionsBanner report={snapPermissions} />
-      <div className="flex-1 min-h-0">{screen}</div>
-    </div>
+    <>
+      {connection.showHttpWarning &&
+        connection.pendingHttpUrl &&
+        (() => {
+          const parsed = httpConfirmationKey(connection.pendingHttpUrl);
+          return parsed ? (
+            <InsecureConnectionModal
+              hostname={parsed.hostname}
+              port={parsed.port}
+              onConfirm={() => void connection.confirmHttpWarning()}
+              onCancel={() => connection.cancelHttpWarning()}
+            />
+          ) : null;
+        })()}
+      <div className="h-screen flex flex-col bg-surface text-on_surface">
+        <NoSessionStorageBanner available={sessionStorageAvailable} />
+        <SnapPermissionsBanner report={snapPermissions} />
+        <div className="flex-1 min-h-0">{screen}</div>
+      </div>
+    </>
   );
 }
 
