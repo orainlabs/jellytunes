@@ -24,7 +24,7 @@ import { LibraryContent } from './components/LibraryContent';
 import { DeviceSyncPanel } from './components/DeviceSyncPanel';
 import { FooterStats } from './components/FooterStats';
 import { ConnectingScreen } from './components/ConnectingScreen';
-import { LoginScreen } from './components/LoginScreen';
+import { LoginScreen, type LoginMode } from './components/LoginScreen';
 import { UserSelectorScreen } from './components/UserSelectorScreen';
 import { SnapPermissionsBanner } from './components/SnapPermissionsBanner';
 import { NoSessionStorageBanner } from './components/NoSessionStorageBanner';
@@ -742,10 +742,17 @@ function App(): JSX.Element {
   // form the user is most likely to need. Defaults to 'password' on first launch.
   // ORAIN-0710: on cold-start (first mount) we restore from disk. After that,
   // currentLoginMode tracks the live tab so Cancel always returns to the right one.
-  const [currentLoginMode, setCurrentLoginMode] = useState<'apikey' | 'password'>('password');
+  // ORAIN-0710 H3: LoginMode imported from LoginScreen.tsx to prevent drift.
+  const [currentLoginMode, setCurrentLoginMode] = useState<LoginMode>('password');
+  // ORAIN-0710 M1: tracks whether the user has toggled the tab since App mounted.
+  // If they have, the cold-start effect must NOT overwrite their live choice.
+  const userHasInteracted = useRef(false);
+
+  // ORAIN-0710 M1: restore saved authKind on cold-start only — skip if the user
+  // has already clicked the toggle before this effect resolves (slow safeStorage/disk).
   useEffect(() => {
     void loadSavedAuthKind().then((kind) => {
-      if (kind === 'apikey' || kind === 'password') {
+      if (!userHasInteracted.current && (kind === 'apikey' || kind === 'password')) {
         setCurrentLoginMode(kind);
       }
     });
@@ -775,7 +782,11 @@ function App(): JSX.Element {
             void connection.connectWithPassword(url, username, password);
           }}
           initialMode={currentLoginMode}
-          onModeChange={setCurrentLoginMode}
+          // ORAIN-0710 M1: mark userHasInteracted so the cold-start effect skips
+          onModeChange={(mode) => {
+            userHasInteracted.current = true;
+            setCurrentLoginMode(mode);
+          }}
         />
       );
     }
@@ -811,7 +822,11 @@ function App(): JSX.Element {
             <InsecureConnectionModal
               hostname={parsed.hostname}
               port={parsed.port}
-              credentialKind={connection.pendingCredentialKind ?? 'password'}
+              // H2: pendingCredentialKind is always set at the same time as showHttpWarning=true
+              // (checkHttpWarningGate sets both synchronously). The ?? is removed so that if
+              // a future refactor ever drops the assignment, TypeScript surfaces the error here.
+              // ORAIN-0710 H2
+              credentialKind={connection.pendingCredentialKind!}
               onConfirm={() => void connection.confirmHttpWarning()}
               onCancel={() => connection.cancelHttpWarning()}
             />

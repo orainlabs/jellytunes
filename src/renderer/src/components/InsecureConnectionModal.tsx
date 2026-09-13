@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 
-/** ORAIN-0710: drives the dynamic copy in the body paragraph. */
-export type InsecureCredentialKind = 'password' | 'apikey' | 'accessToken';
+// ORAIN-0710 H1: single canonical declaration of InsecureCredentialKind in
+// useJellyfinConnection.ts, re-exported here so both files share the same source.
+export type { InsecureCredentialKind } from '../hooks/useJellyfinConnection';
+import type { InsecureCredentialKind } from '../hooks/useJellyfinConnection';
 
 interface InsecureConnectionModalProps {
   hostname: string;

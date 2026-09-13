@@ -194,8 +194,8 @@ describe('LoginScreen', () => {
 });
 
 // ORAIN-0564 SO-1 — username+password mode in LoginScreen.
-// API-key mode is the default (preserves E1 + every existing user); password
-// mode is reachable via the toggle or by passing `initialMode="password"`.
+// Password mode is the default (ORAIN-0679); API-key mode is reachable in one
+// click via the toggle or by passing `initialMode="apikey"`.
 describe('LoginScreen — password mode (ORAIN-0564 SO-1)', () => {
   const baseProps = () => ({
     urlInput: '',
