@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.7.1] — 2026-09-13
+
+### Changed
+
+- **Connecting over plain HTTP asks for confirmation instead of refusing.** 0.7.0 blocked login to any non-loopback `http://` server outright, which left anyone running Jellyfin on a LAN without TLS unable to upgrade. JellyTunes now shows a blocking warning before any credential or validation request leaves the app: it states that the connection is not encrypted, gives a shared-network example, and requires ticking "I understand the risk" before Continue is enabled. Cancelling sends nothing, stores nothing, and returns you to the login form on the tab you were using. Confirming stores an entry keyed by `hostname:port` in the existing encrypted storage, so that server does not ask again, including on auto-reconnect after a restart and after logging out. A different hostname or port asks again, and confirmation data that cannot be read is treated as unconfirmed rather than assumed safe. The wording names the credential at stake: username and password, API key, or session data on an automatic reconnect. `localhost`, `127.0.0.1` and `::1` never see the dialog. The reasoning from 0.7.0 has not changed, an API key in the clear is still an admin-capable credential that never expires; the decision is now yours.
+- **The application menu bar is hidden on Linux**, matching the Windows build. In the snap the titlebar and the menu bar were themed independently by the host GTK, so a dark system theme produced a dark titlebar above a light menu, and the CI snap and the Snap Store snap of the same commit did not agree with each other. Hiding the bar removes the element that showed the mismatch. Ctrl+C, Ctrl+V and Ctrl+X keep working in text fields, handled by the renderer. The Windows and macOS menus are unchanged.
+
+### Fixed
+
+- Sync Preview no longer inflates its counters when the selection overlaps. Choosing an artist together with its album artist, an album and a playlist that all resolve to the same tracks counted those tracks once per selected item, so 10 tracks on the server could report as 23 already on the device. When an item's tracks had already been claimed by an earlier item, the aggregation fell back to the raw undeduplicated count instead of treating it as zero additional tracks.
+- The post-sync dialog no longer inflates "Copied", "Re-tagged" and "Moved". Same root cause in a different place: the copy phase incremented once per appearance of a track in the array returned for the selected items, not once per unique track, so the same overlapping selection reported "Copied: 32 tracks" for 10 real ones. The files written to the device were always correct, because a track already present is detected and skipped; only the counting was wrong. Tracks are now deduplicated by id across the estimate, copy and remove phases.
+
+### Internal
+
+- The application menu template moved to `src/main/app-menu.ts` with per-platform tests.
+- Snap packaging investigated for the theming bug and closed with no net change to `package.json`. The `browser-support` plug was tried and removed again after it broke snap launch, and `gtk-3-themes`, `icon-themes` and `sound-themes` turned out to be redundant because the gnome extension already injects them. The plugs list keeps its array shape, since the `default` keyword only expands inside an array.
+- Dependabot configuration with a grouped update for Electron.
+- CI: the checks workflow no longer runs twice per push.
+- 1227 unit tests green, plus typecheck, lint, format and build.
+
 ## [0.7.0] — 2026-09-10
 
 ### Added

@@ -1,22 +1,14 @@
-## JellyTunes 0.7.0 — Log in with your Jellyfin password, and Jellyfin 12 works again
+## JellyTunes 0.7.1: HTTP is your call again, and the sync counters tell the truth
 
-Two things people asked for in the same release. You no longer need to create an API key to use JellyTunes, and the app talks to Jellyfin 12 again.
+Three changes over 0.7.0. If 0.7.0 refused to talk to your server, this one asks first and then does as you say.
 
 ### What's new
 
-**Log in with your username and password.** Creating an API key was the first thing JellyTunes asked of you, and for most people it was the only reason they ever opened their Jellyfin dashboard. Now the login screen starts with username and password, the way you'd expect. Your session is stored encrypted and reconnects on launch, and JellyTunes remembers which mode you used. If you prefer an API key, it's one click away under _Use an API key instead (advanced)_. Requested in [#9](https://github.com/orainlabs/jellytunes/issues/9).
+**Plain HTTP asks instead of refusing.** 0.7.0 flatly blocked login to a server reached over `http://`, and for anyone running Jellyfin on a home LAN with no TLS in front of it, that was the end of the road. The release notes told you to stay on 0.6.0. Now JellyTunes explains the risk and lets you decide: before a single credential leaves the app you get a dialog saying the connection is not encrypted and that anyone on the same wifi can read what you send, with a checkbox you have to tick before Continue does anything. Accept once and that server stops asking, on this launch and every one after it, including automatic reconnects. A different address asks again, and `localhost` never asks at all. The reasoning behind the 0.7.0 block hasn't changed, an API key sent in the clear is still an admin-capable credential that never expires, but the choice is yours now.
 
-**Jellyfin 12 works again.** Upgrading a server to 12.0 broke JellyTunes 0.6.0: the library stopped resolving, and reconnecting failed with "Could not identify user. Please select manually." Jellyfin 12 rejects the legacy `X-Emby-Token` header that JellyTunes had been sending since the beginning. Every request now uses the `MediaBrowser` authorization scheme, which works across Jellyfin 10.10 through 12. Reported in [#13](https://github.com/orainlabs/jellytunes/issues/13).
+**The sync counters were lying.** If you selected an artist and its album artist, or an album and a playlist that share tracks, JellyTunes counted those tracks once per thing you selected. Ten tracks on the server could show as 23 already on the device before a sync, and "Copied: 32 tracks" after one. The files on your device were always correct, because a track already there is detected and skipped. Only the counting was wrong, in two separate places, and both now count each track once.
 
-**Logging in now requires HTTPS.** If you reach your server over plain `http://` on a LAN address, JellyTunes will refuse to log in and tell you so. An API key sent in the clear is an admin-capable credential that never expires, and a password is worse. `localhost`, `127.0.0.1` and `::1` are exempt, because that traffic never leaves the machine. Sessions you already saved keep working, so this only bites when you log in again. If you're on `http://` and can't put TLS in front of Jellyfin, stay on 0.6.0 for now and open an issue so we know how many of you there are.
-
-### Also fixed
-
-- A library tab that fails to load now shows an error with a Retry button instead of an endless loading skeleton, and Retry actually refetches
-- Login failures that can't reach the server say so, instead of showing `Failed to fetch`
-- Cancelling a sync stops mid-download instead of finishing the tracks already in flight, and no longer leaves temporary files behind in the destination
-- Genre browsing is scoped to the logged-in user
-- The Album Artists tab shows its own name in the header instead of `albumArtists`
+**Linux: no more half-dark window.** In the snap build the titlebar followed your system theme but the menu bar below it did not, so a dark desktop got a dark title with a light menu glued underneath, and the build from CI didn't even match the one from the Snap Store. The menu bar is now hidden on Linux, the way it has been on Windows all along. Copy, cut and paste keep working as before.
 
 ---
 
