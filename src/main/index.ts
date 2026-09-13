@@ -21,6 +21,7 @@ import {
 import { createSecretStore } from './secret-store';
 import { createSecretToolRunner } from './secret-tool.adapter';
 import { createElectronLogger } from './logger-types';
+import { getAppMenuTemplate } from './app-menu';
 import {
   buildSnapPermissionsReport,
   type SnapPermissionsReport,
@@ -615,7 +616,11 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    autoHideMenuBar: process.platform === 'win32',
+    // ORAIN-0708: hide the menu bar on Linux too. The native GTK menu bar in
+    // the snap build does not follow the system theme, leaving a light menu
+    // under a dark titlebar. Parity with the Windows build. DevTools
+    // accelerator stays wired via getAppMenuTemplate() below.
+    autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // sandbox: false required for native modules (better-sqlite3, @ffmpeg-installer/ffmpeg)
@@ -626,58 +631,16 @@ function createWindow(): void {
     },
   });
 
-  // Platform-specific menu configuration
-  if (process.platform === 'darwin') {
-    // macOS: minimal menu with only essential shortcuts (Cmd+Q, text editing)
-    const template: Electron.MenuItemConstructorOptions[] = [
-      {
-        label: app.name,
-        submenu: [{ role: 'quit' }],
-      },
-      {
-        label: 'Edit',
-        submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
-          { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
-        ],
-      },
-      {
-        label: 'View',
-        submenu: [
-          {
-            label: 'Toggle Developer Tools',
-            accelerator: 'CmdOrCtrl+Alt+I',
-            visible: is.dev,
-            click: () => mainWindow?.webContents.toggleDevTools(),
-          },
-        ],
-      },
-    ];
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-  } else if (process.platform === 'win32' || process.platform === 'linux') {
-    // Windows/Linux have no custom menu (auto-hidden on win32), but we still need
-    // a registered MenuItem so the DevTools accelerator is wired up.
-    const template: Electron.MenuItemConstructorOptions[] = [
-      { role: 'editMenu' },
-      {
-        label: 'View',
-        submenu: [
-          {
-            label: 'Toggle Developer Tools',
-            accelerator: 'CmdOrCtrl+Alt+I',
-            visible: is.dev,
-            click: () => mainWindow?.webContents.toggleDevTools(),
-          },
-        ],
-      },
-    ];
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-  }
+  // Platform-specific menu configuration. The template lives in
+  // src/main/app-menu.ts (unit-tested); here we just register it.
+  // ORAIN-0708: on Linux the menu bar is hidden (autoHideMenuBar above) and
+  // the Edit submenu is dropped so the host's GTK stops rendering a visible
+  // light menu under a dark titlebar in the snap build.
+  const menuTemplate = getAppMenuTemplate(process.platform, app.name, {
+    isDev: is.dev,
+    onToggleDevTools: () => mainWindow?.webContents.toggleDevTools(),
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show();

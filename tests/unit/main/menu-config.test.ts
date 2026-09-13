@@ -94,23 +94,26 @@ describe('Menu Configuration', () => {
   describe('autoHideMenuBar behavior', () => {
     it('returns true for Windows platform', () => {
       const platform = 'win32';
-      const shouldAutoHide = platform === 'win32';
+      // ORAIN-0708: hide the menu bar on every non-darwin platform (parity
+      // between win32 and linux so the snap build stops rendering a visible
+      // GTK menu bar that does not follow the system theme).
+      const shouldAutoHide = platform !== 'darwin';
 
       expect(shouldAutoHide).toBe(true);
     });
 
     it('returns false for macOS platform', () => {
       const platform = 'darwin';
-      const shouldAutoHide = platform === 'win32';
+      const shouldAutoHide = platform !== 'darwin';
 
       expect(shouldAutoHide).toBe(false);
     });
 
-    it('returns false for Linux platform', () => {
+    it('returns true for Linux platform (ORAIN-0708 — parity with win32)', () => {
       const platform = 'linux';
-      const shouldAutoHide = platform === 'win32';
+      const shouldAutoHide = platform !== 'darwin';
 
-      expect(shouldAutoHide).toBe(false);
+      expect(shouldAutoHide).toBe(true);
     });
   });
 
@@ -127,18 +130,19 @@ describe('Menu Configuration', () => {
 
     it('menu configuration depends on platform', () => {
       const getMenuConfig = (platform: string) => {
+        // ORAIN-0708: only darwin keeps a visible menu bar. win32 and linux
+        // auto-hide so the GTK theme bug on the snap build stops showing a
+        // light menu under a dark titlebar.
         if (platform === 'darwin') {
           return { type: 'application', minimal: true };
-        } else if (platform === 'win32') {
-          return { autoHide: true };
         } else {
-          return { autoHide: false };
+          return { autoHide: true };
         }
       };
 
       expect(getMenuConfig('darwin')).toEqual({ type: 'application', minimal: true });
       expect(getMenuConfig('win32')).toEqual({ autoHide: true });
-      expect(getMenuConfig('linux')).toEqual({ autoHide: false });
+      expect(getMenuConfig('linux')).toEqual({ autoHide: true });
     });
   });
 });

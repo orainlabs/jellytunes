@@ -1071,6 +1071,55 @@ describe('useJellyfinConnection', () => {
       expect(onConnected).toHaveBeenCalledWith('http://jellyfin.lan', 'stored-tok', 'u1');
     });
 
+    it('confirmHttpWarning round-trip: auto-reconnect apikey session resumes with the stored userId', async () => {
+      // Upgrade path for an existing 0.7.0 user on a http:// server: the saved
+      // session already carries userId + apiKey, so confirming the modal must
+      // resume exactly like the mount fast path (validate reachability, then
+      // connectWithUser). Re-running the full connectToJellyfin flow would hit
+      // /Users/Me — which a Jellyfin API key cannot satisfy — and drop the user
+      // back on the user selector even though a valid session exists.
+      let mountCallCount = 0;
+      mockApi.loadSession.mockImplementation(async () => {
+        mountCallCount++;
+        if (mountCallCount < 3) {
+          return JSON.stringify({
+            authKind: 'apikey',
+            url: 'http://jellyfin.lan',
+            apiKey: 'stored-key',
+            userId: 'u1',
+          });
+        }
+        return JSON.stringify({ httpConfirmedHosts: { 'jellyfin.lan:80': true } });
+      });
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+      });
+
+      const onConnected = vi.fn();
+      const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+      await waitFor(() => {
+        expect(result.current.showHttpWarning).toBe(true);
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await result.current.confirmHttpWarning();
+      });
+      await waitFor(() => {
+        expect(result.current.isConnected).toBe(true);
+      });
+
+      expect(onConnected).toHaveBeenCalledWith('http://jellyfin.lan', 'stored-key', 'u1');
+      // No user selector: the session already knew which user it belonged to.
+      expect(result.current.showUserSelector).toBe(false);
+      // And no /Users/Me round-trip — that endpoint is what forced the selector.
+      const urls = mockFetch.mock.calls.map((call) => String(call[0]));
+      expect(urls.some((url) => url.includes('/Users/Me'))).toBe(false);
+    });
+
     // ORAIN-0711: httpConfirmedHosts must survive a full login round-trip.
     // Bug: confirmHttpWarning persists the confirmation, but connectWithPassword /
     // connectWithUser immediately call saveSession again WITHOUT httpConfirmedHosts,
