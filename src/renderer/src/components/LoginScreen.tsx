@@ -18,6 +18,8 @@ interface LoginScreenProps {
   onPasswordSubmit?: (url: string, username: string, password: string) => void;
   /** @default 'password' */
   initialMode?: LoginMode;
+  /** ORAIN-0710: called whenever the user switches tabs so App can track the live tab. */
+  onModeChange?: (mode: LoginMode) => void;
 }
 
 /**
@@ -40,6 +42,7 @@ export function LoginScreen({
   onSubmit,
   onPasswordSubmit,
   initialMode = 'password',
+  onModeChange,
 }: LoginScreenProps): JSX.Element {
   const [mode, setMode] = useState<LoginMode>(initialMode);
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -163,7 +166,10 @@ export function LoginScreen({
                 <button
                   type="button"
                   data-testid="mode-toggle-apikey"
-                  onClick={() => setMode('apikey')}
+                  onClick={() => {
+                    setMode('apikey');
+                    onModeChange?.('apikey');
+                  }}
                   className="w-full text-body-sm bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 rounded-lg px-3 py-2 transition-colors font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 >
                   Use an API key instead (advanced)
@@ -244,7 +250,10 @@ export function LoginScreen({
                 <button
                   type="button"
                   data-testid="mode-toggle-password"
-                  onClick={() => setMode('password')}
+                  onClick={() => {
+                    setMode('password');
+                    onModeChange?.('password');
+                  }}
                   className="w-full text-body-sm bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 rounded-lg px-3 py-2 transition-colors font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 >
                   Back to username + password

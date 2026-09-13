@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react';
 
+/** ORAIN-0710: drives the dynamic copy in the body paragraph. */
+export type InsecureCredentialKind = 'password' | 'apikey' | 'accessToken';
+
 interface InsecureConnectionModalProps {
   hostname: string;
   port: number;
+  /** @default 'password' */
+  credentialKind?: InsecureCredentialKind;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -10,10 +15,19 @@ interface InsecureConnectionModalProps {
 export function InsecureConnectionModal({
   hostname,
   port,
+  credentialKind = 'password',
   onConfirm,
   onCancel,
 }: InsecureConnectionModalProps): JSX.Element {
   const [checked, setChecked] = useState(false);
+
+  // ORAIN-0710: dynamic copy driven by credentialKind
+  const [credentialLabel, verbPhrase] =
+    credentialKind === 'password'
+      ? ['username and password', 'they are sent']
+      : credentialKind === 'apikey'
+        ? ['API key', 'it is sent']
+        : ['session data', 'it is sent'];
 
   // Reset checked state when the modal re-mounts (e.g. after closing and reopening)
   useEffect(() => {
@@ -45,7 +59,7 @@ export function InsecureConnectionModal({
       >
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
-          <span className="text-2xl">⚠️</span>
+          <span className="text-2xl text-warning">⚠️</span>
           <h2 id="insecure-modal-title" className="text-headline-md">
             Insecure connection
           </h2>
@@ -61,9 +75,9 @@ export function InsecureConnectionModal({
             over an unencrypted connection.
           </p>
           <p>
-            This connection is not encrypted. Anyone on the same network — your home wifi, your
-            router, a shared hotel or office wifi — could see your username and password while they
-            are sent.
+            This connection is not encrypted. Anyone on the same network, such as your home wifi,
+            router, a shared hotel or office wifi, could see your {credentialLabel} while{' '}
+            {verbPhrase}.
           </p>
         </div>
 
@@ -85,7 +99,7 @@ export function InsecureConnectionModal({
           <button
             onClick={onConfirm}
             disabled={!checked}
-            className="w-full px-4 py-2 text-body-md bg-primary_container hover:bg-primary_container/80 disabled:bg-surface_container_high disabled:text-on_surface_variant rounded-lg transition-colors font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="w-full px-4 py-2 text-body-md bg-primary_container hover:bg-primary_container/80 disabled:bg-surface_container_highest disabled:text-on_surface_variant rounded-lg transition-colors font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Continue
           </button>

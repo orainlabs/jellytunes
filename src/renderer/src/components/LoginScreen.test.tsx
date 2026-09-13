@@ -446,3 +446,44 @@ describe('LoginScreen — ORAIN-0679 password default + UI restyle', () => {
     expect(props.onSubmit).toHaveBeenCalledTimes(1);
   });
 });
+
+// ORAIN-0710: onModeChange callback — tracks the live tab so that when LoginScreen
+// re-mounts after the HTTP warning cycle it restores the correct tab, not the
+// last-saved authKind from disk.
+describe('LoginScreen — ORAIN-0710 onModeChange', () => {
+  const baseProps = () => ({
+    urlInput: '',
+    apiKeyInput: '',
+    usernameInput: '',
+    passwordInput: '',
+    error: null as string | null,
+    onUrlChange: vi.fn(),
+    onApiKeyChange: vi.fn(),
+    onUsernameChange: vi.fn(),
+    onPasswordChange: vi.fn(),
+    onSubmit: vi.fn(),
+    onPasswordSubmit: vi.fn(),
+    onModeChange: vi.fn(),
+    initialMode: 'password' as const,
+  });
+
+  it('calls onModeChange with "apikey" when toggling from password to apikey', () => {
+    const props = baseProps();
+    render(<LoginScreen {...props} initialMode="password" />);
+    const toggle = screen.getByTestId('mode-toggle-apikey');
+    act(() => {
+      toggle.click();
+    });
+    expect(props.onModeChange).toHaveBeenCalledWith('apikey');
+  });
+
+  it('calls onModeChange with "password" when toggling from apikey to password', () => {
+    const props = baseProps();
+    render(<LoginScreen {...props} initialMode="apikey" />);
+    const toggle = screen.getByTestId('mode-toggle-password');
+    act(() => {
+      toggle.click();
+    });
+    expect(props.onModeChange).toHaveBeenCalledWith('password');
+  });
+});

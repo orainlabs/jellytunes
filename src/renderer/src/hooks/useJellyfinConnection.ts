@@ -23,6 +23,8 @@ interface ConnectionState {
   // ORAIN-0706: HTTP warning modal state
   showHttpWarning: boolean;
   pendingHttpUrl: string | null;
+  // ORAIN-0710: drives dynamic copy in InsecureConnectionModal
+  pendingCredentialKind: 'password' | 'apikey' | 'accessToken' | null;
 }
 
 /**
@@ -112,6 +114,9 @@ async function clearSession(): Promise<void> {
  * Used by App.tsx to derive initialMode for LoginScreen without triggering
  * a connection attempt.
  */
+/** ORAIN-0710: drives the dynamic copy in InsecureConnectionModal. */
+export type InsecureCredentialKind = 'password' | 'apikey' | 'accessToken';
+
 export async function loadSavedAuthKind(): Promise<'apikey' | 'password' | null> {
   const session = await loadSession();
   return session?.authKind ?? null;
@@ -195,6 +200,7 @@ export function useJellyfinConnection(
     apiKeyInput: '',
     showHttpWarning: false,
     pendingHttpUrl: null,
+    pendingCredentialKind: null,
   });
 
   // ORAIN-0706: useRef so the ref object identity is stable across renders.
@@ -278,6 +284,7 @@ export function useJellyfinConnection(
               isConnecting: false,
               showHttpWarning: true,
               pendingHttpUrl: normalized,
+              pendingCredentialKind: 'apikey',
             }));
             return;
           }
@@ -335,6 +342,7 @@ export function useJellyfinConnection(
               isConnecting: false,
               showHttpWarning: true,
               pendingHttpUrl: normalized,
+              pendingCredentialKind: 'accessToken',
             }));
             return;
           }
@@ -402,6 +410,7 @@ export function useJellyfinConnection(
       isConnecting: false,
       showHttpWarning: true,
       pendingHttpUrl: url,
+      pendingCredentialKind: credentials.kind,
     }));
     return true;
   }
@@ -635,7 +644,12 @@ export function useJellyfinConnection(
 
     // Dismiss the modal. Do this BEFORE calling connectWithPassword/connectToJellyfin
     // so they don't see showHttpWarning=true and re-trigger the gate.
-    setState((prev) => ({ ...prev, showHttpWarning: false, pendingHttpUrl: null }));
+    setState((prev) => ({
+      ...prev,
+      showHttpWarning: false,
+      pendingHttpUrl: null,
+      pendingCredentialKind: null,
+    }));
     pendingHttpUrlRef.current = null;
     pendingCredentialsRef.current = null;
 
@@ -679,6 +693,7 @@ export function useJellyfinConnection(
       ...prev,
       showHttpWarning: false,
       pendingHttpUrl: null,
+      pendingCredentialKind: null,
     }));
   };
 

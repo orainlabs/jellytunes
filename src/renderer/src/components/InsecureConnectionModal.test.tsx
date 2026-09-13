@@ -113,4 +113,26 @@ describe('InsecureConnectionModal — ORAIN-0706', () => {
     const mentionsCredential = /username|password|credentials|usuario|contraseña|credenciales/i;
     expect(text).toMatch(mentionsCredential);
   });
+
+  // ORAIN-0710: dynamic copy per credential kind
+  it('shows "username and password" and plural verb for kind=password', () => {
+    render(<InsecureConnectionModal {...DEFAULT_PROPS} credentialKind="password" />);
+    const text = document.body.textContent ?? '';
+    expect(text).toMatch(/username and password/);
+    expect(text).toMatch(/they are sent/);
+  });
+
+  it('shows "API key" and singular verb for kind=apikey', () => {
+    render(<InsecureConnectionModal {...DEFAULT_PROPS} credentialKind="apikey" />);
+    const text = document.body.textContent ?? '';
+    expect(text).toMatch(/API key/);
+    expect(text).toMatch(/it is sent/);
+  });
+
+  it('shows "session data" and singular verb for kind=accessToken', () => {
+    render(<InsecureConnectionModal {...DEFAULT_PROPS} credentialKind="accessToken" />);
+    const text = document.body.textContent ?? '';
+    expect(text).toMatch(/session data/);
+    expect(text).toMatch(/it is sent/);
+  });
 });

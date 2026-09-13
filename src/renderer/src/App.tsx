@@ -740,11 +740,13 @@ function App(): JSX.Element {
   }, []);
   // ORAIN-0679: restore the last-used auth mode so the login screen shows the
   // form the user is most likely to need. Defaults to 'password' on first launch.
-  const [initialLoginMode, setInitialLoginMode] = useState<'apikey' | 'password'>('password');
+  // ORAIN-0710: on cold-start (first mount) we restore from disk. After that,
+  // currentLoginMode tracks the live tab so Cancel always returns to the right one.
+  const [currentLoginMode, setCurrentLoginMode] = useState<'apikey' | 'password'>('password');
   useEffect(() => {
     void loadSavedAuthKind().then((kind) => {
       if (kind === 'apikey' || kind === 'password') {
-        setInitialLoginMode(kind);
+        setCurrentLoginMode(kind);
       }
     });
   }, []);
@@ -772,7 +774,8 @@ function App(): JSX.Element {
           onPasswordSubmit={(url, username, password) => {
             void connection.connectWithPassword(url, username, password);
           }}
-          initialMode={initialLoginMode}
+          initialMode={currentLoginMode}
+          onModeChange={setCurrentLoginMode}
         />
       );
     }
@@ -808,6 +811,7 @@ function App(): JSX.Element {
             <InsecureConnectionModal
               hostname={parsed.hostname}
               port={parsed.port}
+              credentialKind={connection.pendingCredentialKind ?? 'password'}
               onConfirm={() => void connection.confirmHttpWarning()}
               onCancel={() => connection.cancelHttpWarning()}
             />
