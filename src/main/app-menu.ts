@@ -4,8 +4,9 @@
 // On Linux, the snap build suffers a visual bug where the application menu bar
 // does not follow the system theme (titlebar goes dark, menu stays light, both
 // rendered by the host's GTK). To eliminate that variable we hide the menu
-// bar on Linux — parity with the Windows build — and only register a minimal
-// template so the DevTools accelerator stays wired up in dev.
+// bar on Linux — parity with the Windows build — and register a minimal
+// template there so the DevTools accelerator stays wired up in dev. Windows
+// and macOS keep the templates they shipped with in 0.7.0.
 //
 // Ctrl+C / Ctrl+V / Ctrl+X are NOT wired through this template on Linux:
 // text fields in the renderer rely on the browser's native clipboard
@@ -62,8 +63,17 @@ export function getAppMenuTemplate(
       ...devToolsView,
     ];
   }
-  // win32 and linux share a minimal template that exists only to register the
-  // DevTools accelerator. The menu bar is auto-hidden on both platforms
-  // (see createWindow() in src/main/index.ts).
+  if (platform === 'win32') {
+    // Windows keeps the template it shipped with in 0.7.0: the menu bar is
+    // auto-hidden, and the `editMenu` role was never involved in the Linux
+    // GTK theming bug this module addresses. Leaving it in place keeps the
+    // clipboard behaviour on Windows byte-for-byte unchanged.
+    return [{ role: 'editMenu' }, ...devToolsView];
+  }
+
+  // linux: minimal template that exists only to register the DevTools
+  // accelerator. The menu bar is auto-hidden (see createWindow() in
+  // src/main/index.ts) and the Edit role is dropped so the host's GTK stops
+  // rendering a light menu bar under a dark titlebar in the snap build.
   return devToolsView;
 }

@@ -215,7 +215,10 @@ export function useJellyfinConnection(
   // can reproduce the exact connection path (password vs apikey).
   type PendingCredentials =
     | { kind: 'password'; url: string; username: string; password: string }
-    | { kind: 'apikey'; url: string; apiKey: string }
+    // ORAIN-0706: `userId` is present when the modal was raised while restoring
+    // a saved apikey session. Confirming then resumes that session directly
+    // instead of re-running the full login flow (see confirmHttpWarning).
+    | { kind: 'apikey'; url: string; apiKey: string; userId?: string }
     | { kind: 'accessToken'; url: string; accessToken: string; userId: string };
   const pendingCredentialsRef = useRef<PendingCredentials | null>(null);
 
@@ -279,7 +282,7 @@ export function useJellyfinConnection(
           const confirmed = isHttpHostConfirmed(confirmations, parsed.hostname, parsed.port);
           if (!confirmed) {
             pendingHttpUrlRef.current = normalized;
-            pendingCredentialsRef.current = { kind: 'apikey', url: normalized, apiKey };
+            pendingCredentialsRef.current = { kind: 'apikey', url: normalized, apiKey, userId };
             setState((prev) => ({
               ...prev,
               isConnecting: false,
@@ -658,6 +661,26 @@ export function useJellyfinConnection(
     setState((prev) => ({ ...prev, isConnecting: true }));
     if (creds?.kind === 'password') {
       await connectWithPassword(creds.url, creds.username, creds.password);
+    } else if (creds?.kind === 'apikey' && creds.userId) {
+      // Saved apikey session: mirror the mount fast path — validate the server
+      // is reachable, then resume with the stored userId. Going through
+      // connectToJellyfin here would call /Users/Me, which a Jellyfin API key
+      // cannot answer, and would strand the user on the user selector.
+      const resumeUserId = creds.userId;
+      await fetch(`${creds.url}/System/Info/Public`, { signal: AbortSignal.timeout(5000) })
+        .then((r) =>
+          r.ok
+            ? connectWithUser(creds.url, creds.apiKey, resumeUserId)
+            : Promise.reject(new Error(`Server returned ${r.status}`)),
+        )
+        .catch(() => {
+          void clearSession();
+          setState((prev) => ({
+            ...prev,
+            isConnecting: false,
+            error: 'Could not reconnect. Please log in again.',
+          }));
+        });
     } else if (creds?.kind === 'apikey') {
       await connectToJellyfin(creds.url, creds.apiKey);
     } else if (creds?.kind === 'accessToken') {

@@ -25,13 +25,16 @@ describe('getAppMenuTemplate', () => {
     expect(labels).toContain('View');
   });
 
-  it('returns a win32 template without a top-level Edit submenu (menu is auto-hidden)', () => {
+  it('keeps the editMenu role on win32 (unchanged from 0.7.0 — Windows is out of scope)', () => {
+    // ORAIN-0708 is a Linux GTK theming bug. The Windows menu bar is already
+    // auto-hidden and its `editMenu` role was never part of the problem, so it
+    // stays exactly as it shipped in 0.7.0: dropping it would ship an
+    // untested clipboard change to a platform the fix does not touch.
     const template = getAppMenuTemplate('win32', 'JellyTunes', NOOP_OPTIONS);
     expect(template).not.toBeNull();
+    const roles = template!.map((entry) => entry.role);
+    expect(roles).toContain('editMenu');
     const labels = template!.map((entry) => entry.label);
-    // Windows build auto-hides the menu bar; the registered template only
-    // exists to wire the DevTools accelerator.
-    expect(labels).not.toContain('Edit');
     expect(labels).toContain('View');
   });
 
@@ -43,6 +46,8 @@ describe('getAppMenuTemplate', () => {
     // text fields in the renderer rely on the browser's native copy/paste.
     const template = getAppMenuTemplate('linux', 'JellyTunes', NOOP_OPTIONS);
     expect(template).not.toBeNull();
+    const roles = template!.map((entry) => entry.role);
+    expect(roles).not.toContain('editMenu');
     const labels = template!.map((entry) => entry.label);
     expect(labels).not.toContain('Edit');
     expect(labels).toContain('View');
