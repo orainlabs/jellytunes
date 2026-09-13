@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 
-// ORAIN-0710 H1: single canonical declaration of InsecureCredentialKind in
-// useJellyfinConnection.ts, re-exported here so both files share the same source.
-export type { InsecureCredentialKind } from '../hooks/useJellyfinConnection';
+// ORAIN-0710 H2-2: single canonical declaration of InsecureCredentialKind in
+// useJellyfinConnection.ts; imported here so the modal can accept it as a prop type.
 import type { InsecureCredentialKind } from '../hooks/useJellyfinConnection';
 
 interface InsecureConnectionModalProps {

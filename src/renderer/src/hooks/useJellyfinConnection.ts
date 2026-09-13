@@ -9,6 +9,9 @@ import { getAuthenticateHeader } from '../utils/authContext';
 // correctly points to the API key as the likely cause.
 export const INVALID_API_KEY_ERROR = 'Could not authenticate. Check your API key and try again.';
 
+/** ORAIN-0710 H2-2: drives the dynamic copy in InsecureConnectionModal. */
+export type InsecureCredentialKind = 'password' | 'apikey' | 'accessToken';
+
 interface ConnectionState {
   jellyfinConfig: JellyfinConfig | null;
   userId: string | null;
@@ -23,8 +26,8 @@ interface ConnectionState {
   // ORAIN-0706: HTTP warning modal state
   showHttpWarning: boolean;
   pendingHttpUrl: string | null;
-  // ORAIN-0710: drives dynamic copy in InsecureConnectionModal
-  pendingCredentialKind: 'password' | 'apikey' | 'accessToken' | null;
+  // ORAIN-0710 H2-2: drives dynamic copy in InsecureConnectionModal
+  pendingCredentialKind: InsecureCredentialKind | null;
 }
 
 /**
@@ -114,8 +117,6 @@ async function clearSession(): Promise<void> {
  * Used by App.tsx to derive initialMode for LoginScreen without triggering
  * a connection attempt.
  */
-/** ORAIN-0710: drives the dynamic copy in InsecureConnectionModal. */
-export type InsecureCredentialKind = 'password' | 'apikey' | 'accessToken';
 
 export async function loadSavedAuthKind(): Promise<'apikey' | 'password' | null> {
   const session = await loadSession();
