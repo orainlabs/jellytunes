@@ -227,6 +227,24 @@ export interface SyncDependencies {
   logger?: SyncLogger;
   /** Mock database for testing. If provided, overrides getSyncedTracksForDevice. */
   db?: MockDatabase;
+  /**
+   * Test-only hook: if provided, `saveSyncedRecord` calls this instead of the real
+   * `upsertSyncedTrack`. Allows tests to intercept and record DB writes so that a
+   * second sync() call can read back what the first call wrote.
+   */
+  mockUpsert?: (
+    mountPoint: string,
+    itemId: string,
+    trackId: string,
+    destPath: string,
+    fileSize: number | null,
+    metadataHash: string | null,
+    coverArtMode: string,
+    encodedBitrate: string | null,
+    serverPath: string | null,
+    serverRootPath: string | null,
+    lyricsMode: string,
+  ) => void;
 }
 
 /**
@@ -280,8 +298,8 @@ class SyncCoreImpl {
     serverPath: string | null,
     serverRootPath: string | null,
     lyricsMode: string = 'off',
-  ): void | Promise<void> {
-    const fn = (this.deps as any).mockUpsert;
+  ): void {
+    const fn = this.deps.mockUpsert;
     if (fn) {
       fn(
         mountPoint,
@@ -329,6 +347,7 @@ class SyncCoreImpl {
       converter: deps?.converter ?? defaults.converter,
       logger,
       db: deps?.db,
+      mockUpsert: deps?.mockUpsert,
     };
     this.log = logger;
     this.progressEmitter = createProgressEmitter();
@@ -1315,6 +1334,10 @@ class SyncCoreImpl {
           allServerTracks.push({ ...track, parentItemId: itemId });
         }
       }
+      // ORAIN-0709 (cycle 2 fix): deduplicate even when tracks come from the
+      // preloaded cache — the cache may contain overlapping items (e.g. artist +
+      // albumArtist + album + playlist all pointing to the same track pool).
+      allServerTracks = deduplicateTracks(allServerTracks);
       fetchErrors = [];
     } else {
       // Fetch all tracks in a single batched call — no N+1

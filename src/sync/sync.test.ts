@@ -4928,6 +4928,7 @@ describe('cleanEmptyDir', () => {
 
       // Mutable ref so the second sync sees mutated track names → metadata hash differs
       let callCount = 0;
+      let nextId = 1;
       const deps = createMockDeps({
         api: createMockApiClient({
           getTracksForItems: async () => {
@@ -4948,55 +4949,54 @@ describe('cleanEmptyDir', () => {
         }),
         fs: createMockFileSystem() as any,
         db: { getSyncedTracksForDevice: (_mountPoint: string) => sharedRecords },
+        // Inject mockUpsert via typed deps so saveSyncedRecord uses it without `(as any)`
+        mockUpsert: vi.fn(
+          (
+            _mp: string,
+            itemId: string,
+            trackId: string,
+            destPath: string,
+            fileSize: number | null,
+            metadataHash: string | null,
+            coverArtMode: string,
+            encodedBitrate: string | null,
+            serverPath: string | null,
+            serverRootPath: string | null,
+            lyricsMode = 'off',
+          ) => {
+            const existing = sharedRecords.find((r) => r.trackId === trackId);
+            if (existing) {
+              Object.assign(existing, {
+                metadataHash,
+                destinationPath: destPath,
+                fileSize,
+                coverArtMode,
+                encodedBitrate,
+                serverPath,
+                serverRootPath,
+                lyricsMode,
+              });
+            } else {
+              sharedRecords.push({
+                id: nextId++,
+                trackId,
+                itemId,
+                metadataHash: metadataHash ?? '',
+                destinationPath: destPath,
+                deviceId: 0,
+                fileSize: fileSize ?? 0,
+                encodedBitrate: encodedBitrate ?? null,
+                coverArtMode,
+                serverPath: serverPath ?? null,
+                serverRootPath: serverRootPath ?? null,
+                lyricsMode,
+                syncedAt: new Date().toISOString(),
+              });
+            }
+          },
+        ),
       });
       const core = createTestSyncCore(configWithServerRoot, deps);
-      // Inject mockUpsert into the instance's this.deps so saveSyncedRecord finds it
-      let nextId = 1;
-      (core as any).deps.mockUpsert = vi.fn(
-        (
-          _mp: string,
-          itemId: string,
-          trackId: string,
-          destPath: string,
-          fileSize: number | null,
-          metadataHash: string | null,
-          coverArtMode: string,
-          encodedBitrate: string | null,
-          serverPath: string | null,
-          serverRootPath: string | null,
-          lyricsMode = 'off',
-        ) => {
-          const existing = sharedRecords.find((r) => r.trackId === trackId);
-          if (existing) {
-            Object.assign(existing, {
-              metadataHash,
-              destinationPath: destPath,
-              fileSize,
-              coverArtMode,
-              encodedBitrate,
-              serverPath,
-              serverRootPath,
-              lyricsMode,
-            });
-          } else {
-            sharedRecords.push({
-              id: nextId++,
-              trackId,
-              itemId,
-              metadataHash: metadataHash ?? '',
-              destinationPath: destPath,
-              deviceId: 0,
-              fileSize: fileSize ?? 0,
-              encodedBitrate: encodedBitrate ?? null,
-              coverArtMode,
-              serverPath: serverPath ?? null,
-              serverRootPath: serverRootPath ?? null,
-              lyricsMode,
-              syncedAt: new Date().toISOString(),
-            });
-          }
-        },
-      );
 
       // Phase 1: populate destination and write initial synced records
       const firstResult = await core.sync({
@@ -5124,6 +5124,62 @@ describe('cleanEmptyDir', () => {
       expect(result.totals.newTracks).toBe(1);
       // And that track belongs to exactly one item (first-occurrence wins)
       expect(result.items.filter((i) => i.summary.new > 0)).toHaveLength(1);
+    });
+
+    /**
+     * AC (c) regression — preloadedTracks path (production code path, not fallback).
+     *
+     * The IPC handler in main/index.ts ALWAYS populates preloadedTracks before
+     * invoking analyzeDiff, so the fallback path is dead code in production.
+     * Without deduplication in this branch, overlapping items inflate totals.newTracks
+     * in the SyncPreviewModal — the bug ORAIN-0709 was supposed to fix.
+     *
+     * Scenario: 2 overlapping items × 1 unique track each = 2 entries, 1 unique ID.
+     * Before fix: totals.newTracks = 2. After fix: totals.newTracks = 1.
+     */
+    it('analyzeDiff totals reflect deduplicated tracks (preloadedTracks production path)', async () => {
+      const duplicateTracks: TrackInfo[] = [];
+      for (const parentItemId of ['artist-1', 'album-1']) {
+        duplicateTracks.push({
+          id: 'track-shared',
+          name: 'Shared Track',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/Artist/Album/shared.mp3',
+          format: 'mp3',
+          size: 5_000_000,
+          parentItemId,
+        });
+      }
+      // 2 entries with the same track ID — simulates artist + albumArtist or similar overlap
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({ tracks: [], errors: [] }),
+          getItem: async (id: string) => ({ id, name: id, type: 'album' }),
+        }),
+      });
+      const core = createTestSyncCore(validConfig, deps);
+
+      // Pass a non-empty Map so analyzeDiff takes the preloadedTracks branch
+      const preloadedTracks = new Map<string, TrackInfo[]>([
+        ['artist-1', [duplicateTracks[0]]],
+        ['album-1', [duplicateTracks[1]]],
+      ]);
+
+      const result = await core.analyzeDiff(
+        ['artist-1', 'album-1'],
+        new Map([
+          ['artist-1', 'artist'],
+          ['album-1', 'album'],
+        ]),
+        '/music',
+        { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+        preloadedTracks,
+      );
+
+      // After fix: deduplication → 1 unique track → newTracks = 1 (not 2)
+      expect(result.totals.newTracks).toBe(1);
     });
 
     /**
