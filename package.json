@@ -155,25 +155,16 @@
         "executableArgs": [
           "--disable-dev-shm-usage"
         ],
-        "plugs": {
-          "default": null,
-          "removable-media": null,
-          "gtk-3-themes": {
-            "interface": "content",
-            "target": "$SNAP/data-dir/themes",
-            "default-provider": "gtk-common-themes"
-          },
-          "icon-themes": {
-            "interface": "content",
-            "target": "$SNAP/data-dir/icons",
-            "default-provider": "gtk-common-themes"
-          },
-          "sound-themes": {
-            "interface": "content",
-            "target": "$SNAP/data-dir/sounds",
-            "default-provider": "gtk-common-themes"
+        "plugs": [
+          "default",
+          "removable-media",
+          {
+            "browser-support": {
+              "interface": "browser-support",
+              "allow-sandbox": true
+            }
           }
-        }
+        ]
       }
     }
   },
