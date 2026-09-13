@@ -121,22 +121,28 @@ describe('Linux snap sandbox packaging', () => {
     expect(plugs.some((entry) => typeof entry !== 'string' && 'default' in entry)).toBe(false);
   });
 
-  it('declares browser-support with allow-sandbox:true so Chromium does not crash under strict confinement', () => {
-    // electron-builder only auto-injects browser-support when the user has
-    // declared NO plugs. Since we declare `default` plus `removable-media`,
-    // we are responsible for adding browser-support ourselves. Without
-    // allow-sandbox: true, Chromium's internal sandbox fails with
-    // "FATAL: Permission denied (13)" in credentials.cc (see comments at
-    // core24.js:232-242 and the same Chromium upstream bug referenced there).
-    const plugs = projectManifest.build.snapcraft.core24.plugs;
-    const browserSupport = plugs.find(
-      (entry) => typeof entry !== 'string' && 'browser-support' in entry,
-    ) as PlugDescriptor | undefined;
-
-    expect(browserSupport).toBeDefined();
-    const descriptor = browserSupport!['browser-support'] as Record<string, unknown>;
-    expect(descriptor['interface']).toBe('browser-support');
-    expect(descriptor['allow-sandbox']).toBe(true);
+  it('does NOT declare browser-support, so electron-builder falls back to --no-sandbox', () => {
+    // ORAIN-0708 round 2 added `{ browser-support: { allow-sandbox: true } }`
+    // on the theory that electron-builder's auto-injection (core24.js:237,
+    // gated on `!options.plugs`) had to be replicated by hand. That is a
+    // launch-breaking regression, not a fix:
+    //
+    // snapd's base declaration for the interface
+    // (interfaces/builtin/browser_support.go) carries both
+    //   deny-auto-connection: plug-attributes: {allow-sandbox: true}
+    //   deny-connection:      plug-attributes: {allow-sandbox: true}
+    // so with allow-sandbox the plug neither auto-connects nor accepts a
+    // manual `snap connect` — only a store snap-declaration can grant it, and
+    // JellyTunes only holds one for removable-media (ORAIN-0581).
+    //
+    // Declaring it anyway flips `isBrowserSandboxAllowed` (core24.js:461) to
+    // true, which drops `--no-sandbox` from the launcher and keeps the setuid
+    // chrome-sandbox helper in the snap (core24.js:78). Chromium then reaches
+    // for a sandbox it has no AppArmor rules for — the exact
+    // "FATAL: Permission denied (13)" the plug was supposed to prevent.
+    // Leaving it out is what makes the shipping 0.7.0 snap start.
+    const flatPlugNames = collectPlugNames(projectManifest.build.snapcraft.core24.plugs);
+    expect(flatPlugNames).not.toContain('browser-support');
   });
 });
 

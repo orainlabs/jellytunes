@@ -157,13 +157,7 @@
         ],
         "plugs": [
           "default",
-          "removable-media",
-          {
-            "browser-support": {
-              "interface": "browser-support",
-              "allow-sandbox": true
-            }
-          }
+          "removable-media"
         ]
       }
     }
