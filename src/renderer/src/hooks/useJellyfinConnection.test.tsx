@@ -1071,6 +1071,114 @@ describe('useJellyfinConnection', () => {
       expect(onConnected).toHaveBeenCalledWith('http://jellyfin.lan', 'stored-tok', 'u1');
     });
 
+    // ORAIN-0711: httpConfirmedHosts must survive a full login round-trip.
+    // Bug: confirmHttpWarning persists the confirmation, but connectWithPassword /
+    // connectWithUser immediately call saveSession again WITHOUT httpConfirmedHosts,
+    // overwriting the file and losing the entry. After a restart loadSession finds nothing.
+    describe('ORAIN-0711: httpConfirmedHosts survives login round-trip', () => {
+      it('connectWithPassword round-trip: httpConfirmedHosts persists after login success', async () => {
+        // Track every saveSession payload so we can inspect the last one.
+        const savedPayloads: string[] = [];
+        mockApi.saveSession.mockImplementation(async (payload: string) => {
+          savedPayloads.push(payload);
+          return { success: true };
+        });
+
+        // Simulate restart: after the initial null responses, return the persisted
+        // session so a subsequent App remount would find the confirmed host.
+        let callCount = 0;
+        mockApi.loadSession.mockImplementation(async () => {
+          callCount++;
+          if (callCount < 3) return null;
+          // After confirmHttpWarning + retry succeed, the saved session should contain
+          // the confirmed host. If the bug exists, this will be the stub from the
+          // initial save in confirmHttpWarning and will NOT contain httpConfirmedHosts.
+          return savedPayloads[savedPayloads.length - 1] ?? null;
+        });
+
+        mockFetch
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ AccessToken: 'tok', User: { Id: 'u1' } }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+          });
+
+        const onConnected = vi.fn();
+        const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+        // Trigger modal
+        await act(async () => {
+          await result.current.connectWithPassword(
+            'http://jellyfin.example.com',
+            'alice',
+            'secret',
+          );
+        });
+        await waitFor(() => expect(result.current.showHttpWarning).toBe(true));
+        expect(mockFetch).not.toHaveBeenCalled();
+
+        // Confirm — login succeeds
+        await act(async () => {
+          await result.current.confirmHttpWarning();
+        });
+        await waitFor(() => expect(result.current.isConnected).toBe(true));
+
+        // The FINAL saveSession payload (after the retry inside confirmHttpWarning
+        // calls connectWithPassword → saveSession) must contain httpConfirmedHosts.
+        // Without the fix, this assertion fails because the payload only has
+        // { authKind:'password', url, accessToken, userId } — no httpConfirmedHosts.
+        const finalPayload = JSON.parse(savedPayloads[savedPayloads.length - 1]);
+        expect(finalPayload.httpConfirmedHosts).toBeDefined();
+        expect(finalPayload.httpConfirmedHosts).toHaveProperty('jellyfin.example.com:80');
+      });
+
+      it('connectToJellyfin (apikey) round-trip: httpConfirmedHosts persists after login success', async () => {
+        const savedPayloads: string[] = [];
+        mockApi.saveSession.mockImplementation(async (payload: string) => {
+          savedPayloads.push(payload);
+          return { success: true };
+        });
+
+        let callCount = 0;
+        mockApi.loadSession.mockImplementation(async () => {
+          callCount++;
+          if (callCount < 3) return null;
+          return savedPayloads[savedPayloads.length - 1] ?? null;
+        });
+
+        mockFetch
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ ServerName: 'Jellyfin' }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ Id: 'u1', Name: 'Alice' }),
+          });
+
+        const onConnected = vi.fn();
+        const { result } = renderHook(() => useJellyfinConnection(onConnected));
+
+        await act(async () => {
+          await result.current.connectToJellyfin('http://jellyfin.example.com', 'apikey-abc');
+        });
+        await waitFor(() => expect(result.current.showHttpWarning).toBe(true));
+        expect(mockFetch).not.toHaveBeenCalled();
+
+        await act(async () => {
+          await result.current.confirmHttpWarning();
+        });
+        await waitFor(() => expect(result.current.isConnected).toBe(true));
+
+        const finalPayload = JSON.parse(savedPayloads[savedPayloads.length - 1]);
+        expect(finalPayload.httpConfirmedHosts).toBeDefined();
+        expect(finalPayload.httpConfirmedHosts).toHaveProperty('jellyfin.example.com:80');
+      });
+    });
+
     it('httpConfirmedHosts is NOT cleared by clearSession (logout)', async () => {
       // Simulate a confirmed host in session
       mockApi.loadSession.mockResolvedValue(

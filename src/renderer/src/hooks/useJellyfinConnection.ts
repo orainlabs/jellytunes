@@ -218,7 +218,16 @@ export function useJellyfinConnection(
     // `useSnapPermissions`, which doesn't need a feature to fail first —
     // the old flag was raised in the same update that set `isConnected`,
     // which unmounted the only screen that rendered it.
-    await saveSession({ authKind: 'apikey', url, apiKey, userId });
+    // ORAIN-0711: load existing httpConfirmedHosts so confirmHttpWarning entries
+    // are not overwritten by this re-save.
+    const httpConfirmedHosts = (await loadHttpConfirmations()) ?? undefined;
+    await saveSession({
+      authKind: 'apikey',
+      url,
+      apiKey,
+      userId,
+      ...(httpConfirmedHosts && { httpConfirmedHosts }),
+    });
     setState((prev) => ({
       ...prev,
       jellyfinConfig: { url, apiKey, userId },
@@ -513,11 +522,15 @@ export function useJellyfinConnection(
       }
       // Persist the session WITHOUT the password. The accessToken is the
       // secret from now on.
+      // ORAIN-0711: load existing httpConfirmedHosts so confirmHttpWarning entries
+      // are not overwritten by this re-save.
+      const httpConfirmedHosts = (await loadHttpConfirmations()) ?? undefined;
       await saveSession({
         authKind: 'password',
         url: normalizedUrl,
         accessToken,
         userId,
+        ...(httpConfirmedHosts && { httpConfirmedHosts }),
       });
       setState((prev) => ({
         ...prev,
