@@ -6,7 +6,11 @@ interface SnapCore24Options {
   readonly useLXD: boolean;
   readonly stagePackages: readonly string[];
   readonly executableArgs: readonly string[];
-  readonly plugs: readonly string[];
+  // ORAIN-0708: plugs can be either a string (simple plug like
+  // `removable-media`) or an object with content-interface metadata
+  // (target, default-provider). See the electron-builder `PlugDescriptor`
+  // type for the canonical shape.
+  readonly plugs: Readonly<Record<string, string | { readonly [key: string]: unknown } | null>>;
 }
 
 interface PackageManifest {
@@ -63,10 +67,10 @@ describe('Linux snap sandbox packaging', () => {
     // uses `st_dev`/`statfs` instead of `/proc/mounts`.
     const plugs = projectManifest.build.snapcraft.core24.plugs;
 
-    expect(plugs).toContain('removable-media');
-    expect(plugs).not.toContain('mount-observe');
-    expect(plugs).not.toContain('hardware-observe');
-    expect(plugs).not.toContain('password-manager-service');
+    expect(plugs).toHaveProperty('removable-media');
+    expect(plugs).not.toHaveProperty('mount-observe');
+    expect(plugs).not.toHaveProperty('hardware-observe');
+    expect(plugs).not.toHaveProperty('password-manager-service');
   });
 
   it('does NOT declare password-manager-service (ORAIN-0590 — secret-tool needs no plug)', () => {
@@ -76,6 +80,28 @@ describe('Linux snap sandbox packaging', () => {
     // If a future contributor re-adds it, the banner copy and the snap
     // permission reports will drift, so the test fails fast.
     const plugs = projectManifest.build.snapcraft.core24.plugs;
-    expect(plugs).not.toContain('password-manager-service');
+    expect(plugs).not.toHaveProperty('password-manager-service');
+  });
+
+  it('declares the GTK theme content plugs with default-provider gtk-common-themes (ORAIN-0708)', () => {
+    // The snap build does not use the GNOME extension, so the content
+    // interface plugs that the extension normally injects must be declared
+    // by hand. Without them the snap cannot read the host's GTK theme files
+    // under strict confinement and the window decoration falls back to a
+    // hard-coded light style that does not follow the system theme.
+    // The kebab-case keys mirror the snapcraft.yaml schema verbatim — that
+    // is the contract the snap build pipeline consumes, not camelCase.
+    const plugs = projectManifest.build.snapcraft.core24.plugs;
+
+    for (const plugName of ['gtk-3-themes', 'icon-themes', 'sound-themes'] as const) {
+      const plug = plugs[plugName];
+      expect(plug).not.toBeNull();
+      expect(plug).not.toBeUndefined();
+      expect(typeof plug).toBe('object');
+      const descriptor = plug as { [key: string]: unknown };
+      expect(descriptor['interface']).toBe('content');
+      expect(descriptor['default-provider']).toBe('gtk-common-themes');
+      expect(typeof descriptor['target']).toBe('string');
+    }
   });
 });
