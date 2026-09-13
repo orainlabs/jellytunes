@@ -184,6 +184,20 @@ function parseBitrateKbps(bitrate: string): number {
 /** No-op logger used when no logger is injected (keeps module testable) */
 const noopLogger: SyncLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
 
+// ORAIN-0709: deduplicate tracks by id. When the selection contains overlapping
+// items (e.g. artist + albumArtist + album + playlist), the same track.id appears
+// once per originating item. Consumers count each appearance separately — inflating
+// tracksCopied, tracksRetagged, totalSizeBytes, and estimate.totalBytes.
+// Keeping the first occurrence preserves parentItemId for analyzeDiff grouping.
+function deduplicateTracks(tracks: TrackInfo[]): TrackInfo[] {
+  const seen = new Set<string>();
+  return tracks.filter((track) => {
+    if (seen.has(track.id)) return false;
+    seen.add(track.id);
+    return true;
+  });
+}
+
 /**
  * Mock database interface for testing.
  */
@@ -443,7 +457,8 @@ class SyncCoreImpl {
     this.cancellation.throwIfCancelled();
     phaseManager.updateFetching(1, 3);
 
-    const { tracks, errors } = await this.deps.api.getTracksForItems(itemIds, itemTypes);
+    const { tracks: rawTracks, errors } = await this.deps.api.getTracksForItems(itemIds, itemTypes);
+    const tracks = deduplicateTracks(rawTracks);
 
     if (!this.serverRootPath && tracks.length > 0) {
       const detectedPath = detectServerRootPath(tracks);
@@ -987,7 +1002,11 @@ class SyncCoreImpl {
     itemTypes: Map<string, ItemType>,
     options?: { convertToMp3?: boolean; bitrate?: string; syncedIds?: Set<string> },
   ): Promise<SizeEstimate> {
-    const { tracks, errors: _errors } = await this.deps.api.getTracksForItems(itemIds, itemTypes);
+    const { tracks: rawTracks, errors: _errors } = await this.deps.api.getTracksForItems(
+      itemIds,
+      itemTypes,
+    );
+    const tracks = deduplicateTracks(rawTracks);
 
     const formatBreakdown = new Map<string, number>();
     const typeBreakdown = new Map<ItemType, number>();
@@ -1053,7 +1072,8 @@ class SyncCoreImpl {
   ): Promise<{ removed: number; errors: string[] }> {
     if (itemIds.length === 0) return { removed: 0, errors: [] };
 
-    const { tracks } = await this.deps.api.getTracksForItems(itemIds, itemTypes);
+    const { tracks: rawTracks } = await this.deps.api.getTracksForItems(itemIds, itemTypes);
+    const tracks = deduplicateTracks(rawTracks);
 
     // Auto-detect serverRootPath if not set
     if (!this.serverRootPath && tracks.length > 0) {
