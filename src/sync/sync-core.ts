@@ -189,6 +189,18 @@ const noopLogger: SyncLogger = { info: () => {}, warn: () => {}, error: () => {}
 // once per originating item. Consumers count each appearance separately — inflating
 // tracksCopied, tracksRetagged, totalSizeBytes, and estimate.totalBytes.
 // Keeping the first occurrence preserves parentItemId for analyzeDiff grouping.
+/**
+ * Deduplicates tracks by `track.id`, returning a new array with only the first
+ * occurrence of each unique ID kept. Subsequent occurrences with the same ID are
+ * dropped (first-occurrence-wins for `parentItemId`).
+ *
+ * Used by ORAIN-0709 to prevent inflated counts when the user selection overlaps
+ * (e.g. artist + albumArtist + album + playlist all resolve to the same pool of
+ * tracks — without dedup, tracksCopied / tracksRetagged would be N × multiplicity).
+ *
+ * @param tracks - Array of tracks, possibly containing duplicate `id` values.
+ * @returns New array with duplicate `id` entries removed (preserves order).
+ */
 function deduplicateTracks(tracks: TrackInfo[]): TrackInfo[] {
   const seen = new Set<string>();
   return tracks.filter((track) => {
@@ -249,6 +261,57 @@ class SyncCoreImpl {
   private coverArtCache = new Map<string, Buffer>();
   /** Session-level counter for cover art fetch failures — used to emit a single UI warning */
   private coverArtFailCount = 0;
+
+  /**
+   * Persists a synced-track record to the database.
+   * Delegates to `mockUpsert` when provided (testing override), otherwise calls
+   * the real `upsertSyncedTrack`. Centralised here so tests can intercept writes
+   * and have phase 2 of a two-phase sync() re-sync see phase 1's records.
+   */
+  private saveSyncedRecord(
+    mountPoint: string,
+    itemId: string,
+    trackId: string,
+    destPath: string,
+    fileSize: number | null,
+    metadataHash: string | null,
+    coverArtMode: string,
+    encodedBitrate: string | null,
+    serverPath: string | null,
+    serverRootPath: string | null,
+    lyricsMode: string = 'off',
+  ): void | Promise<void> {
+    const fn = (this.deps as any).mockUpsert;
+    if (fn) {
+      fn(
+        mountPoint,
+        itemId,
+        trackId,
+        destPath,
+        fileSize,
+        metadataHash,
+        coverArtMode,
+        encodedBitrate,
+        serverPath,
+        serverRootPath,
+        lyricsMode,
+      );
+    } else {
+      upsertSyncedTrack(
+        mountPoint,
+        itemId,
+        trackId,
+        destPath,
+        fileSize,
+        metadataHash,
+        coverArtMode,
+        encodedBitrate,
+        serverPath,
+        serverRootPath,
+        lyricsMode,
+      );
+    }
+  }
 
   constructor(config: SyncConfig, deps?: Partial<SyncDependencies>) {
     // Validate config
@@ -693,7 +756,7 @@ class SyncCoreImpl {
 
     if (!metadataChanged && !bitrateChanged && !coverArtChanged) {
       if (pathChanged) {
-        upsertSyncedTrack(
+        this.saveSyncedRecord(
           destinationPath,
           itemId,
           track.id,
@@ -758,7 +821,7 @@ class SyncCoreImpl {
         embedCover,
       );
       if (tagResult.success) {
-        upsertSyncedTrack(
+        this.saveSyncedRecord(
           destinationPath,
           itemId,
           track.id,
@@ -848,7 +911,7 @@ class SyncCoreImpl {
         if (willConvert) {
           // Cross-format: can't compare sizes meaningfully
           const existingSize = (await this.deps.fs.stat(outputPath)).size;
-          upsertSyncedTrack(
+          this.saveSyncedRecord(
             destinationPath,
             itemId,
             track.id,
@@ -864,7 +927,7 @@ class SyncCoreImpl {
           return { retagged: false, moved: false, processed: true, skipped: true, lyricsAdded: 0 };
         }
         if (track.size && (await this.deps.fs.stat(outputPath)).size === track.size) {
-          upsertSyncedTrack(
+          this.saveSyncedRecord(
             destinationPath,
             itemId,
             track.id,
@@ -908,7 +971,7 @@ class SyncCoreImpl {
         stats.bytesTransferred += bytesWritten;
       }
 
-      upsertSyncedTrack(
+      this.saveSyncedRecord(
         destinationPath,
         itemId,
         track.id,
@@ -1256,7 +1319,8 @@ class SyncCoreImpl {
     } else {
       // Fetch all tracks in a single batched call — no N+1
       const result = await this.deps.api.getTracksForItems(Array.from(itemIds), itemTypes);
-      allServerTracks = result.tracks;
+      // ORAIN-0709: deduplicate to prevent inflated counts when selection overlaps
+      allServerTracks = deduplicateTracks(result.tracks);
       fetchErrors = result.errors;
     }
 

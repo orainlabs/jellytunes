@@ -4821,6 +4821,40 @@ describe('cleanEmptyDir', () => {
    * After the fix (deduplication by track.id), tracksCopied === N.
    */
   describe('overlapping selection — deduplication', () => {
+    // Shared overlapping item IDs used across all deduplication tests
+    const OVERLAPPING_PARENT_IDS = ['artist-1', 'albumArtist-1', 'album-1', 'playlist-1'] as const;
+    const OVERLAPPING_ITEM_TYPES = new Map<string, ItemType>([
+      ['artist-1', 'artist'],
+      ['albumArtist-1', 'albumArtist'],
+      ['album-1', 'album'],
+      ['playlist-1', 'playlist'],
+    ]) as Map<string, ItemType>;
+
+    /**
+     * Helper: builds a TrackInfo array where each of the N unique tracks appears
+     * MULTIPLICITY times (once per overlapping parent item ID). Used to simulate
+     * the overlapping-selection scenario from ORAIN-0707.
+     */
+    function makeOverlappingTracks(N: number, albumOverride = 'Album'): TrackInfo[] {
+      const tracks: TrackInfo[] = [];
+      for (let i = 1; i <= N; i++) {
+        for (const parentItemId of OVERLAPPING_PARENT_IDS) {
+          tracks.push({
+            id: `track-${i}`,
+            name: `Track ${i}`,
+            album: albumOverride,
+            artists: ['Artist'],
+            path: `/music/Artist/${albumOverride}/track${i}.mp3`,
+            format: 'mp3',
+            size: 5_000_000,
+            trackNumber: i,
+            parentItemId,
+          });
+        }
+      }
+      return tracks;
+    }
+
     /**
      * AC (a): first sync to empty destination — tracksCopied must equal N
      * (unique tracks), not N × multiplicity.
@@ -4829,25 +4863,9 @@ describe('cleanEmptyDir', () => {
       const N = 10; // real tracks on server
 
       // getTracksForItems returns each track once per overlapping item:
-      // artist + albumArtist + album + playlist = 4 appearances per track
-      const duplicateTracks: TrackInfo[] = [];
-      for (let i = 1; i <= N; i++) {
-        // Each unique track appears 4 times (once per item type that resolves to it)
-        for (const parentItemId of ['artist-1', 'albumArtist-1', 'album-1', 'playlist-1']) {
-          duplicateTracks.push({
-            id: `track-${i}`,
-            name: `Track ${i}`,
-            album: 'Album',
-            artists: ['Artist'],
-            path: `/music/Artist/Album/track${i}.mp3`,
-            format: 'mp3',
-            size: 5_000_000,
-            trackNumber: i,
-            parentItemId,
-          });
-        }
-      }
-      // 10 tracks × 4 appearances = 40 entries, but only 10 unique track IDs
+      // artist + albumArtist + album + playlist = MULTIPLICITY appearances per track
+      const duplicateTracks = makeOverlappingTracks(N);
+      // N tracks × MULTIPLICITY appearances = N×4 entries, but only N unique track IDs
 
       const deps = createMockDeps({
         api: createMockApiClient({
@@ -4862,16 +4880,9 @@ describe('cleanEmptyDir', () => {
 
       const core = createTestSyncCore(validConfig, deps);
 
-      const itemTypes = new Map<string, ItemType>([
-        ['artist-1', 'artist'],
-        ['albumArtist-1', 'albumArtist'],
-        ['album-1', 'album'],
-        ['playlist-1', 'playlist'],
-      ]);
-
       const input: SyncInput = {
-        itemIds: ['artist-1', 'albumArtist-1', 'album-1', 'playlist-1'],
-        itemTypes,
+        itemIds: [...OVERLAPPING_PARENT_IDS],
+        itemTypes: OVERLAPPING_ITEM_TYPES,
         destinationPath: '/music',
       };
 
@@ -4883,33 +4894,146 @@ describe('cleanEmptyDir', () => {
     });
 
     /**
+     * AC1(b) [new test]: re-sync with overlapping selection where metadata changed —
+     * tracksRetagged must equal N (unique tracks), not N × multiplicity.
+     *
+     * Two-phase test:
+     *  Phase 1 — sync() populates the destination and writes initial SyncedTrackRecord
+     *            entries to the mock DB (same metadata hash, same path).
+     *  Phase 2 — sync() again with overlapping items; getTracksForItems returns the
+     *            same tracks but with mutated names → metadata hash differs from the
+     *            stored record. handleSyncedRecord takes the retag branch.
+     *
+     * Without deduplication in runCopyPhase: each unique track is seen 4 times
+     * (artist + albumArtist + album + playlist), so tracksRetagged = N × 4 (inflated).
+     * With deduplication: tracksRetagged = N.
+     *
+     * The mock DB ({ getSyncedTracksForDevice, upsertSyncedTrack }) is shared between
+     * both sync() calls so phase 2 reads back phase 1's written records.
+     */
+    it('tracksRetagged counts unique tracks, not duplicate track appearances (re-sync)', async () => {
+      const N = 10;
+
+      // Config with serverRootPath so getOutputDir path resolution works correctly
+      const configWithServerRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      // In-memory store: shared between phase 1 (write via mockUpsert) and phase 2 (read via db)
+      const sharedRecords: import('../main/database').SyncedTrackRecord[] = [];
+
+      // Tracks returned by getTracksForItems — same structure for both sync phases
+      const sharedTracks = makeOverlappingTracks(N);
+
+      // Mutable ref so the second sync sees mutated track names → metadata hash differs
+      let callCount = 0;
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => {
+            callCount++;
+            if (callCount === 1) {
+              // Phase 1: return base tracks (hash = H1)
+              return { tracks: sharedTracks, errors: [] };
+            } else {
+              // Phase 2: same tracks but names mutated → hash ≠ H1 → retag branch
+              const updatedTracks = sharedTracks.map((t) => ({
+                ...t,
+                name: `[Updated] ${t.name}`,
+              }));
+              return { tracks: updatedTracks, errors: [] };
+            }
+          },
+          getItem: async (id: string) => ({ id, name: id, type: 'album' as const }),
+        }),
+        fs: createMockFileSystem() as any,
+        db: { getSyncedTracksForDevice: (_mountPoint: string) => sharedRecords },
+      });
+      const core = createTestSyncCore(configWithServerRoot, deps);
+      // Inject mockUpsert into the instance's this.deps so saveSyncedRecord finds it
+      let nextId = 1;
+      (core as any).deps.mockUpsert = vi.fn(
+        (
+          _mp: string,
+          itemId: string,
+          trackId: string,
+          destPath: string,
+          fileSize: number | null,
+          metadataHash: string | null,
+          coverArtMode: string,
+          encodedBitrate: string | null,
+          serverPath: string | null,
+          serverRootPath: string | null,
+          lyricsMode = 'off',
+        ) => {
+          const existing = sharedRecords.find((r) => r.trackId === trackId);
+          if (existing) {
+            Object.assign(existing, {
+              metadataHash,
+              destinationPath: destPath,
+              fileSize,
+              coverArtMode,
+              encodedBitrate,
+              serverPath,
+              serverRootPath,
+              lyricsMode,
+            });
+          } else {
+            sharedRecords.push({
+              id: nextId++,
+              trackId,
+              itemId,
+              metadataHash: metadataHash ?? '',
+              destinationPath: destPath,
+              deviceId: 0,
+              fileSize: fileSize ?? 0,
+              encodedBitrate: encodedBitrate ?? null,
+              coverArtMode,
+              serverPath: serverPath ?? null,
+              serverRootPath: serverRootPath ?? null,
+              lyricsMode,
+              syncedAt: new Date().toISOString(),
+            });
+          }
+        },
+      );
+
+      // Phase 1: populate destination and write initial synced records
+      const firstResult = await core.sync({
+        itemIds: [...OVERLAPPING_PARENT_IDS],
+        itemTypes: OVERLAPPING_ITEM_TYPES,
+        destinationPath: '/music',
+        options: { coverArtMode: 'embed', bitrate: '192k' },
+      });
+      expect(firstResult.tracksCopied).toBe(N);
+      expect(firstResult.tracksRetagged).toBe(0);
+
+      // Phase 2: overlapping selection returns same tracks (same album/paths) but
+      // with updated names — hash changed, paths unchanged → retag, not moved.
+      // Deduplication in runCopyPhase ensures tracksRetagged === N (not N × 4).
+      const secondResult = await core.sync({
+        itemIds: [...OVERLAPPING_PARENT_IDS],
+        itemTypes: OVERLAPPING_ITEM_TYPES,
+        destinationPath: '/music',
+        options: { coverArtMode: 'embed', bitrate: '192k' },
+      });
+      expect(secondResult.tracksRetagged).toBe(N);
+      expect(secondResult.tracksCopied).toBe(0);
+    });
+
+    /**
      * AC (b): totalSizeBytes reflects deduplicated track sizes.
-     * Before fix: bytesTransferred is sum over every duplicate entry,
-     * so N tracks × 4 appearances × 5 MB = N×20 MB. After fix:
+     * Before fix: bytesTransferred is sum over every duplicate entry
+     * (N × MULTIPLICITY appearances × 5 MB). After fix:
      * deduplication → bytesTransferred = N × 5 MB.
      */
     it('totalSizeBytes reflects unique tracks only (overlapping selection)', async () => {
       const N = 10;
       const TRACK_SIZE = 5_000_000; // bytes
 
-      const duplicateTracks: TrackInfo[] = [];
-      for (let i = 1; i <= N; i++) {
-        for (const parentItemId of ['artist-1', 'albumArtist-1', 'album-1', 'playlist-1']) {
-          duplicateTracks.push({
-            id: `track-${i}`,
-            name: `Track ${i}`,
-            album: 'Album',
-            artists: ['Artist'],
-            path: `/music/Artist/Album/track${i}.mp3`,
-            format: 'mp3',
-            size: TRACK_SIZE,
-            trackNumber: i,
-            parentItemId,
-          });
-        }
-      }
-      // Before fix: 10 tracks × 4 appearances × 5 MB = 200 MB (inflated)
-      // After fix: deduplication → 10 tracks × 5 MB = 50 MB
+      // Before fix: bytes reflect duplicate entries → totalSizeBytes = N × 4 × TRACK_SIZE
+      // After fix: deduplication → totalSizeBytes = N × TRACK_SIZE
+      const duplicateTracks = makeOverlappingTracks(N);
 
       const deps = createMockDeps({
         api: createMockApiClient({
@@ -4925,65 +5049,68 @@ describe('cleanEmptyDir', () => {
       const core = createTestSyncCore(validConfig, deps);
 
       const result = await core.sync({
-        itemIds: ['artist-1', 'albumArtist-1', 'album-1', 'playlist-1'],
-        itemTypes: new Map([
-          ['artist-1', 'artist'],
-          ['albumArtist-1', 'albumArtist'],
-          ['album-1', 'album'],
-          ['playlist-1', 'playlist'],
-        ]),
+        itemIds: [...OVERLAPPING_PARENT_IDS],
+        itemTypes: OVERLAPPING_ITEM_TYPES,
         destinationPath: '/music',
       });
 
       expect(result.success).toBe(true);
-      // Before fix: bytes reflect duplicate entries → totalSizeBytes = N × 4 × TRACK_SIZE
       // After fix: deduplication → totalSizeBytes = N × TRACK_SIZE
       expect(result.totalSizeBytes).toBe(N * TRACK_SIZE);
     });
 
     /**
-     * AC (c): existing analyzeDiff test — confirms deduplication in getTracksForItems
-     * does NOT break the existing parentItemId grouping behavior used by analyzeDiff.
-     * Before deduplication the array contains duplicate track IDs with different
-     * parentItemId values; after deduplication the caller (analyzeDiff) may only see
-     * one parentItemId per track. This test documents the expected post-fix behavior.
+     * AC (c): analyzeDiff in its fallback path (no preloadedTracks) receives
+     * deduplicated tracks from getTracksForItems, so totals reflect unique tracks.
+     *
+     * Before fix: the fallback path skips deduplication, so 3 duplicate entries
+     * appear as 3 new tracks. After fix: deduplication → 1 unique track → totals.newTracks = 1.
+     *
+     * QA HIGH-2: the original test inspected mock.lastCall[0], which is the itemIds
+     * array (strings), not the tracks array. That assertion passed by accident
+     * (undefined.size === 1). This rewrite asserts on result.totals from analyzeDiff.
      */
-    it('analyzeDiff receives deduplicated tracks (parentItemId from first occurrence wins)', async () => {
-      const getTracksForItemsSpy = vi.fn(() =>
-        Promise.resolve({
-          tracks: [
-            {
-              id: 'track-shared',
-              name: 'Shared Track',
-              album: 'Album',
-              artists: ['Artist'],
-              path: '/music/Artist/Album/shared.mp3',
-              format: 'mp3',
-              size: 5_000_000,
-              parentItemId: 'artist-1',
-            },
-            {
-              id: 'track-shared',
-              name: 'Shared Track',
-              album: 'Album',
-              artists: ['Artist'],
-              path: '/music/Artist/Album/shared.mp3',
-              format: 'mp3',
-              size: 5_000_000,
-              parentItemId: 'album-1', // same id, different parentItemId
-            },
-          ],
-          errors: [],
-        }),
-      );
+    it('analyzeDiff totals reflect deduplicated tracks (fallback path without preloadedTracks)', async () => {
+      const duplicateTracks: TrackInfo[] = [];
+      for (const parentItemId of ['artist-1', 'album-1']) {
+        duplicateTracks.push({
+          id: 'track-shared',
+          name: 'Shared Track',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/Artist/Album/shared.mp3',
+          format: 'mp3',
+          size: 5_000_000,
+          parentItemId,
+        });
+      }
+      // 2 duplicate entries, 1 unique track ID
+
+      const mockFs = {
+        ...createMockFileSystem(),
+        exists: vi.fn(() => Promise.resolve(false)),
+        readFile: vi.fn(() => Promise.resolve(Buffer.alloc(0))),
+        writeFile: vi.fn(() => Promise.resolve()),
+        mkdir: vi.fn(() => Promise.resolve()),
+      };
+      (mockFs as any).__setFile('/music/Artist/Album/shared.mp3', Buffer.alloc(5_000_000));
 
       const deps = createMockDeps({
-        api: createMockApiClient({ getTracksForItems: getTracksForItemsSpy }),
+        api: createMockApiClient({
+          getTracksForItems: async () => ({ tracks: duplicateTracks, errors: [] }),
+          getItem: async (id: string) => ({ id, name: id, type: 'album' }),
+        }),
+        fs: mockFs,
       });
 
-      const core = createTestSyncCore(validConfig, deps);
+      const configWithServerRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+      const core = createTestSyncCore(configWithServerRoot, deps);
 
-      await core.analyzeDiff(
+      // Pass empty Map so analyzeDiff takes the fallback (no preloadedTracks) path
+      const result = await core.analyzeDiff(
         ['artist-1', 'album-1'],
         new Map([
           ['artist-1', 'artist'],
@@ -4993,16 +5120,66 @@ describe('cleanEmptyDir', () => {
         { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
       );
 
-      // After fix: deduplication means only 1 track entry is in the array,
-      // so analyzeDiff receives 1 track. The caller groups by parentItemId
-      // internally — verify the spy was called with the deduplicated array.
-      // Cast through unknown to avoid TS2493 on the empty-tuple lastCall type.
+      // After fix: deduplication → 1 unique track → newTracks = 1 (not 2)
+      expect(result.totals.newTracks).toBe(1);
+      // And that track belongs to exactly one item (first-occurrence wins)
+      expect(result.items.filter((i) => i.summary.new > 0)).toHaveLength(1);
+    });
 
-      const tracksArg: TrackInfo[] =
-        ((getTracksForItemsSpy.mock.lastCall as any)?.[0] as any) ?? [];
-      // After deduplication: exactly 1 unique track
-      const uniqueIds = new Set(tracksArg.map((t: TrackInfo) => t.id));
-      expect(uniqueIds.size).toBe(1);
+    /**
+     * AC (e): removeItems must also work on deduplicated tracks — removed count
+     * reflects unique tracks, and fs.unlink is called once per unique track, not
+     * once per duplicate appearance.
+     *
+     * Without deduplication: 4 overlapping item IDs × N tracks = N × 4 unlink calls
+     * per track (first succeeds, rest fail with ENOENT → error pollution).
+     * With deduplication: removed === N, unlink called once per track, errors empty.
+     */
+    it('removeItems removes unique tracks, not duplicate appearances', async () => {
+      const N = 3;
+
+      // N tracks × MULTIPLICITY appearances = N×4 entries, N unique track IDs
+      const duplicateTracks = makeOverlappingTracks(N);
+
+      const unlinkCalls: string[] = [];
+      const mockFs = {
+        ...createMockFileSystem(),
+        unlink: vi.fn(async (path: string) => {
+          unlinkCalls.push(path);
+        }),
+      };
+      for (let i = 1; i <= N; i++) {
+        (mockFs as any).__setFile(`/music/Artist/Album/track${i}.mp3`, Buffer.alloc(100));
+      }
+
+      const deps = createMockDeps({
+        api: createMockApiClient({
+          getTracksForItems: async () => ({ tracks: duplicateTracks, errors: [] }),
+        }),
+        fs: mockFs as any,
+      });
+      // Config with serverRootPath so path resolution works (getOutputDir strips root)
+      const configWithServerRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+      const core = createTestSyncCore(configWithServerRoot, deps);
+
+      const result = await core.removeItems(
+        [...OVERLAPPING_PARENT_IDS],
+        OVERLAPPING_ITEM_TYPES,
+        '/music',
+      );
+
+      // After fix: deduplication → removed === N (3), not N × 4 (12)
+      expect(result.removed).toBe(N);
+      // Each unique track unlinked exactly once (no ENOENT on duplicates)
+      expect(result.errors).toHaveLength(0);
+      // Verify unlink was called once per unique track
+      const unlinkedBasenames = unlinkCalls.map((p) => p.split('/').pop() ?? p);
+      const uniqueBasenames = [...new Set(unlinkedBasenames)];
+      expect(uniqueBasenames).toHaveLength(N);
+      expect(unlinkedBasenames).toHaveLength(N); // no duplicate calls
     });
 
     /**
