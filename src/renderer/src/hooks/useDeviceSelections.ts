@@ -236,11 +236,7 @@ export function useDeviceSelections() {
           id,
           ticks,
           type: (options.itemTypes[id] ?? 'album') as
-            | 'artist'
-            | 'albumArtist'
-            | 'album'
-            | 'playlist'
-            | 'genre',
+            'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre',
         }));
         registry.setItemTicks(ticksArray);
       }
@@ -537,12 +533,7 @@ export function useDeviceSelections() {
 
       const current = deviceStates.get(activeDevicePath) ?? EMPTY;
       const itemType = registry.getItemType(id) as
-        | 'artist'
-        | 'albumArtist'
-        | 'album'
-        | 'playlist'
-        | 'genre'
-        | undefined;
+        'artist' | 'albumArtist' | 'album' | 'playlist' | 'genre' | undefined;
 
       // ORAIN-0551: when the caller supplies the view type (e.g., LibraryContent
       // invoking toggle from the Artists or AlbumArtists tab), prefer that as the

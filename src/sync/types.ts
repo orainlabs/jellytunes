@@ -163,13 +163,7 @@ export interface TrackInfo {
  * Sync phase enumeration
  */
 export type SyncPhase =
-  | 'fetching'
-  | 'copying'
-  | 'converting'
-  | 'validating'
-  | 'complete'
-  | 'cancelled'
-  | 'error';
+  'fetching' | 'copying' | 'converting' | 'validating' | 'complete' | 'cancelled' | 'error';
 
 /**
  * Progress event data

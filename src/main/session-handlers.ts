@@ -33,8 +33,7 @@ export interface SessionLogger {
 }
 
 export type SaveSessionResult =
-  | { success: true }
-  | { success: false; reason: 'encryption_unavailable' | 'storage_error' };
+  { success: true } | { success: false; reason: 'encryption_unavailable' | 'storage_error' };
 
 export interface SaveSessionInput {
   provider: StorageProvider | null;
