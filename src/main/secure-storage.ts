@@ -31,12 +31,7 @@
  */
 
 export type LinuxStorageBackend =
-  | 'basic_text'
-  | 'gnome_libsecret'
-  | 'kwallet'
-  | 'kwallet5'
-  | 'kwallet6'
-  | 'unknown';
+  'basic_text' | 'gnome_libsecret' | 'kwallet' | 'kwallet5' | 'kwallet6' | 'unknown';
 
 /**
  * Read-only probe — what the ORAIN-0571 guard needed.
