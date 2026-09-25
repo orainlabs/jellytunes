@@ -49,7 +49,7 @@ describe('validateDestination — AC4 writable proof', () => {
     expect(result.writable).toBe(true);
     expect(result.errors).toHaveLength(0);
     // Verify the marker was written to the mock filesystem (in-memory Map)
-    expect(mockFs.exists(path.join(tmpDir, MARKER_FILENAME))).resolves.toBe(true);
+    await expect(mockFs.exists(path.join(tmpDir, MARKER_FILENAME))).resolves.toBe(true);
   });
 
   it('returns writable: false for a readable-but-not-writable directory', async () => {
