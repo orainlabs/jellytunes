@@ -8,7 +8,7 @@
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
-import { generateMarkerUuid } from '../main/device-marker';
+import { generateMarkerUuid, writeMarkerAsync, type FsAsync } from '../main/device-marker';
 
 /**
  * Sanitize a metadata string field for safe use in FFmpeg -metadata arguments.
@@ -1101,18 +1101,33 @@ export function createMockConverter(): AudioConverter {
 /**
  * Validate destination path.
  *
- * writability is proved by attempting to write and re-read the device marker
- * file — not by listing the directory. This catches read-only snapshots (e.g.
- * a USB card-image mounted read-only) that pass a `readdir` check.
+ * writability is proved by attempting to write the device marker file — not by
+ * listing the directory. This catches read-only snapshots (e.g. a USB card-image
+ * mounted read-only) that pass a `readdir` check.
+ *
+ * Uses the typed `writeMarkerAsync` API so that EACCES/EPERM/EROFS error codes
+ * surface to the caller (AC3).  The canonical device marker is never touched —
+ * the probe probe uses a uniquely-named temporary file that is unlinked after
+ * validation.
  */
 export async function validateDestination(
   path: string,
   fs: FileSystem,
+  logger?: SyncLogger,
 ): Promise<DestinationValidation> {
   const errors: string[] = [];
   let exists = false;
   let writable = false;
   let freeSpace: number | undefined;
+
+  try {
+    assertFilesystemPath(path, 'destination');
+  } catch (assertionError) {
+    errors.push(
+      assertionError instanceof Error ? assertionError.message : 'Invalid destination path',
+    );
+    return { valid: false, exists: false, writable: false, freeSpace: undefined, errors };
+  }
 
   try {
     exists = await fs.exists(path);
@@ -1122,47 +1137,34 @@ export async function validateDestination(
       if (!isDir) {
         errors.push('Path exists but is not a directory');
       } else {
-        // Prove writability by writing the device marker (or confirming the
-        // existing marker is still readable — if one exists and we can read it
-        // the dir is at least readable, but we still attempt a fresh write to
-        // confirm write access).
-        try {
-          const probeUuid = generateMarkerUuid();
-          const probeContent = JSON.stringify({
-            uuid: probeUuid,
-            name: 'writability-probe',
-            version: 1,
-          });
-          // Use a distinct temporary name so the canonical device marker is never
-          // overwritten during a writability probe.  The probe is cleaned up after
-          // validation so it never persists on the device.
-          const probePath = `${path}/.jellytunes-writeprobe-${probeUuid}.json`;
-          // Use the injected FileSystem (fs.writeFile takes Buffer, matching the mock)
-          await fs.writeFile(probePath, Buffer.from(probeContent));
+        // Prove writability via the typed writeMarkerAsync API (AC3).
+        // Adapter bridges the FileSystem interface to the FsAsync interface.
+        const fsAsync: FsAsync = {
+          async readFile(p, encoding) {
+            return (await fs.readFile(p)).toString(encoding);
+          },
+          async writeFile(p, data, opts) {
+            return fs.writeFile(p, Buffer.from(data, opts?.encoding as BufferEncoding));
+          },
+          async rename(src, dest) {
+            // FileSystem has no rename; emulate via read+write+unlink.
+            const content = await fs.readFile(src);
+            await fs.writeFile(dest, content);
+            await fs.unlink(src);
+          },
+        };
+        const probeUuid = generateMarkerUuid();
+        const result = await writeMarkerAsync(path, probeUuid, 'writability-probe', fsAsync);
+
+        if (result.ok) {
           writable = true;
-          // Re-read to confirm the file landed and is readable
-          try {
-            const reReadRaw = await fs.readFile(probePath);
-            const reRead = JSON.parse(reReadRaw.toString('utf-8')) as Record<string, unknown>;
-            if (reRead?.uuid !== probeUuid) {
-              writable = false;
-              errors.push('Marker written but could not be read back');
-            }
-          } catch {
-            // Corrupt JSON or read error — the write succeeded but we could not
-            // verify it, so treat the directory as not safely writable.
-            writable = false;
-            errors.push('Marker written but could not be read back');
-          } finally {
-            // Clean up the probe file — it must never become the canonical marker.
-            try {
-              await fs.unlink(probePath);
-            } catch {
-              /* best-effort cleanup — a failed unlink does not affect the result */
-            }
-          }
-        } catch {
-          errors.push('Directory is not writable');
+        } else {
+          // AC3: surface the specific error code so the caller (and the UI) can
+          // distinguish EACCES (permission), EPERM (operation not permitted) and
+          // EROFS (read-only filesystem) from each other.
+          const code = result.code ?? 'UNKNOWN';
+          errors.push(`Directory is not writable (${code})`);
+          logger?.debug(`validateDestination writeMarkerAsync failed [${code}]: ${path}`);
         }
 
         // Try to get free space
