@@ -8,6 +8,7 @@
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
+import { generateMarkerUuid, readMarkerAsync, writeMarkerAsync } from '../main/device-marker';
 
 /**
  * Sanitize a metadata string field for safe use in FFmpeg -metadata arguments.
@@ -1098,7 +1099,11 @@ export function createMockConverter(): AudioConverter {
 }
 
 /**
- * Validate destination path
+ * Validate destination path.
+ *
+ * writability is proved by attempting to write and re-read the device marker
+ * file — not by listing the directory. This catches read-only snapshots (e.g.
+ * a USB card-image mounted read-only) that pass a `readdir` check.
  */
 export async function validateDestination(
   path: string,
@@ -1117,10 +1122,24 @@ export async function validateDestination(
       if (!isDir) {
         errors.push('Path exists but is not a directory');
       } else {
-        // Try to check write access by attempting to list
+        // Prove writability by writing the device marker (or confirming the
+        // existing marker is still readable — if one exists and we can read it
+        // the dir is at least readable, but we still attempt a fresh write to
+        // confirm write access).
         try {
-          await fs.readdir(path);
-          writable = true;
+          const probeUuid = generateMarkerUuid();
+          const writeResult = await writeMarkerAsync(path, probeUuid, 'writability-probe');
+          if (writeResult.ok) {
+            writable = true;
+            // Re-read to confirm the file landed and is readable
+            const reRead = await readMarkerAsync(path);
+            if (reRead?.uuid !== probeUuid) {
+              writable = false;
+              errors.push('Marker written but could not be read back');
+            }
+          } else {
+            errors.push(`Device is not writable: ${writeResult.code}`);
+          }
         } catch {
           errors.push('Directory is not readable/writable');
         }
