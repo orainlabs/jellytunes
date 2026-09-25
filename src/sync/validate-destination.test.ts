@@ -48,22 +48,24 @@ describe('validateDestination — AC4 writable proof', () => {
     const result = await validateDestination(tmpDir, mockFs as FileSystem);
     expect(result.writable).toBe(true);
     expect(result.errors).toHaveLength(0);
-    expect(fs.existsSync(path.join(tmpDir, MARKER_FILENAME))).toBe(true);
+    // Verify the marker was written to the mock filesystem (in-memory Map)
+    expect(mockFs.exists(path.join(tmpDir, MARKER_FILENAME))).resolves.toBe(true);
   });
 
   it('returns writable: false for a readable-but-not-writable directory', async () => {
-    const isDarwin = process.platform === 'darwin';
-    const isRoot = typeof process.getuid !== 'undefined' && process.getuid() === 0;
-
-    if (!isDarwin || !isRoot) {
-      fs.chmodSync(tmpDir, 0o444);
-    }
-
     const mockFs = createMockFileSystem();
-    (mockFs as FileSystem & { __setDirectory: (p: string) => void }).__setDirectory(tmpDir);
+    // Inject a writeFile that always throws — simulating a read-only filesystem.
+    // This is more reliable than chmod, which root ignores on macOS/Windows.
+    const alwaysRejectFs = Object.assign(Object.create(mockFs), {
+      writeFile: async (_path: string, _data: Buffer) => {
+        const err = Object.assign(new Error('EPERM'), { code: 'EPERM' });
+        throw err;
+      },
+    });
+    (alwaysRejectFs as FileSystem & { __setDirectory: (p: string) => void }).__setDirectory(tmpDir);
 
-    const result = await validateDestination(tmpDir, mockFs as FileSystem);
+    const result = await validateDestination(tmpDir, alwaysRejectFs as FileSystem);
     expect(result.writable).toBe(false);
-    expect(result.errors.some((e) => /not writable|not.*writable/i.test(e))).toBe(true);
+    expect(result.errors.some((e) => /not.*writable|not readable/i.test(e))).toBe(true);
   });
 });

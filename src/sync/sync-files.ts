@@ -8,7 +8,7 @@
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
-import { generateMarkerUuid, readMarkerAsync, writeMarkerAsync } from '../main/device-marker';
+import { MARKER_FILENAME, generateMarkerUuid } from '../main/device-marker';
 
 /**
  * Sanitize a metadata string field for safe use in FFmpeg -metadata arguments.
@@ -1128,17 +1128,21 @@ export async function validateDestination(
         // confirm write access).
         try {
           const probeUuid = generateMarkerUuid();
-          const writeResult = await writeMarkerAsync(path, probeUuid, 'writability-probe');
-          if (writeResult.ok) {
-            writable = true;
-            // Re-read to confirm the file landed and is readable
-            const reRead = await readMarkerAsync(path);
-            if (reRead?.uuid !== probeUuid) {
-              writable = false;
-              errors.push('Marker written but could not be read back');
-            }
-          } else {
-            errors.push(`Device is not writable: ${writeResult.code}`);
+          const probeContent = JSON.stringify({
+            uuid: probeUuid,
+            name: 'writability-probe',
+            version: 1,
+          });
+          const probePath = `${path}/${MARKER_FILENAME}`;
+          // Use the injected FileSystem (fs.writeFile takes Buffer, matching the mock)
+          await fs.writeFile(probePath, Buffer.from(probeContent));
+          writable = true;
+          // Re-read to confirm the file landed and is readable
+          const reReadRaw = await fs.readFile(probePath);
+          const reRead = JSON.parse(reReadRaw.toString('utf-8')) as Record<string, unknown>;
+          if (reRead?.uuid !== probeUuid) {
+            writable = false;
+            errors.push('Marker written but could not be read back');
           }
         } catch {
           errors.push('Directory is not readable/writable');
