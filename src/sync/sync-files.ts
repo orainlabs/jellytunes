@@ -8,7 +8,7 @@
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
-import { MARKER_FILENAME, generateMarkerUuid } from '../main/device-marker';
+import { generateMarkerUuid } from '../main/device-marker';
 
 /**
  * Sanitize a metadata string field for safe use in FFmpeg -metadata arguments.
@@ -1133,19 +1133,36 @@ export async function validateDestination(
             name: 'writability-probe',
             version: 1,
           });
-          const probePath = `${path}/${MARKER_FILENAME}`;
+          // Use a distinct temporary name so the canonical device marker is never
+          // overwritten during a writability probe.  The probe is cleaned up after
+          // validation so it never persists on the device.
+          const probePath = `${path}/.jellytunes-writeprobe-${probeUuid}.json`;
           // Use the injected FileSystem (fs.writeFile takes Buffer, matching the mock)
           await fs.writeFile(probePath, Buffer.from(probeContent));
           writable = true;
           // Re-read to confirm the file landed and is readable
-          const reReadRaw = await fs.readFile(probePath);
-          const reRead = JSON.parse(reReadRaw.toString('utf-8')) as Record<string, unknown>;
-          if (reRead?.uuid !== probeUuid) {
+          try {
+            const reReadRaw = await fs.readFile(probePath);
+            const reRead = JSON.parse(reReadRaw.toString('utf-8')) as Record<string, unknown>;
+            if (reRead?.uuid !== probeUuid) {
+              writable = false;
+              errors.push('Marker written but could not be read back');
+            }
+          } catch {
+            // Corrupt JSON or read error — the write succeeded but we could not
+            // verify it, so treat the directory as not safely writable.
             writable = false;
             errors.push('Marker written but could not be read back');
+          } finally {
+            // Clean up the probe file — it must never become the canonical marker.
+            try {
+              await fs.unlink(probePath);
+            } catch {
+              /* best-effort cleanup — a failed unlink does not affect the result */
+            }
           }
         } catch {
-          errors.push('Directory is not readable/writable');
+          errors.push('Directory is not writable');
         }
 
         // Try to get free space
