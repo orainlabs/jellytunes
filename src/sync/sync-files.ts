@@ -341,16 +341,25 @@ export interface AudioConverter {
     bitrate: '128k' | '192k' | '320k',
   ): Promise<{ success: boolean; error?: string }>;
 
-  /** Convert audio stream (Node.js Readable) to MP3 via FFmpeg stdin */
+  /**
+   * Convert audio file at the given path to MP3 via FFmpeg `-i file:<path>`.
+   * The path is required (no streaming): FFmpeg can then seek, sniff the
+   * original container, and accept inputs that fail or come out empty over
+   * stdin (e.g. M4A with moov at end, MP3 with junk header).
+   */
   convertStreamToMp3(
-    input: NodeJS.ReadableStream,
+    inputPath: string,
     output: string,
     bitrate: '128k' | '192k' | '320k',
   ): Promise<{ success: boolean; error?: string }>;
 
-  /** Convert audio stream with metadata and optional cover art embeds */
+  /**
+   * Convert audio file at the given path to MP3 with metadata and optional
+   * cover art embed. The path is passed to FFmpeg as `-i file:<path>` — see
+   * ORAIN-0732.
+   */
   convertStreamToMp3WithMeta(
-    input: NodeJS.ReadableStream,
+    inputPath: string,
     output: string,
     bitrate: '128k' | '192k' | '320k',
     metadata: TrackMetadata,
@@ -510,14 +519,18 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
       });
     },
 
-    convertStreamToMp3: async (inputStream, output, bitrate) => {
+    convertStreamToMp3: async (inputPath, output, bitrate) => {
+      assertFilesystemPath(inputPath, 'inputPath');
       assertFilesystemPath(output);
       const { spawn } = require('child_process');
 
       return new Promise((resolve) => {
+        // ORAIN-0732: read input from disk via -i file:<path>. The file:
+        // prefix stops a path containing `:` (e.g. Windows drive letters or
+        // a track titled "Foo: Bar") from being parsed as an FFmpeg protocol.
         const args = [
           '-i',
-          'pipe:0', // read from stdin
+          `file:${inputPath}`,
           '-vn',
           '-ab',
           bitrate,
@@ -529,7 +542,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           output,
         ];
 
-        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+        const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
         let stderr = '';
         proc.stderr.on('data', (chunk: Buffer) => {
@@ -551,24 +564,11 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
             error: code !== 0 ? ffmpegErrorMessage(code, stderr) : undefined,
           });
         });
-
-        // Suppress EPIPE — FFmpeg may close stdin early on format error
-        proc.stdin.on('error', () => {});
-
-        inputStream.on('error', (err: Error) => {
-          try {
-            proc.kill();
-          } catch {
-            /* already dead */
-          }
-          resolve({ success: false, error: `Stream error: ${err.message}` });
-        });
-
-        inputStream.pipe(proc.stdin);
       });
     },
 
-    convertStreamToMp3WithMeta: async (inputStream, output, bitrate, metadata, embedCover) => {
+    convertStreamToMp3WithMeta: async (inputPath, output, bitrate, metadata, embedCover) => {
+      assertFilesystemPath(inputPath, 'inputPath');
       assertFilesystemPath(output);
       const { spawn } = require('child_process');
       const fs = require('fs');
@@ -580,8 +580,9 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         const args: string[] = [];
         let coverTempPath: string | undefined;
 
-        // Input 0: audio from stdin (always present)
-        args.push('-i', 'pipe:0');
+        // Input 0: audio from disk (path). The file: prefix stops a path
+        // containing `:` from being parsed as a FFmpeg protocol — ORAIN-0732.
+        args.push('-i', `file:${inputPath}`);
 
         // Input 1: cover art image (only when embedding)
         if (embedCover) {
@@ -594,7 +595,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         if (!embedCover) args.push('-vn');
         args.push('-ab', bitrate, '-ar', '44100', '-ac', '2');
 
-        // Map streams: audio from stdin (input 0), video from cover (input 1)
+        // Map streams: audio from input 0 (the temp file), video from cover (input 1)
         if (embedCover) {
           args.push('-map', '0:a', '-map', '1:v', '-disposition:v', 'attached_pic');
         }
@@ -629,7 +630,10 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
 
         args.push('-y', output);
 
-        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+        // stdio: ['ignore', 'pipe', 'pipe'] — stdin is no longer piped (we
+        // pass the file by path). stderr/stdout remain pipe-able for the
+        // diagnostic logging and error reporting in ORAIN-0726.
+        const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
         let stderr = '';
         proc.stderr.on('data', (chunk: Buffer) => {
@@ -663,26 +667,6 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
             error: code !== 0 ? ffmpegErrorMessage(code, stderr) : undefined,
           });
         });
-
-        // Suppress EPIPE
-        proc.stdin.on('error', () => {});
-
-        inputStream.on('error', (err: Error) => {
-          try {
-            proc.kill();
-          } catch {
-            /* already dead */
-          }
-          if (coverTempPath)
-            try {
-              fs.unlinkSync(coverTempPath);
-            } catch {
-              /* ignore */
-            }
-          resolve({ success: false, error: `Stream error: ${err.message}` });
-        });
-
-        inputStream.pipe(proc.stdin);
       });
     },
 

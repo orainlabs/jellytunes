@@ -2240,8 +2240,19 @@ class SyncCoreImpl {
     embedMetadata: boolean,
     coverArtMode: CoverArtMode,
   ): Promise<void> {
-    // Buffer stream to temp file so we can read original file metadata before converting
-    const tmpPath = `${outputPath}.jt-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // ORAIN-0732 AC2: derive the original extension from track.format so
+    // FFmpeg can sniff by extension. Returns undefined for empty / unsafe
+    // values so we never invent one. Lowercased, leading dot stripped,
+    // restricted to [a-z0-9]. When undefined, FFmpeg still content-sniffs.
+    const formatExt = (() => {
+      const f = track.format?.trim().toLowerCase().replace(/^\./, '');
+      return f && /^[a-z0-9]+$/.test(f) ? `.${f}` : '';
+    })();
+
+    // Buffer stream to temp file so we can read original file metadata before converting.
+    // The extension suffix is appended when track.format is well-formed so FFmpeg
+    // can use the file: path to seek and sniff (ORAIN-0732).
+    const tmpPath = `${outputPath}.jt-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}${formatExt}`;
     const stream = await this.deps.api.downloadItemStream(track.id);
 
     // Capture Content-Type off the stream before piping (ORAIN-0729). The
@@ -2284,10 +2295,12 @@ class SyncCoreImpl {
           ? await this.getCoverArtBuffer(track.id, track.albumId, coverArtMode)
           : undefined;
 
-      // Convert from the buffered temp file (preserves original stream data)
-      const readStream = await this.deps.fs.createReadStream(tmpPath);
+      // Convert directly from the buffered temp file path — no read stream.
+      // ORAIN-0732 AC1: FFmpeg receives -i file:<path> and can seek/sniff
+      // the original format. The temp file is unlinked in the finally
+      // block below.
       const result = await this.deps.converter.convertStreamToMp3WithMeta(
-        readStream,
+        tmpPath,
         outputPath,
         bitrate,
         metadata,

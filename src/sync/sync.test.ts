@@ -1115,18 +1115,12 @@ describe('Error Handling', () => {
 
     it('returns success:false when FFmpeg exits with non-zero code', async () => {
       const { createFFmpegConverter } = await import('./sync-files');
-      const { Writable, Readable } = require('stream');
 
-      // Mock proc.stdin as a real Writable so pipe() works
-      const mockStdin = new Writable({
-        write(_chunk: Buffer, _enc: string, cb: () => void) {
-          cb();
-        },
-      });
-
+      // ORAIN-0732: input is now a path string, not a Readable. The mock
+      // proc only needs a stderr emitter and a kill hook.
       vi.spyOn(require('child_process'), 'spawn').mockImplementation(() => {
         const proc = new (require('events').EventEmitter)() as any;
-        proc.stdin = mockStdin;
+        proc.stdin = null;
         proc.stderr = new (require('events').EventEmitter)();
         proc.stderr.on = vi.fn();
         proc.kill = vi.fn();
@@ -1135,10 +1129,10 @@ describe('Error Handling', () => {
       });
 
       const converter = createFFmpegConverter();
-      const input = Readable.from(Buffer.alloc(1024));
+      const inputPath = '/tmp/fake-input.mp3';
 
       const result = await converter.convertStreamToMp3WithMeta(
-        input,
+        inputPath,
         '/tmp/test-output.mp3',
         '192k',
         { title: 'Test' },
@@ -1151,17 +1145,10 @@ describe('Error Handling', () => {
     it('deletes temp cover file after FFmpeg failure', async () => {
       const fs = require('fs');
       const unlinkSyncSpy = vi.spyOn(fs, 'unlinkSync');
-      const { Writable, Readable } = require('stream');
-
-      const mockStdin = new Writable({
-        write(_chunk: Buffer, _enc: string, cb: () => void) {
-          cb();
-        },
-      });
 
       vi.spyOn(require('child_process'), 'spawn').mockImplementation(() => {
         const proc = new (require('events').EventEmitter)() as any;
-        proc.stdin = mockStdin;
+        proc.stdin = null;
         proc.stderr = new (require('events').EventEmitter)();
         proc.stderr.on = vi.fn();
         proc.kill = vi.fn();
@@ -1171,11 +1158,11 @@ describe('Error Handling', () => {
 
       const { createFFmpegConverter } = await import('./sync-files');
       const converter = createFFmpegConverter();
-      const input = Readable.from(Buffer.alloc(1024));
+      const inputPath = '/tmp/fake-input.mp3';
       const coverData = Buffer.alloc(1024);
 
       await converter.convertStreamToMp3WithMeta(
-        input,
+        inputPath,
         '/tmp/test-output.mp3',
         '192k',
         { title: 'Test', artist: 'Artist' },

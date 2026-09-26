@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Readable, PassThrough } from 'stream';
+import { PassThrough } from 'stream';
 import { createFFmpegConverter, lastFFmpegError, ffmpegErrorMessage } from './sync-files';
 import type { SyncLogger } from './types';
 
@@ -181,11 +181,13 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         },
       };
       const converter = createFFmpegConverter(logger);
-      const inputStream = Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0732: signature switched from Readable to path. We pass a
+      // fake absolute path because the test mocks spawn and never opens it.
+      const inputPath = '/abs/fake-input.mp3';
 
       try {
         const result = await converter.convertStreamToMp3WithMeta(
-          inputStream,
+          inputPath,
           '/abs/out.mp3',
           '192k',
           { title: 'T' },
@@ -195,9 +197,10 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         // AC3: logger still gets the FULL stderr untruncated
         expect(errorLogs).toHaveLength(1);
         expect(errorLogs[0]).toContain(stderrText);
-        // Stderr was piped (otherwise we wouldn't have captured it)
+        // Stderr was piped (otherwise we wouldn't have captured it).
+        // stdin is now 'ignore' because we read input by path — ORAIN-0732.
         const lastCall = mock.calls[mock.calls.length - 1];
-        expect(lastCall.stdio).toEqual(['pipe', 'pipe', 'pipe']);
+        expect(lastCall.stdio).toEqual(['ignore', 'pipe', 'pipe']);
       } finally {
         mock.restore();
       }
@@ -206,11 +209,11 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
     it('AC4: preserves plain "FFmpeg exited with code N" when stderr is empty', async () => {
       const mock = mockSpawnWithStderr([], 1);
       const converter = createFFmpegConverter();
-      const inputStream = Readable.from(Buffer.from('fake audio'));
+      const inputPath = '/abs/fake-input.mp3';
 
       try {
         const result = await converter.convertStreamToMp3WithMeta(
-          inputStream,
+          inputPath,
           '/abs/out.mp3',
           '192k',
           { title: 'T' },
@@ -406,7 +409,7 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
 
       try {
         const result = await converter.convertStreamToMp3WithMeta(
-          Readable.from(Buffer.from('fake audio')),
+          '/abs/fake-input.mp3',
           '/abs/out.mp3',
           '192k',
           { title: 'T' },
