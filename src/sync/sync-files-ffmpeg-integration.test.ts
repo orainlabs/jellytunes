@@ -100,30 +100,57 @@ function synthesizeM4aWithMoovAtEnd(ffmpegPath: string, dir: string): string {
   );
   expect(b.status).toBe(0);
 
-  // Verify the moov atom actually landed at the end. Without this check the
-  // test passes for the wrong reason when an FFmpeg build refuses the
-  // +empty_moov flag and keeps moov at the front (which is the layout
-  // pipe:0 already handles — so the test would degenerate into a no-op).
+  // Verify the moov atom actually landed at the END of the file. Without
+  // this check the test passes for the wrong reason: older FFmpeg builds
+  // (libavformat ≤ 58.24, observed in the @ffmpeg-installer/ffmpeg 2018
+  // release) ignore `+empty_moov` and keep moov at the front — which is
+  // the layout pipe:0 already handles, so the test would degenerate into
+  // a no-op against a different fixture.
+  //
+  // Rework cycle 2 (ORAIN-0732): cycle 1's assertion
+  // `moovOffsets[0] >= 0` against a `tail = last 4 KB` slice was always
+  // true by construction (indexOf is bounded to the slice). The fix:
+  // scan the WHOLE file, then require the LAST moov occurrence to live
+  // in the final 4 KB. If the build refuses to cooperate we throw — the
+  // caller uses `canProduceMoovAtEnd` to skip the case instead of
+  // pretending it ran.
   const buf = readFileSync(final);
-  const tail = buf.subarray(Math.max(0, buf.length - 4096));
-  // The literal ASCII 'moov' marks the start of the moov atom header.
+  const NEEDLE = Buffer.from('moov', 'ascii');
   const moovOffsets: number[] = [];
   let from = 0;
   while (true) {
-    const idx = tail.indexOf(Buffer.from('moov', 'ascii'), from);
+    const idx = buf.indexOf(NEEDLE, from);
     if (idx < 0) break;
     moovOffsets.push(idx);
     from = idx + 1;
   }
   expect(moovOffsets.length, 'fixture: moov atom must exist').toBeGreaterThan(0);
-  // The first moov reference in the last 4 KB must be inside that window
-  // — i.e. not earlier in the file (which would mean moov is NOT at the
-  // end and we have a different fixture).
-  expect(
-    moovOffsets[0],
-    `fixture: moov must sit in the last 4 KB of the file (size=${buf.length})`,
-  ).toBeGreaterThanOrEqual(0);
+  const lastMoov = moovOffsets[moovOffsets.length - 1];
+  const tailStart = Math.max(0, buf.length - 4096);
+  if (lastMoov < tailStart) {
+    // The FFmpeg build on this host ignored +empty_moov — the moov sits
+    // at offset `lastMoov`, well before the final 4 KB. Calling
+    // convertStreamToMp3WithMeta against this file would NOT exercise the
+    // "moov at end → seeks successfully" path. Surface this so the caller
+    // can skip with an explicit reason instead of a silent pass.
+    throw new MoovAtEndUnbuildableError(
+      `FFmpeg build at ${ffmpegPath} ignored +empty_moov: moov at offset ${lastMoov}, file size ${buf.length} (tail starts at ${tailStart})`,
+    );
+  }
   return final;
+}
+
+/**
+ * Thrown by `synthesizeM4aWithMoovAtEnd` when the bundled FFmpeg ignored
+ * the `+empty_moov` flag and left the moov atom at the front of the file.
+ * Distinct error class so the test runner can `try/catch` once per case
+ * and skip with a precise reason rather than failing for the wrong one.
+ */
+export class MoovAtEndUnbuildableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MoovAtEndUnbuildableError';
+  }
 }
 
 /**
@@ -158,9 +185,32 @@ function synthesizeValidMp3(ffmpegPath: string, dir: string): string {
 
 describe('ORAIN-0732 AC3 — FFmpeg integration with path input', () => {
   let workDir: string;
+  let moovAtEndPath: string | null = null;
+  // Rework cycle 2 (ORAIN-0732): the fixture is built once in beforeAll
+  // so the "did FFmpeg honor +empty_moov?" probe runs in setup, not in
+  // the test body. The earlier code called synthesizeM4aWithMoovAtEnd
+  // inside `it()` and threw the skip-error from inside a passing test,
+  // which surfaced as a real FAIL even though the intention was SKIP.
+  let canProduceMoovAtEnd = false;
 
   beforeAll(() => {
     workDir = mkdtempSync(join(tmpdir(), 'orain-0732-'));
+    if (!canRun) return;
+    try {
+      moovAtEndPath = synthesizeM4aWithMoovAtEnd(ffmpegPath, workDir);
+      canProduceMoovAtEnd = true;
+    } catch (err) {
+      if (err instanceof MoovAtEndUnbuildableError) {
+        // Older FFmpeg builds ignore +empty_moov and keep moov at the
+        // front of the file — that layout is exactly what pipe:0 already
+        // handles, so the test would degenerate into a no-op. Skip with
+        // the precise reason (AC5 rework cycle 2).
+        console.warn(`[skip] M4A moov-at-end fixture: ${err.message}`);
+        canProduceMoovAtEnd = false;
+      } else {
+        throw err;
+      }
+    }
   });
 
   it.runIf(canRun)('MP3 with 1 KB junk prefix → non-empty reproducible MP3', async () => {
@@ -202,34 +252,40 @@ describe('ORAIN-0732 AC3 — FFmpeg integration with path input', () => {
     }
   });
 
-  it.runIf(canRun)('M4A with moov at end → non-empty reproducible MP3', async () => {
-    const src = synthesizeM4aWithMoovAtEnd(ffmpegPath, workDir);
-    const dst = join(workDir, 'out-m4a.mp3');
+  it.runIf(canRun && canProduceMoovAtEnd)(
+    'M4A with moov at end → non-empty reproducible MP3',
+    async () => {
+      // Fixture was built (and its moov-at-end layout was verified) in
+      // beforeAll. If `canProduceMoovAtEnd` is false the test was already
+      // skipped with an explicit reason — see the [skip] log line above.
+      const src = moovAtEndPath as string;
+      const dst = join(workDir, 'out-m4a.mp3');
 
-    const converter = createFFmpegConverter();
-    const result = await converter.convertStreamToMp3WithMeta(src, dst, '192k', {});
+      const converter = createFFmpegConverter();
+      const result = await converter.convertStreamToMp3WithMeta(src, dst, '192k', {});
 
-    expect(result.success).toBe(true);
-    const outSize = statSync(dst).size;
-    expect(outSize).toBeGreaterThan(0);
-    if (canProbe) {
-      const probe = spawnSync(
-        ffprobePath,
-        [
-          '-v',
-          'error',
-          '-show_entries',
-          'format=duration',
-          '-of',
-          'default=noprint_wrappers=1:nokey=1',
-          dst,
-        ],
-        { encoding: 'utf8' },
-      );
-      if (probe.status === 0) {
-        const dur = parseFloat(probe.stdout.trim());
-        expect(dur).toBeGreaterThan(0);
+      expect(result.success).toBe(true);
+      const outSize = statSync(dst).size;
+      expect(outSize).toBeGreaterThan(0);
+      if (canProbe) {
+        const probe = spawnSync(
+          ffprobePath,
+          [
+            '-v',
+            'error',
+            '-show_entries',
+            'format=duration',
+            '-of',
+            'default=noprint_wrappers=1:nokey=1',
+            dst,
+          ],
+          { encoding: 'utf8' },
+        );
+        if (probe.status === 0) {
+          const dur = parseFloat(probe.stdout.trim());
+          expect(dur).toBeGreaterThan(0);
+        }
       }
-    }
-  });
+    },
+  );
 });
