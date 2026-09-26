@@ -188,35 +188,17 @@ export function createNodeFileSystem(): FileSystem {
       const platform = process.platform;
 
       try {
-        if (platform === 'darwin' || platform === 'linux') {
-          // fs.statfsSync is a syscall, not a subprocess exec — unlike `df`,
-          // it isn't blocked by strict Snap confinement's AppArmor exec policy.
+        if (platform === 'darwin' || platform === 'linux' || platform === 'win32') {
+          // fs.statfsSync is a syscall, not a subprocess exec — unlike `df` or
+          // `wmic`, it isn't blocked by strict Snap confinement's AppArmor
+          // exec policy and doesn't need a Windows binary. ORAIN-0725 /
+          // GitHub issue #23: replaces the previous `wmic logicaldisk where
+          // caption='X:' get freespace` spawn on Windows — `wmic` is gone in
+          // Windows 11 24H2+. Node's statfs implementation fills `bavail`
+          // and `bsize` from `GetDiskFreeSpaceExW` on Windows.
           const { statfsSync } = require('fs');
           const stats = statfsSync(path);
           return stats.bavail * stats.bsize;
-        }
-        if (platform === 'win32') {
-          const { spawnSync } = require('child_process');
-          const driveLetter = path.charAt(0);
-          const result = spawnSync(
-            'wmic',
-            [
-              'logicaldisk',
-              'where',
-              `caption='${driveLetter}:'`,
-              'get',
-              'freespace',
-              '/format:csv',
-            ],
-            { encoding: 'utf8' as const },
-          );
-          const lines = (result.stdout ?? '')
-            .split('\n')
-            .filter((l: string) => l.trim() && !l.includes('Node'));
-          if (lines.length > 0) {
-            const parts = lines[lines.length - 1].split(',');
-            return parseInt(parts[1]) || 0;
-          }
         }
       } catch {
         // Fallback: assume unlimited space

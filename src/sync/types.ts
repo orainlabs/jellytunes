@@ -89,6 +89,15 @@ export interface SyncOptions {
   preserveStructure?: boolean;
   /** Destination filesystem — enables compatibility sanitization for FAT32/exFAT/NTFS */
   filesystemType?: FilesystemType;
+  /**
+   * Target platform — injected so the path sanitizer can run on win32 even
+   * when the detected filesystem is `'unknown'`. Defaults to `process.platform`.
+   * ORAIN-0725: Win11 24H2+ removed `wmic`, so filesystem detection can return
+   * `'unknown'` while the destination is still a Windows volume that forbids
+   * `<>:"/\|?*`. The sanitizer must therefore gate on platform, not just
+   * filesystem.
+   */
+  platform?: NodeJS.Platform;
   /** Embed metadata from Jellyfin (default: true) */
   embedMetadata?: boolean;
   /** Cover art mode (default: 'embed') */

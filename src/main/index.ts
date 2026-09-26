@@ -30,6 +30,12 @@ import {
 import { runSnapConnectionProbes, type SnapctlResult } from './snap-connections';
 import { listRemovableMountpoints } from './removable-mounts';
 import { detectLinuxFilesystem } from './filesystem-type';
+import {
+  detectWindowsFilesystem,
+  listWindowsDriveLetters,
+  oncePerSession,
+  realFsutil,
+} from './windows-fsutil';
 import { getOrCreateDeviceId } from './device-id';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
 
@@ -240,39 +246,28 @@ function listMountedVolumesFallback(): UsbDevice[] {
     } else if (platform === 'linux') {
       devices.push(...listLinuxRemovableMounts());
     } else if (platform === 'win32') {
+      // ORAIN-0725 / GitHub issue #23: `wmic` is gone in Windows 11 24H2+.
+      // `fsutil fsinfo drives` ships in C:\Windows\System32 on every supported
+      // Windows install and has no PowerShell startup cost. Errors are logged
+      // once per session — the device-watcher polls every 15 s and would
+      // otherwise log-bomb the file.
       try {
-        const { spawnSync } = require('child_process');
-        const result = spawnSync(
-          'wmic',
-          ['logicaldisk', 'get', 'caption,size,drivetype', '/format:csv'],
-          { encoding: 'utf8', timeout: 5000 },
-        );
-        if (result.error) throw result.error;
-        const output = result.stdout;
-        const lines = output.split('\n').filter((line: string) => line.trim());
-        for (const line of lines) {
-          const parts = line.split(',');
-          if (parts.length >= 3) {
-            const driveLetter = parts[1]?.trim();
-            const driveType = parts[2]?.trim();
-            const sizeStr = parts[3]?.trim();
-            if (driveLetter && (driveType === '2' || driveType === '3')) {
-              const size = parseInt(sizeStr) || 0;
-              if (size > 0 || driveType === '2') {
-                devices.push({
-                  device: driveLetter + '\\',
-                  displayName: driveLetter,
-                  size,
-                  mountpoints: [{ path: driveLetter + '\\' }],
-                  isRemovable: driveType === '2',
-                  vendorName: driveType === '2' ? 'Removable' : 'Local',
-                });
-              }
-            }
-          }
+        const driveLetters = listWindowsDriveLetters(realFsutil);
+        for (const letter of driveLetters) {
+          const mountPath = `${letter}\\`;
+          devices.push({
+            device: mountPath,
+            displayName: letter,
+            size: 0,
+            mountpoints: [{ path: mountPath }],
+            isRemovable: true,
+            vendorName: 'Local',
+          });
         }
       } catch (err) {
-        log.error('Windows drive detection error:', err);
+        oncePerSession(windowsDriveDetectionState, () => {
+          log.error('Windows drive detection error:', err);
+        });
       }
     }
   } catch (err2) {
@@ -295,28 +290,15 @@ async function getDeviceInfo(devicePath: string): Promise<DeviceInfo> {
       return { total, free, used };
     }
     if (platform === 'win32') {
-      const driveLetter = devicePath.charAt(0);
-      const result = spawnSync(
-        'wmic',
-        [
-          'logicaldisk',
-          'where',
-          `caption='${driveLetter}:'`,
-          'get',
-          'size,freespace',
-          '/format:csv',
-        ],
-        { encoding: 'utf8' },
-      );
-      const lines = (result.stdout ?? '')
-        .split('\n')
-        .filter((line: string) => line.trim() && !line.includes('Node'));
-      if (lines.length > 0) {
-        const parts = lines[lines.length - 1].split(',');
-        const free = parseInt(parts[1]) || 0;
-        const size = parseInt(parts[2]) || 0;
-        return { total: size, free, used: size - free };
-      }
+      // ORAIN-0725 / GitHub issue #23: `wmic` is gone in Windows 11 24H2+.
+      // Use `fs.statfsSync` (no subprocess) — Node fills these fields from
+      // `GetDiskFreeSpaceExW`. Returns the values in fragments (clusters ×
+      // sectors-per-cluster), so multiply by `bsize` to get bytes.
+      const stats = fs.statfsSync(devicePath);
+      const total = stats.blocks * stats.bsize;
+      const free = stats.bavail * stats.bsize;
+      const used = total - stats.bfree * stats.bsize;
+      return { total, free, used };
     }
   } catch (error) {
     log.error('Error getting device info:', error);
@@ -351,21 +333,11 @@ async function detectFilesystem(devicePath: string): Promise<string> {
       const label = detectLinuxFilesystem(fs, devicePath);
       if (label !== 'unknown') return label;
     } else if (platform === 'win32') {
-      const driveLetter = devicePath.charAt(0);
-      const result = spawnSync(
-        'wmic',
-        ['logicaldisk', 'where', `caption='${driveLetter}:'`, 'get', 'filesystem', '/format:csv'],
-        { encoding: 'utf8', timeout: 5000 },
-      );
-      const lines = (result.stdout ?? '')
-        .split('\n')
-        .filter((l: string) => l.trim() && !l.toLowerCase().includes('filesystem'));
-      if (lines.length > 0) {
-        const t = (lines[lines.length - 1].split(',').pop() ?? '').trim().toLowerCase();
-        if (t === 'fat32') return 'fat32';
-        if (t === 'exfat') return 'exfat';
-        if (t === 'ntfs') return 'ntfs';
-      }
+      // ORAIN-0725 / GitHub issue #23: `wmic` is gone in Windows 11 24H2+.
+      // Use `fsutil fsinfo volumeinfo <drive>:` which ships in every Windows
+      // install. Returns 'unknown' on any failure, which the sanitizer
+      // handles by gating on platform=win32 (ORAIN-0725).
+      return detectWindowsFilesystem(realFsutil, devicePath);
     }
   } catch (err) {
     log.warn('Filesystem detection error:', err);
@@ -407,6 +379,13 @@ import * as path from 'path';
 let isSyncCancelled = false;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let activeSyncCore: import('../sync').SyncCore | null = null;
+
+// ORAIN-0725 / GitHub issue #23: when Windows drive detection fails (e.g.
+// because the `fsutil` binary is unavailable in some restricted environment),
+// the device-watcher polls every 15 s. Without a dedup, the error log fills
+// with one entry per poll — a log-bomb that hides real problems. The flag
+// is the mutable state for the `oncePerSession` helper in `windows-fsutil.ts`.
+const windowsDriveDetectionState: { logged: boolean } = { logged: false };
 
 // Helper to extract server root from a file path
 // Example: /mediamusic/lib/lib/4 Strings/Album/track.flac -> /mediamusic/lib/lib/

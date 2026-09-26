@@ -13,7 +13,9 @@ export type { FilesystemType };
 /**
  * Default sync options
  */
-export const DEFAULT_SYNC_OPTIONS: Required<SyncOptions> = {
+export const DEFAULT_SYNC_OPTIONS: Omit<Required<SyncOptions>, 'platform'> & {
+  platform: NodeJS.Platform;
+} = {
   convertToMp3: false,
   bitrate: '192k',
   skipExisting: true,
@@ -22,23 +24,65 @@ export const DEFAULT_SYNC_OPTIONS: Required<SyncOptions> = {
   embedMetadata: true,
   coverArtMode: 'embed',
   lyricsMode: 'off',
+  platform: process.platform,
 };
 
 /** Windows/FAT32 reserved filenames that cannot exist on those filesystems */
 const FAT32_RESERVED_RE = /^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\.|$)/i;
 
+/** Filesystems that the Win32 API rejects `< > : " | ? *` on. */
+const WIN32_FILESYSTEMS: readonly FilesystemType[] = ['fat32', 'exfat', 'ntfs'];
+
 /**
- * Sanitize a single path component (directory name or filename) for FAT32/exFAT/NTFS.
- * - Replaces forbidden characters with `_`
- * - Strips trailing dots and spaces (FAT32 silently removes them, causing path mismatches)
- * - Prefixes Windows-reserved names
- * - Truncates to 255 chars while preserving extension
- * - Never returns an empty string (falls back to `_`)
+ * Options for {@link sanitizePathComponent}.
  *
- * For non-Windows-family filesystems the segment is returned unchanged.
+ * `platform` is required because the Win32 file API forbids the same
+ * characters on every filesystem (NTFS, exFAT, FAT32 alike), so on `win32`
+ * sanitization must run regardless of the detected filesystem label. When
+ * `detectFilesystem` returns `'unknown'` on Windows 11 24H2+ (e.g. because
+ * `wmic` no longer exists and the replacement can't classify the volume)
+ * the sanitizer must still strip those chars, or FFmpeg fails on the
+ * resulting un-creatable paths — see ORAIN-0725 / GitHub issue #23.
  */
-export function sanitizePathComponent(segment: string, filesystem: FilesystemType): string {
-  if (filesystem !== 'fat32' && filesystem !== 'exfat' && filesystem !== 'ntfs') return segment;
+export interface SanitizePathComponentOptions {
+  /** Target platform — drives the filesystem gate. Injected so tests do not
+   * depend on `process.platform` at runtime (CI runs on both ubuntu-latest
+   * and windows-latest). */
+  platform: NodeJS.Platform;
+  /** Detected destination filesystem label. Defaults to `'unknown'`. */
+  filesystem?: FilesystemType;
+}
+
+/**
+ * Sanitize a single path component (directory name or filename) for the given
+ * platform + destination filesystem.
+ *
+ * - On `win32`: always sanitizes (Win32 rejects `< > : " | ? *` and trailing
+ *   dots/spaces on every volume). The `filesystem` argument is informational
+ *   on Windows and does not gate sanitization.
+ * - On other platforms (`darwin`, `linux`, etc.): sanitizes only when
+ *   `filesystem` is `'fat32'`, `'exfat'`, or `'ntfs'`. Otherwise the segment
+ *   is returned unchanged so we don't break filenames on ext4/APFS/HFS+.
+ *
+ * Steps when sanitizing:
+ *   - Replaces forbidden chars (`< > : " | ? * \\`) with `_`
+ *   - Strips trailing dots and spaces (FAT32 silently removes them)
+ *   - Strips leading spaces
+ *   - Truncates to 255 chars while preserving the extension
+ *   - Prefixes Windows-reserved names (`CON` → `_CON`)
+ *   - Falls back to `_` if the segment would be empty
+ */
+export function sanitizePathComponent(
+  segment: string,
+  options: SanitizePathComponentOptions,
+): string {
+  const { platform } = options;
+  const filesystem = options.filesystem ?? 'unknown';
+
+  const isWin32Family = platform === 'win32';
+  const isWindowsFilesystem = WIN32_FILESYSTEMS.includes(filesystem);
+
+  if (!isWin32Family && !isWindowsFilesystem) return segment;
 
   let s = segment;
   // Characters forbidden on FAT32/NTFS (forward slash is already a path separator, not in components)
@@ -234,9 +278,13 @@ export function validateSyncConfig(config: unknown): ConfigValidationResult {
 }
 
 /**
- * Merge user options with defaults
+ * Merge user options with defaults. `platform` is filled from `process.platform`
+ * when the caller does not specify it, so callers that don't care about the
+ * win32 sanitization override (mac/linux desktop builds, tests) keep working.
  */
-export function resolveSyncOptions(options?: SyncOptions): Required<SyncOptions> {
+export function resolveSyncOptions(
+  options?: SyncOptions,
+): Omit<Required<SyncOptions>, 'platform'> & { platform: NodeJS.Platform } {
   return {
     ...DEFAULT_SYNC_OPTIONS,
     ...options,

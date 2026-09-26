@@ -225,6 +225,13 @@ export interface SyncDependencies {
   fs: FileSystem;
   converter: AudioConverter;
   logger?: SyncLogger;
+  /**
+   * Override for `process.platform`. Used by tests to inject `win32` /
+   * `linux` / `darwin` without monkey-patching the global. Defaults to
+   * `process.platform` at construction time. ORAIN-0725: the path sanitizer
+   * gates on platform, so the platform the SyncCore runs under matters.
+   */
+  platform?: NodeJS.Platform;
   /** Mock database for testing. If provided, overrides getSyncedTracksForDevice. */
   db?: MockDatabase;
   /**
@@ -272,6 +279,14 @@ class SyncCoreImpl {
   private progressEmitter: ProgressEmitter;
   private cancellation: CancellationController;
   private serverRootPath: string;
+  /**
+   * Target platform — drives whether the path sanitizer runs on segments
+   * even when `filesystemType` is `'unknown'`. ORAIN-0725: Windows 11 24H2+
+   * removed `wmic`, so filesystem detection on Win32 can return `'unknown'`
+   * while the volume still rejects `<>:"/\|?*`. Injected so tests don't read
+   * `process.platform` at test time.
+   */
+  private platform: NodeJS.Platform;
   private currentPhase: SyncPhase = 'fetching';
   /** Tracks album directories that have already received a cover.jpg (for companion mode dedup) */
   private processedCoverDirs = new Set<string>();
@@ -354,6 +369,8 @@ class SyncCoreImpl {
     this.cancellation = createCancellationController();
     // Default server root path if not provided
     this.serverRootPath = config.serverRootPath ?? '';
+    // Default platform from process.platform — overridable through deps for tests.
+    this.platform = (deps?.platform as NodeJS.Platform | undefined) ?? process.platform;
   }
 
   /**
@@ -1660,7 +1677,9 @@ class SyncCoreImpl {
       const parts = serverRelativePath.split('/');
       if (parts.length > 1) {
         parts.pop(); // remove filename
-        const sanitized = parts.map((p) => sanitizePathComponent(p, filesystemType));
+        const sanitized = parts.map((p) =>
+          sanitizePathComponent(p, { platform: this.platform, filesystem: filesystemType }),
+        );
         return `${basePath}/${sanitized.join('/')}`;
       }
       return basePath;
@@ -1672,7 +1691,7 @@ class SyncCoreImpl {
     if (track.artists?.[0]) {
       const artist = sanitizePathComponent(
         track.artists[0].replace(/[<>:"/\\|?*]/g, '_').slice(0, 100),
-        filesystemType,
+        { platform: this.platform, filesystem: filesystemType },
       );
       parts.push(artist);
     }
@@ -1680,7 +1699,9 @@ class SyncCoreImpl {
     if (track.album) {
       let folder = track.album.replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
       if (track.year) folder += ` (${track.year})`;
-      parts.push(sanitizePathComponent(folder, filesystemType));
+      parts.push(
+        sanitizePathComponent(folder, { platform: this.platform, filesystem: filesystemType }),
+      );
     }
 
     return parts.join('/');
@@ -1723,8 +1744,12 @@ class SyncCoreImpl {
     }
 
     // Apply filesystem-specific sanitization (handles FAT32/exFAT/NTFS invalid chars,
-    // trailing dots/spaces, reserved names, length limits)
-    filename = sanitizePathComponent(filename, options.filesystemType ?? 'unknown');
+    // trailing dots/spaces, reserved names, length limits). Platform is injected
+    // so win32 sanitizes even when filesystemType is 'unknown' (ORAIN-0725).
+    filename = sanitizePathComponent(filename, {
+      platform: this.platform,
+      filesystem: options.filesystemType,
+    });
 
     // Fallback: replace any remaining forbidden chars for non-Windows filesystems
     filename = filename.replace(/[<>:"|?*]/g, '_');
@@ -1791,12 +1816,16 @@ class SyncCoreImpl {
           }
 
           // Apply the same per-component sanitization used when writing files, so
-          // M3U8 entries match the actual paths on disk (critical for FAT32/exFAT/NTFS)
+          // M3U8 entries match the actual paths on disk (critical for FAT32/exFAT/NTFS).
+          // Platform injection is required by ORAIN-0725 so win32 sanitizes even
+          // when filesystemType is 'unknown'.
           const fs = options.filesystemType ?? 'unknown';
-          if (fs !== 'unknown') {
+          if (fs !== 'unknown' || this.platform === 'win32') {
             relativePath = relativePath
               .split('/')
-              .map((segment) => sanitizePathComponent(segment, fs))
+              .map((segment) =>
+                sanitizePathComponent(segment, { platform: this.platform, filesystem: fs }),
+              )
               .join('/');
           }
 
