@@ -108,6 +108,7 @@ describe('stripCoverArt (AC-2 implementation guards)', () => {
     vi.spyOn(require('child_process'), 'spawn').mockImplementation(() => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
       setTimeout(() => proc.emit('error', new Error('spawn ENOENT')), 0);
       return proc;
     });
@@ -130,6 +131,7 @@ describe('stripCoverArt (AC-2 implementation guards)', () => {
     vi.spyOn(require('child_process'), 'spawn').mockImplementation(() => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
       setTimeout(() => proc.emit('close', 0), 0);
       return proc;
     });

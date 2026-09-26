@@ -36,6 +36,7 @@ describe('stripCoverArt (ORAIN-0476 fix)', () => {
     spawnMock.mockImplementation(() => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
       setTimeout(() => proc.emit('close', 0), 0);
       return proc;
     });
@@ -67,6 +68,7 @@ describe('stripCoverArt (ORAIN-0476 fix)', () => {
     spawnMock.mockImplementation(() => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
       setTimeout(() => proc.emit('close', 0), 0);
       return proc;
     });
@@ -86,6 +88,7 @@ describe('stripCoverArt (ORAIN-0476 fix)', () => {
     spawnMock.mockImplementation(() => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
       setTimeout(() => proc.emit('error', new Error('ENOENT')), 0);
       return proc;
     });
@@ -103,6 +106,7 @@ describe('stripCoverArt (ORAIN-0476 fix)', () => {
     spawnMock.mockImplementation(() => {
       const proc = new EventEmitter() as any;
       proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
       setTimeout(() => proc.emit('close', 1), 0);
       return proc;
     });

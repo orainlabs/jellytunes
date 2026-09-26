@@ -420,6 +420,38 @@ function moveFileSync(src: string, dest: string): void {
   }
 }
 
+/**
+ * Extract the last non-empty line of FFmpeg's stderr, truncated to
+ * `maxLength` characters. The result is meant for user-facing error
+ * messages; the full stderr is still logged via the SyncLogger so nothing
+ * is lost for diagnostics.
+ *
+ * If `stderr` is empty or contains only whitespace, returns `undefined` so
+ * the caller can fall back to a plain exit-code message.
+ */
+export function lastFFmpegError(stderr: string, maxLength = 200): string | undefined {
+  if (!stderr) return undefined;
+  // Split on either LF or CRLF, drop trailing blanks.
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length === 0) return undefined;
+  const last = lines[lines.length - 1];
+  return last.length > maxLength ? last.slice(0, maxLength) : last;
+}
+
+/**
+ * Build the user-facing error message for an FFmpeg failure. Prefixes the
+ * exit code and, when stderr has a non-empty trailing line, appends that
+ * line so the "Sync failed" popup can show what FFmpeg actually complained
+ * about (e.g. "No such file or directory").
+ */
+export function ffmpegErrorMessage(code: number, stderr: string): string {
+  const tail = lastFFmpegError(stderr);
+  return tail ? `FFmpeg exited with code ${code}: ${tail}` : `FFmpeg exited with code ${code}`;
+}
+
 export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
   const ffmpegPath = resolveFFmpegPath();
   const ffprobePath = resolveFFprobePath();
@@ -500,7 +532,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           }
           resolve({
             success: code === 0,
-            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+            error: code !== 0 ? ffmpegErrorMessage(code, stderr) : undefined,
           });
         });
 
@@ -612,7 +644,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           }
           resolve({
             success: code === 0,
-            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+            error: code !== 0 ? ffmpegErrorMessage(code, stderr) : undefined,
           });
         });
 
@@ -764,7 +796,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           }
           resolve({
             success: code === 0,
-            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+            error: code !== 0 ? ffmpegErrorMessage(code, stderr) : undefined,
           });
         });
       });
@@ -901,7 +933,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
               }
             resolve({
               success: false,
-              error: code !== 0 ? `FFmpeg exited with code ${code}: ${stderrOutput}` : undefined,
+              error: code !== 0 ? ffmpegErrorMessage(code, stderrOutput) : undefined,
             });
           }
         });
@@ -938,7 +970,12 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           tempOutputPath,
         ];
 
-        const process = spawn(ffmpegPath, args, { stdio: 'ignore' });
+        const process = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+
+        let stderr = '';
+        process.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString();
+        });
 
         process.on('error', (err: Error) => {
           if (useTempOutput) {
@@ -979,9 +1016,14 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
               }
             }
           }
+          if (code !== 0) {
+            logger?.error(
+              `[sync-files] stripCoverArt FFmpeg failed for ${outputPath}: code=${code}\nargs: ${args.join(' ')}\nstderr: ${stderr}`,
+            );
+          }
           resolve({
             success: code === 0,
-            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+            error: code !== 0 ? ffmpegErrorMessage(code, stderr) : undefined,
           });
         });
       });
@@ -1054,7 +1096,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
             }
           resolve({
             success: false,
-            error: code !== 0 ? `FFmpeg exited with code ${code}: ${stderrOutput}` : undefined,
+            error: code !== 0 ? ffmpegErrorMessage(code, stderrOutput) : undefined,
           });
         });
       });
