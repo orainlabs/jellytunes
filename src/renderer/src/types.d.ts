@@ -232,6 +232,8 @@ interface Api {
   logWarn: (message: string) => void;
   logInfo: (message: string) => void;
   getLogPath: () => Promise<string>;
+  /** ORAIN-0727: open the system file manager on the current log file. */
+  openLogFolder: () => Promise<{ success: boolean; error?: string }>;
   reportBug: () => Promise<{ success: boolean; error?: string }>;
   checkForUpdates: (force?: boolean) => Promise<{
     updateAvailable: boolean;

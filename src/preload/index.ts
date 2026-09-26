@@ -294,6 +294,12 @@ const api = {
   // Return the local log file path (shown to the user for transparency)
   getLogPath: (): Promise<string> => ipcRenderer.invoke('log:getPath'),
 
+  // Open the system file manager on the current log file. The renderer
+  // cannot pass a path — main resolves it from electron-log itself
+  // (ORAIN-0727, security: no arbitrary shell.showItemInFolder target).
+  openLogFolder: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('log:openFolder'),
+
   // Open a pre-filled GitHub issue in the browser with recent log lines
   reportBug: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('bug:report'),
 

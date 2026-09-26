@@ -37,6 +37,7 @@ import {
   realFsutil,
 } from './windows-fsutil';
 import { getOrCreateDeviceId } from './device-id';
+import { showLogFileInFolder } from './log-folder';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
 
 // ─── Snap detection (ORAIN-0573) ─────────────────────────────────────────
@@ -768,6 +769,20 @@ ipcMain.on('log:write', (_event, level: string, message: string) => {
 
 // Expose log file path so the user can open/inspect it (transparency)
 ipcMain.handle('log:getPath', () => log.transports.file.getFile().path);
+
+// ORAIN-0727: open the system file manager on the current log file. The
+// renderer is not allowed to choose the path — main resolves it from
+// `electron-log` itself, so a malicious renderer cannot point us at an
+// arbitrary file via `shell.showItemInFolder`. Tested in log-folder.test.ts.
+ipcMain.handle('log:openFolder', () => {
+  try {
+    showLogFileInFolder(undefined, () => log.transports.file.getFile().path, shell);
+    return { success: true };
+  } catch (err) {
+    log.error('log:openFolder error:', err);
+    return { success: false, error: String(err) };
+  }
+});
 
 // Open pre-filled GitHub bug report in the system browser
 ipcMain.handle('bug:report', async () => {

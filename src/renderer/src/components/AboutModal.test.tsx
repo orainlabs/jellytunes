@@ -19,6 +19,8 @@ beforeEach(() => {
     logWarn: vi.fn(),
     logInfo: vi.fn(),
     getLogPath: vi.fn().mockResolvedValue('/mock/log'),
+    // ORAIN-0727: open the system file manager on the log file folder.
+    openLogFolder: vi.fn().mockResolvedValue(undefined),
     isSnap: vi.fn().mockResolvedValue(false),
     // ORAIN-0578 T2: AboutModal consults this on mount to render the
     // missing-interfaces section. Empty report is the common case.
@@ -175,5 +177,26 @@ describe('AboutModal', () => {
       screen.getByTestId('about-close-button').click();
     });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // ORAIN-0727 AC1/AC3: render the log file path returned by getLogPath so
+  // users can find it for bug reports.
+  it('renders the log path returned by getLogPath', async () => {
+    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+    render(<AboutModal onClose={vi.fn()} />);
+    expect(await screen.findByText('/var/log/jellytunes/main.log')).toBeInTheDocument();
+  });
+
+  // ORAIN-0727 AC1/AC3: a button next to the path opens the folder so users
+  // do not have to navigate to it manually.
+  it('calls openLogFolder when the open-folder button is clicked', async () => {
+    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+    window.api.openLogFolder = vi.fn().mockResolvedValue(undefined);
+    render(<AboutModal onClose={vi.fn()} />);
+    await screen.findByText('/var/log/jellytunes/main.log');
+    await act(async () => {
+      screen.getByTestId('open-log-folder-button').click();
+    });
+    expect(window.api.openLogFolder).toHaveBeenCalledTimes(1);
   });
 });

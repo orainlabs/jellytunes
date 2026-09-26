@@ -27,6 +27,9 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   const [snapPermissions, setSnapPermissions] = useState<SnapPermissionsReport>(
     EMPTY_SNAP_PERMISSIONS_REPORT,
   );
+  // ORAIN-0727: the absolute log file path is shown so users can include it
+  // (or open it) when filing a bug report.
+  const [logPath, setLogPath] = useState<string>('');
 
   useEffect(() => {
     window.api
@@ -51,6 +54,12 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     window.api
       .getPreferences()
       .then((p) => setAnalyticsEnabled(p.analyticsEnabled))
+      .catch(() => {});
+    // ORAIN-0727: load the current log file path on mount so it is visible
+    // by the time the user decides to attach the log to a bug report.
+    window.api
+      .getLogPath()
+      .then(setLogPath)
       .catch(() => {});
     // ORAIN-0578 T2: load the permission report so the section can render
     // the missing interfaces with their connect commands.
@@ -94,6 +103,13 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     const next = !analyticsEnabled;
     setAnalyticsEnabled(next);
     await window.api.setPreferences({ analyticsEnabled: next });
+  };
+
+  // ORAIN-0727 AC1: open the OS file manager on the log file so users do
+  // not have to navigate to the path manually. The renderer never supplies
+  // the path — main resolves it from electron-log (see log-folder.ts).
+  const handleOpenLogFolder = async (): Promise<void> => {
+    await window.api.openLogFolder();
   };
 
   return (
@@ -199,6 +215,29 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           >
             Support on Ko-fi ☕
           </a>
+        </div>
+
+        {/* ── ORAIN-0727: log file location ── */}
+        <div
+          data-testid="log-path-section"
+          className="flex flex-col gap-2 mb-4 px-3 py-3 rounded-lg bg-surface_container_highest border border-outline_variant/30"
+        >
+          <span className="text-caption text-on_surface_variant uppercase tracking-wide">
+            Log path
+          </span>
+          <p
+            data-testid="log-path"
+            className="text-caption font-mono text-on_surface break-all select-text"
+          >
+            {logPath || '(loading…)'}
+          </p>
+          <button
+            data-testid="open-log-folder-button"
+            onClick={handleOpenLogFolder}
+            className="self-start px-3 py-1.5 text-body-sm text-primary border border-primary_container/40 hover:bg-primary_container/10 rounded transition-colors"
+          >
+            Open folder
+          </button>
         </div>
 
         {/* ── Analytics toggle ── */}

@@ -30,7 +30,7 @@ If applicable, add screenshots to help explain your problem.
 - Jellyfin server version: [e.g. 10.9.0]
 
 **Log output**
-If possible, paste relevant lines from the log file. You can find it via About > Log path.
+If possible, paste relevant lines from the log file. You can find it via About > Log path, and use the **Open folder** button to reveal it in your file manager.
 
 **Additional context**
 Add any other context about the problem here.

@@ -157,6 +157,8 @@ export interface MockWindowApi {
   logWarn: (message: string) => void;
   logInfo: (message: string) => void;
   getLogPath: () => Promise<string>;
+  /** ORAIN-0727: open the system file manager on the current log file. */
+  openLogFolder: () => Promise<{ success: boolean; error?: string }>;
   reportBug: () => Promise<{ success: boolean; error?: string }>;
   checkForUpdates: (
     force?: boolean,
@@ -201,6 +203,7 @@ export function createMockWindowApi(overrides?: Partial<MockWindowApi>): MockWin
     logWarn: () => {},
     logInfo: () => {},
     getLogPath: () => Promise.resolve(''),
+    openLogFolder: () => Promise.resolve({ success: true }),
     reportBug: () => Promise.resolve({ success: false }),
     checkForUpdates: () =>
       Promise.resolve({ updateAvailable: false, latestVersion: '', releaseUrl: '' }),
