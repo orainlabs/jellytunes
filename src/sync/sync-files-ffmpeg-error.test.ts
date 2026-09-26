@@ -127,6 +127,46 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
   // AC2 + AC4: every method that sync-core calls must surface stderr
   // ---------------------------------------------------------------------------
 
+  describe('convertToMp3', () => {
+    it('AC2: includes last non-empty stderr line in error when FFmpeg exits with code 1', async () => {
+      const stderrText = 'ffmpeg version 6.1\nNo such file or directory\n';
+      const mock = mockSpawnWithStderr([stderrText], 1);
+      const errorLogs: string[] = [];
+      const logger: SyncLogger = {
+        info: () => {},
+        warn: () => {},
+        debug: () => {},
+        error: (msg: string) => {
+          errorLogs.push(msg);
+        },
+      };
+      const converter = createFFmpegConverter(logger);
+
+      try {
+        const result = await converter.convertToMp3('/abs/in.flac', '/abs/out.mp3', '192k');
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('FFmpeg exited with code 1: No such file or directory');
+        // AC3: full stderr reaches the logger
+        expect(errorLogs).toHaveLength(1);
+        expect(errorLogs[0]).toContain(stderrText);
+      } finally {
+        mock.restore();
+      }
+    });
+
+    it('AC4: preserves plain "FFmpeg exited with code N" when stderr is empty', async () => {
+      const mock = mockSpawnWithStderr([], 1);
+      const converter = createFFmpegConverter();
+      try {
+        const result = await converter.convertToMp3('/abs/in.flac', '/abs/out.mp3', '192k');
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('FFmpeg exited with code 1');
+      } finally {
+        mock.restore();
+      }
+    });
+  });
+
   describe('convertStreamToMp3WithMeta', () => {
     it('AC2: includes last non-empty stderr line in error when FFmpeg exits with code 1', async () => {
       const stderrText = 'ffmpeg version 6.1\n  Stream #0:0: Audio\nNo such file or directory\n';

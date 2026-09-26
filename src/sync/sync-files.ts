@@ -476,7 +476,16 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           output,
         ];
 
-        const process = spawn(ffmpegPath, args, { stdio: 'ignore' });
+        // stdio: ['ignore', 'ignore', 'pipe'] — capture stderr so the popup can
+        // surface the real FFmpeg failure cause (e.g. "No such file or directory")
+        // instead of just the exit code. Mirrors the pattern used by tagFile,
+        // stripCoverArt, embedLyrics, embedReplayGain and convertStreamToMp3*.
+        const process = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+
+        let stderr = '';
+        process.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString();
+        });
 
         process.on('error', (err: Error) => {
           resolve({
@@ -486,9 +495,14 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         });
 
         process.on('close', (code: number) => {
+          if (code !== 0) {
+            logger?.error(
+              `[sync-files] convertToMp3 FFmpeg failed for ${output}: code=${code}\nargs: ${args.join(' ')}\nstderr: ${stderr}`,
+            );
+          }
           resolve({
             success: code === 0,
-            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+            error: code !== 0 ? ffmpegErrorMessage(code, stderr) : undefined,
           });
         });
       });
