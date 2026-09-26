@@ -2263,21 +2263,25 @@ class SyncCoreImpl {
       }
     ).contentType;
 
-    // Pipe stream to temp file — handle errors to prevent hangs on disk-full.
-    // Use 'finish' event (not 'end') to ensure writable has flushed kernel buffers
-    // before we read metadata from the file. Also resolves race condition where
-    // readable 'end' fires before writable finishes flushing.
-    const writeStream = await this.deps.fs.createWriteStream(tmpPath);
-    await new Promise<void>((resolve, reject) => {
-      writeStream.on('error', reject);
-      stream.on('error', reject);
-      stream.pipe(writeStream);
-      writeStream.on('finish', resolve);
-    });
-
-    // tmpPath is on disk from here on — wrap everything through conversion in
-    // try/finally so cancellation (or any other error) can't leak it.
+    // ORAIN-0732 AC6 (cycle 2): wrap the download pipe and the conversion in
+    // a single try/finally so the temp file is unlinked on EVERY exit path —
+    // download failure, cancellation, conversion failure, or success. The
+    // pipe previously lived outside the try block, so a stream error
+    // (network, disk full, cancelled response) rejected the promise before
+    // entering the try, leaking the partial temp file in os.tmpdir().
     try {
+      // Pipe stream to temp file — handle errors to prevent hangs on disk-full.
+      // Use 'finish' event (not 'end') to ensure writable has flushed kernel buffers
+      // before we read metadata from the file. Also resolves race condition where
+      // readable 'end' fires before writable finishes flushing.
+      const writeStream = await this.deps.fs.createWriteStream(tmpPath);
+      await new Promise<void>((resolve, reject) => {
+        writeStream.on('error', reject);
+        stream.on('error', reject);
+        stream.pipe(writeStream);
+        writeStream.on('finish', resolve);
+      });
+
       // Check for cancellation after download stream is buffered, before expensive conversion.
       this.cancellation.throwIfCancelled();
 

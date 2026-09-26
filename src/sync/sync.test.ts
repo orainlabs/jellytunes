@@ -1500,6 +1500,81 @@ describe('Error Handling', () => {
       expect(tmpPath).not.toMatch(/\.xyz$/);
       expect(tmpPath).not.toMatch(/\.(mp3|flac|m4a|aac|ogg|wma|opus|wav)$/);
     });
+
+    // ORAIN-0732 AC6 (cycle 2): if the download stream rejects before the
+    // file finishes writing (network error, disk full, cancelled response),
+    // the temp file under os.tmpdir() MUST be unlinked — otherwise it leaks
+    // as an orphan every time a sync fails. Before the fix, the try/finally
+    // only wrapped the conversion phase; the pipe lived above the try and
+    // a stream error rejected the promise before entering it.
+    it('convertAndCopy unlinks the temp file when the download stream errors', async () => {
+      const { Readable } = require('stream');
+      // Spy on fs.unlink so we can assert the temp path was cleaned up even
+      // though the sync itself errored.
+      const unlinkedPaths: string[] = [];
+      const mockFs = {
+        ...createMockFileSystem(),
+        unlink: async (path: string) => {
+          unlinkedPaths.push(path);
+          await createMockFileSystem().unlink(path);
+        },
+      };
+
+      const track: TrackInfo = {
+        id: 'track-ac6',
+        name: 'Track AC6',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/Artist/Album/track.flac',
+        format: 'flac',
+        size: 100,
+        trackNumber: 1,
+      };
+
+      const api = createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+        // Stream that errors mid-flight — this is the failure mode the
+        // old code leaked a temp file for.
+        downloadItemStream: async () => {
+          const stream = new Readable({ read() {} });
+          setImmediate(() => stream.emit('error', new Error('network down')));
+          return stream;
+        },
+      });
+
+      const converter: AudioConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: true }),
+        tagFile: async () => ({ success: true }),
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
+      };
+
+      const deps: SyncDependencies = { api, fs: mockFs, converter };
+      const core = createSyncCore(validConfig, deps);
+
+      const result = await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/music',
+        options: { convertToMp3: true },
+      });
+
+      // Sync itself reports the track as failed — but the temp file must
+      // still have been unlinked. Without the cycle 2 fix the unlink never
+      // ran because the promise rejected before entering the try.
+      expect(result.tracksFailed.length).toBe(1);
+      expect(result.tracksFailed[0]).toBe(track.id);
+      const tmpPaths = unlinkedPaths.filter((p) => p.includes('jellytunes_conv_'));
+      expect(tmpPaths.length).toBeGreaterThan(0);
+      for (const p of tmpPaths) {
+        expect(p.startsWith(require('os').tmpdir())).toBe(true);
+      }
+    });
   });
 
   describe('tagFile error handling', () => {
