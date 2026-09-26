@@ -28,6 +28,7 @@ import type {
 import path from 'path';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
+import { buildConvertTempPath } from './temp-path';
 
 import {
   validateSyncConfig,
@@ -2240,19 +2241,17 @@ class SyncCoreImpl {
     embedMetadata: boolean,
     coverArtMode: CoverArtMode,
   ): Promise<void> {
-    // ORAIN-0732 AC2: derive the original extension from track.format so
-    // FFmpeg can sniff by extension. Returns undefined for empty / unsafe
-    // values so we never invent one. Lowercased, leading dot stripped,
-    // restricted to [a-z0-9]. When undefined, FFmpeg still content-sniffs.
-    const formatExt = (() => {
-      const f = track.format?.trim().toLowerCase().replace(/^\./, '');
-      return f && /^[a-z0-9]+$/.test(f) ? `.${f}` : '';
-    })();
-
-    // Buffer stream to temp file so we can read original file metadata before converting.
-    // The extension suffix is appended when track.format is well-formed so FFmpeg
-    // can use the file: path to seek and sniff (ORAIN-0732).
-    const tmpPath = `${outputPath}.jt-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}${formatExt}`;
+    // ORAIN-0732 AC4: extension is appended only when track.format names a
+    // recognised audio format from ALL_AUDIO_EXTENSIONS; unknown / unsafe /
+    // empty values yield a bare temp path so FFmpeg falls back to content
+    // sniffing. The membership check and `os.tmpdir()` placement live in
+    // `buildConvertTempPath` (tested by temp-path.test.ts).
+    //
+    // ORAIN-0732 AC3: the temp file lives under os.tmpdir(), NEVER next to
+    // `outputPath` (USB). Reasons: USB wear on FAT32/exFAT, crash leftovers
+    // surfacing as broken tracks on the player, Windows MAX_PATH on FAT32,
+    // and Snap confinement blocking writes under $HOME on removable-media.
+    const tmpPath = buildConvertTempPath(track.format, Date.now());
     const stream = await this.deps.api.downloadItemStream(track.id);
 
     // Capture Content-Type off the stream before piping (ORAIN-0729). The

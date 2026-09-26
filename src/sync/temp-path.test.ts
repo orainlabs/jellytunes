@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildTempPaths } from './temp-path';
+import { buildTempPaths, buildConvertTempPath } from './temp-path';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -58,5 +58,59 @@ describe('buildTempPaths', () => {
     const tmpFile = tempPath.replace(dir, '').replace(/^[\\/]/, '');
     expect(join(dir, srcFile)).toBe(sourcePath);
     expect(join(dir, tmpFile)).toBe(tempPath);
+  });
+});
+
+describe('buildConvertTempPath', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // ORAIN-0732 AC3: the temp file used for conversion MUST live under
+  // os.tmpdir(), never next to the destination (USB drive). This protects
+  // against (1) FAT32/exFAT wear, (2) crash leftovers visible to music
+  // players, (3) Windows MAX_PATH on FAT32, (4) Snap confinement blocks.
+  it('AC3: returns a path under os.tmpdir() (not next to the destination)', () => {
+    const dest = '/Volumes/USB/Music/Artist/Album/01 - Track.mp3';
+    const path = buildConvertTempPath('flac', 1700000000000);
+    expect(path.startsWith(tmpdir())).toBe(true);
+    expect(path.startsWith(dest)).toBe(false);
+  });
+
+  // ORAIN-0732 AC4: only emit a recognised audio extension. Unknown formats,
+  // empty values, or values not in ALL_AUDIO_EXTENSIONS must yield a bare
+  // temp path (no extension) so FFmpeg falls back to content-sniffing.
+  it('AC4: appends .flac when track.format is a known audio extension', () => {
+    expect(buildConvertTempPath('flac', 1)).toMatch(/\.flac$/);
+    expect(buildConvertTempPath('M4A', 1)).toMatch(/\.m4a$/);
+    expect(buildConvertTempPath('.mp3', 1)).toMatch(/\.mp3$/);
+  });
+
+  it('AC4: returns no extension for unknown / unsafe formats', () => {
+    // 'xyz' is well-formed but not in ALL_AUDIO_EXTENSIONS — must drop it.
+    const p1 = buildConvertTempPath('xyz', 1);
+    expect(p1).not.toMatch(/\.xyz$/);
+    // Empty / whitespace — must drop.
+    const p2 = buildConvertTempPath('', 1);
+    expect(p2).not.toMatch(/\.[a-z0-9]+$/);
+    const p3 = buildConvertTempPath('   ', 1);
+    expect(p3).not.toMatch(/\.[a-z0-9]+$/);
+    // Comma list — spec says take the first value.
+    expect(buildConvertTempPath('mp3,mp4', 1)).not.toMatch(/\.mp4$/);
+    // Path-traversal shaped strings must never become extensions.
+    expect(buildConvertTempPath('../etc/passwd', 1)).not.toMatch(/\.\.\/etc\/passwd$/);
+  });
+
+  it('AC4: comma list keeps the first known extension', () => {
+    // 'flac,mp3' — first value is flac (known) → .flac
+    expect(buildConvertTempPath('flac,mp3', 1)).toMatch(/\.flac$/);
+    // 'unknown,flac' — first value is unknown → no extension
+    expect(buildConvertTempPath('unknown,flac', 1)).not.toMatch(/\.flac$/);
+  });
+
+  it('produces distinct paths across calls (timestamp + random suffix)', () => {
+    const a = buildConvertTempPath('flac', 1700000000000);
+    const b = buildConvertTempPath('flac', 1700000000001);
+    expect(a).not.toBe(b);
   });
 });

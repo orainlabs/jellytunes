@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { PassThrough } from 'stream';
 import { createFFmpegConverter } from './sync-files';
+import { buildConvertTempPath } from './temp-path';
 import type { SyncLogger } from './types';
 
 interface SpawnCall {
@@ -90,14 +91,18 @@ describe('ORAIN-0732 AC1 — convert*ToMp3 reads input by path', () => {
   });
 });
 
-describe('ORAIN-0732 AC2 — temp path extension helper', () => {
-  // Mirror the helper logic from sync-core. Keeping it inline here as a
-  // contract test — if sync-core's helper changes, this test must be updated
-  // alongside.
+describe('ORAIN-0732 AC2/AC4 — temp path extension helper', () => {
+  // The contract is now expressed via `buildConvertTempPath` from
+  // ./temp-path (the production helper), so the AC2/AC4 invariants are
+  // exercised against the real implementation rather than a regex
+  // duplicate that drift apart from sync-core.
   function deriveTempExt(format: string | undefined): string | undefined {
-    if (!format) return undefined;
-    const trimmed = format.trim().toLowerCase().replace(/^\./, '');
-    return /^[a-z0-9]+$/.test(trimmed) ? `.${trimmed}` : undefined;
+    const result = buildConvertTempPath(format, 1) as string;
+    const dot = result.lastIndexOf('.');
+    // No extension at all → undefined.
+    if (dot < 0 || dot === result.length - 1) return undefined;
+    const ext = result.slice(dot + 1);
+    return /^[a-z0-9]+$/.test(ext) ? `.${ext}` : undefined;
   }
 
   it('lowercases and strips leading dot', () => {
@@ -114,14 +119,25 @@ describe('ORAIN-0732 AC2 — temp path extension helper', () => {
     expect(deriveTempExt('not a format')).toBeUndefined();
     expect(deriveTempExt('../etc/passwd')).toBeUndefined();
   });
-});
 
-describe('ORAIN-0732 AC4 — temp file cleanup invariant', () => {
-  it('documents the sync-core try/finally invariant', () => {
-    // The invariant is enforced in sync-core.convertAndCopy: the conversion
-    // call is wrapped in try/finally that always unlinks tmpPath. We do not
-    // duplicate that contract here — it is exercised by sync.test.ts and the
-    // existing ORAIN-0729 diagnostic flow. This test anchors the AC.
-    expect(true).toBe(true);
+  // AC4 rework cycle 1 — membership check against ALL_AUDIO_EXTENSIONS.
+  // The old regex-only form accepted any [a-z0-9]+ value; the new helper
+  // must drop unknown formats even when well-formed so FFmpeg falls back
+  // to content-sniffing rather than mis-sniffing the temp file.
+  it('AC4: drops unknown / well-formed formats not in ALL_AUDIO_EXTENSIONS', () => {
+    expect(deriveTempExt('xyz')).toBeUndefined();
+    expect(deriveTempExt('unknown')).toBeUndefined();
+    expect(deriveTempExt('foobar')).toBeUndefined();
+    // Path-traversal-shaped strings: still rejected, and now also by the
+    // membership check (not just the regex).
+    expect(deriveTempExt('../../etc/passwd')).toBeUndefined();
+  });
+
+  // AC4 rework cycle 1 — comma-separated lists. Spec: take the first value.
+  it('AC4: comma-separated lists use only the first value', () => {
+    // 'mp3,mp4' — first is known (mp3), second unknown; spec says keep .mp3
+    expect(deriveTempExt('mp3,mp4')).toBe('.mp3');
+    // 'unknown,flac' — first is unknown → drop entirely
+    expect(deriveTempExt('unknown,flac')).toBeUndefined();
   });
 });

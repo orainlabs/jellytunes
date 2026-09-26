@@ -1369,6 +1369,139 @@ describe('Error Handling', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // ORAIN-0732 rework cycle 1: AC3 + AC4 contracts on the production path.
+  // These guard the integration end-to-end so a future refactor cannot
+  // reintroduce the temp-next-to-output bug or invent an extension from
+  // a non-audio format string.
+  // ---------------------------------------------------------------------------
+  describe('ORAIN-0732 AC3/AC4: convert temp path lives in os.tmpdir() with known extension', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('convertAndCopy writes the FFmpeg input to os.tmpdir(), not next to the destination', async () => {
+      // Capture every createWriteStream call to inspect the chosen tmpPath.
+      const writePaths: string[] = [];
+      const { Readable } = require('stream');
+
+      const track: TrackInfo = {
+        id: 'track-ac3',
+        name: 'Track AC3',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/Artist/Album/track.flac',
+        format: 'flac',
+        size: 100,
+        trackNumber: 1,
+      };
+
+      const api = createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+
+      const converter: AudioConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async (inputPath: string) => {
+          // Capture the path FFmpeg received — this is the temp path the
+          // production code chose. It MUST live under os.tmpdir().
+          writePaths.push(inputPath);
+          return { success: true };
+        },
+        tagFile: async () => ({ success: true }),
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
+      };
+
+      const mockFs = createMockFileSystem();
+
+      const deps: SyncDependencies = { api, fs: mockFs, converter };
+      const core = createSyncCore(validConfig, deps);
+
+      const dest = '/Volumes/USB/Music/Artist/Album/track.mp3';
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/music',
+        options: { convertToMp3: true },
+      });
+
+      // The converter was called exactly once, with the temp path.
+      expect(writePaths.length).toBeGreaterThan(0);
+      const tmpPath = writePaths[0];
+      // AC3: temp file MUST be under os.tmpdir(), not next to the destination.
+      expect(tmpPath.startsWith(require('os').tmpdir())).toBe(true);
+      expect(tmpPath.startsWith(dest)).toBe(false);
+      expect(tmpPath.startsWith('/Volumes/USB/')).toBe(false);
+      // AC4: with track.format = 'flac' (a known extension), the temp path
+      // gets .flac so FFmpeg can seek/sniff.
+      expect(tmpPath).toMatch(/\.flac$/);
+    });
+
+    it('convertAndCopy drops unknown / unsafe formats (no invented extension)', async () => {
+      const { Readable } = require('stream');
+      const inputPaths: string[] = [];
+
+      const track: TrackInfo = {
+        id: 'track-ac4',
+        name: 'Track AC4',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/Artist/Album/track.xyz', // unknown server extension
+        format: 'xyz', // unknown format string — must NOT become .xyz
+        size: 100,
+        trackNumber: 1,
+      };
+
+      const api = createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+
+      const converter: AudioConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async (inputPath: string) => {
+          inputPaths.push(inputPath);
+          return { success: true };
+        },
+        tagFile: async () => ({ success: true }),
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
+      };
+
+      const deps: SyncDependencies = {
+        api,
+        fs: createMockFileSystem(),
+        converter,
+      };
+      const core = createSyncCore(validConfig, deps);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/music',
+        options: { convertToMp3: true },
+      });
+
+      expect(inputPaths.length).toBeGreaterThan(0);
+      const tmpPath = inputPaths[0];
+      expect(tmpPath.startsWith(require('os').tmpdir())).toBe(true);
+      // AC4: 'xyz' is not in ALL_AUDIO_EXTENSIONS — temp MUST NOT end in .xyz
+      // and MUST NOT carry any audio-extension suffix FFmpeg could mis-sniff.
+      expect(tmpPath).not.toMatch(/\.xyz$/);
+      expect(tmpPath).not.toMatch(/\.(mp3|flac|m4a|aac|ogg|wma|opus|wav)$/);
+    });
+  });
+
   describe('tagFile error handling', () => {
     afterEach(() => {
       vi.restoreAllMocks();
