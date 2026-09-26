@@ -5,10 +5,10 @@
  * Tests use mocked dependencies to isolate unit behavior.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { SyncConfig, SyncInput, TrackInfo, ItemType } from './types';
+import type { SyncConfig, SyncInput, TrackInfo, ItemType, SyncLogger } from './types';
 import { createSyncCore, createTestSyncCore, type SyncDependencies } from './sync-core';
 import { createMockApiClient } from './sync-api';
-import { createMockFileSystem } from './sync-files';
+import { createMockFileSystem, type AudioConverter } from './sync-files';
 import { createMockConverter } from './sync-files';
 import {
   validateSyncConfig,
@@ -1187,6 +1187,198 @@ describe('Error Handling', () => {
       const calledPaths = unlinkSyncSpy.mock.calls.map((args: unknown[]) => args[0] as string);
       const coverTempFiles = calledPaths.filter((p: string) => p.startsWith(`${tmpdir}/jt-cover-`));
       expect(coverTempFiles.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ORAIN-0729: when FFmpeg conversion fails, the sync log must capture enough
+  // diagnostic data to know what FFmpeg received, without asking the user.
+  // Required fields (AC1):
+  //   - format and extension as reported by Jellyfin (track.format, track.path)
+  //   - Content-Type header of the download response
+  //   - size in bytes of the download
+  //   - first 16 bytes of the buffered temp file in hexadecimal
+  // AC2: the conversion path itself (sync-files.ts converter) does not change;
+  // the diagnostic must be emitted by sync-core after the converter returns
+  // { success: false }.
+  // ---------------------------------------------------------------------------
+  describe('ORAIN-0729: conversion failure logs what FFmpeg received', () => {
+    it('logs format, extension, contentType, size, and first 16 bytes (hex) on converter failure', async () => {
+      const { Readable } = require('stream');
+
+      // Simulated payload FFmpeg would have seen. Choose a header that's
+      // recognisable in hex so the assertion can pin it deterministically.
+      // 16 bytes starting with ID3 ("ID3" + version bytes) — a common MP3 prefix.
+      const payload = Buffer.concat([
+        Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00', 'binary'), // 10 bytes
+        Buffer.from('JTJTJTJTJTJT', 'binary'), // 6 more bytes = 16 total
+      ]);
+      const expectedHex = payload.subarray(0, 16).toString('hex');
+
+      const track: TrackInfo = {
+        id: 'track-fail-1',
+        name: '12 - The Ocean (Live)',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/Artist/Album/12 - The Ocean (Live).flac',
+        format: 'flac',
+        size: payload.length,
+        trackNumber: 12,
+      };
+
+      // Capture the Content-Type the way Jellyfin would return it for FLAC.
+      const expectedContentType = 'audio/flac';
+
+      const api = createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+        downloadItemStream: async () => {
+          const node = Readable.from(payload);
+          // Match the production wrapper (Readable.fromWeb) shape: the
+          // diagnostic logic reads `contentType` off the returned stream.
+          (node as import('stream').Readable & { contentType?: string }).contentType =
+            expectedContentType;
+          return node;
+        },
+      });
+
+      // Converter that fails the way a real one does: the existing
+      // ORAIN-0726 error path returns { success: false, error: '<msg>' }.
+      const converter: AudioConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({
+          success: false,
+          error: 'Format mpegts detected only with low score of 2',
+        }),
+        tagFile: async () => ({ success: true }),
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
+      };
+
+      // Spy logger so we can assert on what was logged without touching the
+      // real electron-log path.
+      const logger: SyncLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      };
+
+      const deps: SyncDependencies = {
+        api,
+        fs: createMockFileSystem(),
+        converter,
+        logger,
+      };
+
+      const core = createSyncCore(validConfig, deps);
+
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/music',
+        options: { convertToMp3: true },
+      });
+
+      // Find the diagnostic warn() call. It must contain every AC1 field.
+      const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      const diagnostic =
+        warnCalls.find((m) => m.includes('ffmpeg-received')) ??
+        warnCalls.find((m) => m.includes(track.id));
+      expect(
+        diagnostic,
+        `Expected a diagnostic warn() for ${track.id}, got: ${JSON.stringify(warnCalls)}`,
+      ).toBeDefined();
+
+      // AC1 fields — all five must be in the same log line.
+      expect(diagnostic).toContain('format=flac'); // Jellyfin format
+      expect(diagnostic).toContain('extension=.flac'); // extension from track.path
+      expect(diagnostic).toContain(`contentType=${expectedContentType}`); // Content-Type of download
+      expect(diagnostic).toContain(`size=${payload.length}`); // bytes downloaded
+      expect(diagnostic).toContain(`first16Hex=${expectedHex}`); // first 16 bytes of temp file
+    });
+
+    it('falls back to "(none)" / "(unknown)" placeholders when contentType and size are missing', async () => {
+      // Some streams (e.g. older mocks, proxy responses that omit the
+      // Content-Type header) arrive without `contentType` on the stream,
+      // and tracks without a server-side size field leave track.size
+      // undefined. The diagnostic must still be well-formed so the support
+      // log line is parseable.
+      const { Readable } = require('stream');
+      const payload = Buffer.from('JT-ORAIN-0729-FALLBACK'); // 21 bytes
+
+      const track: TrackInfo = {
+        id: 'track-no-meta',
+        name: 'Track Without Metadata',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/Artist/Album/track', // no extension at all
+        format: 'ogg',
+        // size intentionally undefined
+        trackNumber: 1,
+      };
+
+      const api = createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+        downloadItemStream: async () => {
+          // Deliberately do NOT set contentType here.
+          return Readable.from(payload);
+        },
+      });
+
+      const converter: AudioConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: false, error: 'whatever' }),
+        tagFile: async () => ({ success: true }),
+        readFileMetadata: async () => ({}),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
+      };
+
+      const logger: SyncLogger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      };
+
+      const core = createSyncCore(validConfig, {
+        api,
+        fs: createMockFileSystem(),
+        converter,
+        logger,
+      });
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+        destinationPath: '/music',
+        options: { convertToMp3: true },
+      });
+
+      const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.map(
+        (c) => c[0] as string,
+      );
+      const diagnostic = warnCalls.find((m) => m.includes(track.id));
+      expect(diagnostic).toBeDefined();
+      // Fallback placeholders — log line stays parseable even with missing
+      // Content-Type and missing track.size.
+      expect(diagnostic).toContain('contentType=(none)');
+      // size must be measured from the temp file (payload.length = 21) since
+      // track.size was undefined.
+      expect(diagnostic).toContain(`size=${payload.length}`);
+      // extension falls back to (none) when track.path has no '.'
+      expect(diagnostic).toContain('extension=(none)');
     });
   });
 

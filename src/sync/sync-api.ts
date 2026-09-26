@@ -691,9 +691,25 @@ class SyncApiImpl implements SyncApi {
       throw new ApiError('Download failed: empty response body', 0);
     }
 
+    // Capture Content-Type BEFORE consuming the body so it is available
+    // to diagnostics on the sync side (ORAIN-0729). The header is read
+    // only once after fetchDownloadResponse returns the Response object;
+    // subsequent reads of the stream body do not invalidate it.
+    const contentType = response.headers.get('content-type') ?? undefined;
+
     // Convert Web ReadableStream → Node.js Readable (Node 16.7+, Electron 22+)
     const { Readable } = require('stream');
-    return Readable.fromWeb(response.body);
+    const nodeStream = Readable.fromWeb(response.body);
+    // Stash Content-Type on the stream for the sync layer. Non-enumerable
+    // so consumers that iterate the stream's own keys (e.g. via 'data'
+    // event handlers that look at properties) are unaffected.
+    Object.defineProperty(nodeStream, 'contentType', {
+      value: contentType,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    return nodeStream;
   }
 
   async downloadItem(itemId: string): Promise<Buffer> {

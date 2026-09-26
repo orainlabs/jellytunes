@@ -2243,6 +2243,15 @@ class SyncCoreImpl {
     const tmpPath = `${outputPath}.jt-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const stream = await this.deps.api.downloadItemStream(track.id);
 
+    // Capture Content-Type off the stream before piping (ORAIN-0729). The
+    // property is set by sync-api's downloadItemStream when the response
+    // has a Content-Type header; older/mocked streams may not have it.
+    const downloadContentType = (
+      stream as NodeJS.ReadableStream & {
+        contentType?: string;
+      }
+    ).contentType;
+
     // Pipe stream to temp file — handle errors to prevent hangs on disk-full.
     // Use 'finish' event (not 'end') to ensure writable has flushed kernel buffers
     // before we read metadata from the file. Also resolves race condition where
@@ -2284,11 +2293,70 @@ class SyncCoreImpl {
         embedCover,
       );
       if (!result.success) {
+        // ORAIN-0729: emit a diagnostic log line so the next failure does
+        // not require asking the reporter what FFmpeg received. We log the
+        // five AC1 fields together, then re-throw so the existing failure
+        // path (copyOrConvertTrack → sync result error) keeps working.
+        await this.logConversionFailureDiagnostic(
+          track,
+          tmpPath,
+          downloadContentType,
+          result.error,
+        );
         throw new Error(result.error ?? 'Conversion failed');
       }
     } finally {
       await this.deps.fs.unlink(tmpPath).catch(() => {}); // always clean up temp
     }
+  }
+
+  /**
+   * ORAIN-0729: log a diagnostic line when FFmpeg conversion fails so the
+   * support flow can identify what FFmpeg received without asking the
+   * reporter. Five fields, one log line:
+   *   - format reported by Jellyfin (track.format)
+   *   - extension from the server path (track.path)
+   *   - Content-Type header of the download response
+   *   - size in bytes (track.size, or measured temp-file size as fallback)
+   *   - first 16 bytes of the buffered temp file, in hex
+   *
+   * Logging happens BEFORE the throw so the existing error envelope
+   * (sync-failed popup) keeps its behaviour unchanged.
+   */
+  private async logConversionFailureDiagnostic(
+    track: TrackInfo,
+    tmpPath: string,
+    downloadContentType: string | undefined,
+    ffmpegError: string | undefined,
+  ): Promise<void> {
+    let size = track.size;
+    let first16Hex = 'unavailable';
+    try {
+      const stat = await this.deps.fs.stat(tmpPath);
+      if (typeof size !== 'number') size = stat.size;
+      // Best-effort: read the first 16 bytes of the temp file. If the file
+      // is empty or unreadable, leave the placeholder so the log line is
+      // still well-formed.
+      const buf = await this.deps.fs.readFile(tmpPath);
+      if (buf.length > 0) {
+        first16Hex = buf.subarray(0, 16).toString('hex');
+      }
+    } catch {
+      // Don't let a diagnostic read failure mask the original conversion
+      // error. Fallbacks above keep the log line well-formed.
+    }
+
+    const extension = (() => {
+      const path = track.path ?? '';
+      const idx = path.lastIndexOf('.');
+      return idx >= 0 ? path.slice(idx).toLowerCase() : '(none)';
+    })();
+
+    this.log.warn(
+      `[ffmpeg-received] trackId=${track.id} format=${track.format} extension=${extension} ` +
+        `contentType=${downloadContentType ?? '(none)'} size=${size ?? '(unknown)'} ` +
+        `first16Hex=${first16Hex} ffmpegError=${ffmpegError ?? '(none)'}`,
+    );
   }
 }
 
