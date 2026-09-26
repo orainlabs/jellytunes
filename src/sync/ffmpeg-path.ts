@@ -38,15 +38,14 @@ const SYSTEM_FFPROBE_CANDIDATES = [
  * Resolve the FFprobe executable path.
  *
  * Priority:
- * 1. @ffprobe-installer/ffprobe bundled binary (path rewritten for packaged apps)
+ * 1. @ffprobe-installer/ffprobe — a devDependency, so only present in dev and
+ *    tests (the FFmpeg integration test needs it, ORAIN-0732 AC5)
  * 2. Known system paths (macOS/Linux)
  * 3. 'ffprobe' — rely on PATH as last resort
  *
- * Rework cycle 1 (ORAIN-0732 AC5): the previous implementation fell
- * through to the PATH lookup immediately, so the integration test could
- * silently degrade to "ffprobe not found" without the bundler actually
- * shipping ffprobe. Adding the installer as the primary source keeps
- * ffprobe paired with ffmpeg in packaged builds.
+ * Packaged apps do not ship ffprobe (ORAIN-0733): the require in step 1 fails
+ * and resolution falls through to the system, as in 0.7.1. ffprobe is optional
+ * at runtime — readFileMetadata resolves {} when it is missing.
  */
 export function resolveFFprobePath(): string {
   try {
