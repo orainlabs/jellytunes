@@ -526,8 +526,11 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
 
       return new Promise((resolve) => {
         // ORAIN-0732: read input from disk via -i file:<path>. The file:
-        // prefix stops a path containing `:` (e.g. Windows drive letters or
-        // a track titled "Foo: Bar") from being parsed as an FFmpeg protocol.
+        // prefix FORCES FFmpeg to treat the argument as a file URI, which
+        // is the opposite of "stop parsing as protocol" — without it, a path
+        // containing `:` (Windows drive letters like `C:\...`, or a track
+        // titled `Foo: Bar`) would be parsed as an FFmpeg protocol like
+        // `c` or `data` and the spawn would fail with ENOENT or hang.
         const args = [
           '-i',
           `file:${inputPath}`,
@@ -580,8 +583,10 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         const args: string[] = [];
         let coverTempPath: string | undefined;
 
-        // Input 0: audio from disk (path). The file: prefix stops a path
-        // containing `:` from being parsed as a FFmpeg protocol — ORAIN-0732.
+        // Input 0: audio from disk (path). The file: prefix FORCES FFmpeg
+        // to treat the argument as a file URI; without it a path containing
+        // `:` (e.g. Windows drive letters) would be parsed as an FFmpeg
+        // protocol — ORAIN-0732.
         args.push('-i', `file:${inputPath}`);
 
         // Input 1: cover art image (only when embedding)
