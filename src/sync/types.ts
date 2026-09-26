@@ -92,7 +92,8 @@ export interface SyncOptions {
   /**
    * Target platform — injected so the path sanitizer can run on win32 even
    * when the detected filesystem is `'unknown'`. Defaults to `process.platform`.
-   * ORAIN-0725: Win11 24H2+ removed `wmic`, so filesystem detection can return
+   * ORAIN-0725: Win11 24H2+ removed the pre-24H2 Windows volume binary,
+   * so filesystem detection can return
    * `'unknown'` while the destination is still a Windows volume that forbids
    * `<>:"/\|?*`. The sanitizer must therefore gate on platform, not just
    * filesystem.

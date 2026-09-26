@@ -247,7 +247,8 @@ function listMountedVolumesFallback(): UsbDevice[] {
     } else if (platform === 'linux') {
       devices.push(...listLinuxRemovableMounts());
     } else if (platform === 'win32') {
-      // ORAIN-0725 / GitHub issue #23: `wmic` is gone in Windows 11 24H2+.
+      // ORAIN-0725 / GitHub issue #23: the Windows volume-detection binary
+      // used pre-24H2 is gone in Windows 11 24H2+.
       // `fsutil fsinfo drives` ships in C:\Windows\System32 on every supported
       // Windows install and has no PowerShell startup cost. Errors are logged
       // once per session — the device-watcher polls every 15 s and would
@@ -291,7 +292,8 @@ async function getDeviceInfo(devicePath: string): Promise<DeviceInfo> {
       return { total, free, used };
     }
     if (platform === 'win32') {
-      // ORAIN-0725 / GitHub issue #23: `wmic` is gone in Windows 11 24H2+.
+      // ORAIN-0725 / GitHub issue #23: the pre-24H2 Windows volume binary is
+      // gone in Windows 11 24H2+.
       // Use `fs.statfsSync` (no subprocess) — Node fills these fields from
       // `GetDiskFreeSpaceExW`. Returns the values in fragments (clusters ×
       // sectors-per-cluster), so multiply by `bsize` to get bytes.
@@ -334,7 +336,8 @@ async function detectFilesystem(devicePath: string): Promise<string> {
       const label = detectLinuxFilesystem(fs, devicePath);
       if (label !== 'unknown') return label;
     } else if (platform === 'win32') {
-      // ORAIN-0725 / GitHub issue #23: `wmic` is gone in Windows 11 24H2+.
+      // ORAIN-0725 / GitHub issue #23: the pre-24H2 Windows volume binary is
+      // gone in Windows 11 24H2+.
       // Use `fsutil fsinfo volumeinfo <drive>:` which ships in every Windows
       // install. Returns 'unknown' on any failure, which the sanitizer
       // handles by gating on platform=win32 (ORAIN-0725).

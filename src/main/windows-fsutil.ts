@@ -1,13 +1,14 @@
 /**
- * Windows volume detection without `wmic` (ORAIN-0725 / GitHub issue #23).
+ * Windows volume detection without the pre-24H2 binary (ORAIN-0725 / GitHub issue #23).
  *
- * Windows 11 24H2+ removed `wmic`. The previous implementation in
- * `src/main/index.ts` spawned `wmic logicaldisk ...` for three different
- * lookups (drive enumeration, free space, filesystem type) and the missing
- * binary produced `spawnSync wmic ENOENT` on every 15 s polling tick —
- * not just noise, but `detectFilesystem` then returned `'unknown'`, which
- * left `sanitizePathComponent` a no-op so paths containing `<>:"/\|?*`
- * reached FFmpeg and the sync failed with exit code 1.
+ * Windows 11 24H2+ removed that binary. The previous implementation in
+ * `src/main/index.ts` spawned it (a `logicaldisk ...` lookup) for three
+ * different needs (drive enumeration, free space, filesystem type) and
+ * the missing binary produced a `spawnSync ... ENOENT` on every 15 s
+ * polling tick — not just noise, but `detectFilesystem` then returned
+ * `'unknown'`, which left `sanitizePathComponent` a no-op so paths
+ * containing `<>:"/\|?*` reached FFmpeg and the sync failed with exit
+ * code 1.
  *
  * This module replaces those three spawns with one `fsutil fsinfo volumeinfo`
  * per drive. `fsutil` ships in `C:\Windows\System32` on every supported
@@ -193,8 +194,8 @@ export interface StatfsProvider {
  * Node returns the values in fragments (clusters × sectors-per-cluster).
  * Returns `null` when the path is not statable so callers can fall back.
  *
- * ORAIN-0725: replaces the previous `wmic logicaldisk where caption='X:'
- * get freespace` spawn — `wmic` no longer ships in Win11 24H2+.
+ * ORAIN-0725: replaces the previous `logicaldisk where caption='X:' get
+ * freespace` spawn — that binary no longer ships in Win11 24H2+.
  */
 export function statfsFreeBytes(fs: StatfsProvider, path: string): number | null {
   try {

@@ -1,8 +1,8 @@
-// Windows volume detection without `wmic` (ORAIN-0725 / GitHub issue #23).
+// Windows volume detection without the pre-24H2 binary (ORAIN-0725 / GitHub issue #23).
 //
-// Replaces `wmic logicaldisk ...` with `fsutil fsinfo volumeinfo <drive>:`,
+// Replaces the previous `logicaldisk ...` spawn with `fsutil fsinfo volumeinfo <drive>:`,
 // which ships in `C:\Windows\System32` on every Windows install — Windows 11
-// 24H2+ removed `wmic`. The fsutil output format and the parser's tolerance
+// 24H2+ removed that binary. The fsutil output format and the parser's tolerance
 // for unexpected whitespace / line ordering are tested here against synthetic
 // outputs so the test does not need a real Windows install.
 
@@ -131,7 +131,7 @@ describe('detectWindowsFilesystem', () => {
     expect(detectWindowsFilesystem(runner, '/Volumes/MUSIC')).toBe('unknown');
   });
 
-  it('returns unknown when fsutil exits non-zero (wmic ENOENT would behave the same)', () => {
+  it('returns unknown when fsutil exits non-zero (the pre-24H2 binary ENOENT would behave the same)', () => {
     const runner: FsutilRunner = {
       fsutil() {
         return { status: 1, stdout: '', stderr: 'error', error: new Error('ENOENT') };

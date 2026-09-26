@@ -189,13 +189,15 @@ export function createNodeFileSystem(): FileSystem {
 
       try {
         if (platform === 'darwin' || platform === 'linux' || platform === 'win32') {
-          // fs.statfsSync is a syscall, not a subprocess exec — unlike `df` or
-          // `wmic`, it isn't blocked by strict Snap confinement's AppArmor
-          // exec policy and doesn't need a Windows binary. ORAIN-0725 /
-          // GitHub issue #23: replaces the previous `wmic logicaldisk where
-          // caption='X:' get freespace` spawn on Windows — `wmic` is gone in
-          // Windows 11 24H2+. Node's statfs implementation fills `bavail`
-          // and `bsize` from `GetDiskFreeSpaceExW` on Windows.
+          // fs.statfsSync is a syscall, not a subprocess exec — unlike
+          // shelling out to a binary (e.g. `df` on Linux or the Windows
+          // volume binary used pre-24H2), it isn't blocked by strict Snap
+          // confinement's AppArmor exec policy and doesn't need any
+          // external binary on Windows. ORAIN-0725 / GitHub issue #23:
+          // replaces the previous `logicaldisk where caption='X:' get
+          // freespace` spawn on Windows — that binary is gone in Windows
+          // 11 24H2+. Node's statfs implementation fills `bavail` and
+          // `bsize` from `GetDiskFreeSpaceExW` on Windows.
           const { statfsSync } = require('fs');
           const stats = statfsSync(path);
           return stats.bavail * stats.bsize;

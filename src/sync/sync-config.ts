@@ -40,7 +40,8 @@ const WIN32_FILESYSTEMS: readonly FilesystemType[] = ['fat32', 'exfat', 'ntfs'];
  * characters on every filesystem (NTFS, exFAT, FAT32 alike), so on `win32`
  * sanitization must run regardless of the detected filesystem label. When
  * `detectFilesystem` returns `'unknown'` on Windows 11 24H2+ (e.g. because
- * `wmic` no longer exists and the replacement can't classify the volume)
+ * the pre-24H2 Windows volume binary no longer exists and the
+ * replacement can't classify the volume)
  * the sanitizer must still strip those chars, or FFmpeg fails on the
  * resulting un-creatable paths — see ORAIN-0725 / GitHub issue #23.
  */

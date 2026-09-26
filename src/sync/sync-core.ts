@@ -282,7 +282,8 @@ class SyncCoreImpl {
   /**
    * Target platform — drives whether the path sanitizer runs on segments
    * even when `filesystemType` is `'unknown'`. ORAIN-0725: Windows 11 24H2+
-   * removed `wmic`, so filesystem detection on Win32 can return `'unknown'`
+   * removed the pre-24H2 Windows volume binary, so filesystem detection
+   * on Win32 can return `'unknown'`
    * while the volume still rejects `<>:"/\|?*`. Injected so tests don't read
    * `process.platform` at test time.
    */
