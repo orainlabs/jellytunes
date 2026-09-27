@@ -27,9 +27,13 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   const [snapPermissions, setSnapPermissions] = useState<SnapPermissionsReport>(
     EMPTY_SNAP_PERMISSIONS_REPORT,
   );
-  // ORAIN-0727: the absolute log file path is shown so users can include it
-  // (or open it) when filing a bug report.
+  // ORAIN-0735: the absolute log file path is no longer shown as a block,
+  // just surfaced via tooltip + clipboard. The state still loads so we can
+  // expose it on the link's `title` and on the copy button.
   const [logPath, setLogPath] = useState<string>('');
+  // ORAIN-0735: visual confirmation that the path was copied — toggled for
+  // 2s after a successful clipboard write, then reverts to the copy icon.
+  const [logPathCopied, setLogPathCopied] = useState(false);
 
   useEffect(() => {
     window.api
@@ -105,11 +109,26 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     await window.api.setPreferences({ analyticsEnabled: next });
   };
 
-  // ORAIN-0727 AC1: open the OS file manager on the log file so users do
-  // not have to navigate to the path manually. The renderer never supplies
-  // the path — main resolves it from electron-log (see log-folder.ts).
+  // ORAIN-0735: open the OS file manager on the log file so users do not
+  // have to navigate to the path manually. The renderer never supplies the
+  // path — main resolves it from electron-log (see log-folder.ts).
   const handleOpenLogFolder = async (): Promise<void> => {
     await window.api.openLogFolder();
+  };
+
+  // ORAIN-0735: copy the path to the clipboard via the standard browser API
+  // (Electron grants the renderer access to navigator.clipboard). The
+  // confirmation chip reverts after ~2s so the user can copy again later.
+  const handleCopyLogPath = async (): Promise<void> => {
+    if (!logPath) return;
+    try {
+      await navigator.clipboard.writeText(logPath);
+      setLogPathCopied(true);
+      window.setTimeout(() => setLogPathCopied(false), 2000);
+    } catch {
+      // Clipboard denied (e.g. focus / permission) — stay silent rather
+      // than flashing an error in a modal the user can already close.
+    }
   };
 
   return (
@@ -217,26 +236,37 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           </a>
         </div>
 
-        {/* ── ORAIN-0727: log file location ── */}
-        <div
-          data-testid="log-path-section"
-          className="flex flex-col gap-2 mb-4 px-3 py-3 rounded-lg bg-surface_container_highest border border-outline_variant/30"
-        >
-          <span className="text-caption text-on_surface_variant uppercase tracking-wide">
-            Log path
+        {/* ── ORAIN-0735: compact "Open log folder" link + copy-to-clipboard.
+             Replaces the ORAIN-0727 LOG PATH block. Same style as Row 2
+             tertiary links, plus a small copy icon for the path. ── */}
+        <div className="flex flex-row gap-2 mb-4 items-center justify-center">
+          {/* data-testid="log-path" is preserved (sr-only) so QA can read the
+              resolved path and the copy button picks it up. */}
+          <span data-testid="log-path" className="sr-only">
+            {logPath}
           </span>
-          <p
-            data-testid="log-path"
-            className="text-caption font-mono text-on_surface break-all select-text"
-          >
-            {logPath || '(loading…)'}
-          </p>
-          <button
+          <a
+            href="#"
             data-testid="open-log-folder-button"
-            onClick={handleOpenLogFolder}
-            className="self-start px-3 py-1.5 text-body-sm text-primary border border-primary_container/40 hover:bg-primary_container/10 rounded transition-colors"
+            onClick={(e) => {
+              e.preventDefault();
+              void handleOpenLogFolder();
+            }}
+            title={logPath || undefined}
+            className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-body-sm text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
           >
-            Open folder
+            Open log folder 📂
+          </a>
+          <button
+            type="button"
+            data-testid="copy-log-path-button"
+            onClick={() => void handleCopyLogPath()}
+            disabled={!logPath}
+            title="Copy log path"
+            aria-label="Copy log path"
+            className="flex items-center justify-center w-7 h-7 rounded-md border border-transparent text-on_surface_variant hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high transition-colors disabled:opacity-40"
+          >
+            {logPathCopied ? '✓' : '⧉'}
           </button>
         </div>
 

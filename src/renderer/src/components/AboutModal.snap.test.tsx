@@ -23,8 +23,8 @@ function makeMockApi(opts: { isSnap: boolean }) {
     logWarn: vi.fn(),
     logInfo: vi.fn(),
     getLogPath: vi.fn().mockResolvedValue('/mock/log'),
-    // ORAIN-0727: keep the snap-aware tests consistent with the main
-    // AboutModal mock — the new log-folder button calls this on click.
+    // ORAIN-0735: keep the snap-aware tests consistent with the main
+    // AboutModal mock — the Open log folder link calls this on click.
     openLogFolder: vi.fn().mockResolvedValue({ success: true }),
     isSnap: vi.fn().mockResolvedValue(opts.isSnap),
     // ORAIN-0578 T2: empty report — these tests only assert the snap

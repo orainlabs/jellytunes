@@ -30,7 +30,7 @@ beforeEach(() => {
     logWarn: vi.fn(),
     logInfo: vi.fn(),
     getLogPath: vi.fn().mockResolvedValue('/mock/log'),
-    // ORAIN-0727: keep permissions tests consistent with the main mock.
+    // ORAIN-0735: keep permissions tests consistent with the main mock.
     openLogFolder: vi.fn().mockResolvedValue({ success: true }),
     isSnap: vi.fn().mockResolvedValue(true),
     checkSnapPermissions: vi.fn().mockResolvedValue({

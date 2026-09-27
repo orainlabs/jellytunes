@@ -19,7 +19,7 @@ beforeEach(() => {
     logWarn: vi.fn(),
     logInfo: vi.fn(),
     getLogPath: vi.fn().mockResolvedValue('/mock/log'),
-    // ORAIN-0727: open the system file manager on the log file folder.
+    // ORAIN-0735: open the system file manager on the log file folder.
     openLogFolder: vi.fn().mockResolvedValue(undefined),
     isSnap: vi.fn().mockResolvedValue(false),
     // ORAIN-0578 T2: AboutModal consults this on mount to render the
@@ -32,6 +32,15 @@ beforeEach(() => {
   };
   // @ts-expect-error — Mocking window.api for test environment
   window.api = mockApi;
+  // jsdom does not implement navigator.clipboard — provide a stub that
+  // individual tests can override. Without this, copying throws.
+  if (!('clipboard' in navigator)) {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true,
+    });
+  }
 });
 
 describe('AboutModal', () => {
@@ -179,24 +188,75 @@ describe('AboutModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  // ORAIN-0727 AC1/AC3: render the log file path returned by getLogPath so
-  // users can find it for bug reports.
-  it('renders the log path returned by getLogPath', async () => {
-    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+  // ORAIN-0735 AC1: the "Open log folder" link sits next to View on GitHub
+  // and Support on Ko-fi in the tertiary-links row.
+  it('renders the Open log folder link next to View on GitHub and Support on Ko-fi', async () => {
     render(<AboutModal onClose={vi.fn()} />);
-    expect(await screen.findByText('/var/log/jellytunes/main.log')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Open log folder/)).toBeInTheDocument();
+    });
   });
 
-  // ORAIN-0727 AC1/AC3: a button next to the path opens the folder so users
-  // do not have to navigate to it manually.
-  it('calls openLogFolder when the open-folder button is clicked', async () => {
+  // ORAIN-0735 AC2: the full log path is exposed via tooltip (title attr)
+  // so users can see it on hover without needing a precision pointer.
+  it('exposes the full log path as a tooltip on the link', async () => {
     window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
-    window.api.openLogFolder = vi.fn().mockResolvedValue(undefined);
     render(<AboutModal onClose={vi.fn()} />);
-    await screen.findByText('/var/log/jellytunes/main.log');
+    const link = await screen.findByTestId('open-log-folder-button');
+    expect(link).toHaveAttribute('title', '/var/log/jellytunes/main.log');
+  });
+
+  // ORAIN-0735 AC2: the log path element keeps its data-testid so QA can
+  // assert against it. We use it for tooltip copy + clipboard copy.
+  it('renders a log-path element with the path accessible to assistive tech', async () => {
+    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+    render(<AboutModal onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('log-path')).toHaveTextContent('/var/log/jellytunes/main.log');
+    });
+  });
+
+  // ORAIN-0735 AC5: clicking the link triggers IPC log:openFolder, which
+  // main resolves via electron-log (no path is passed from the renderer).
+  it('calls openLogFolder when the Open log folder link is clicked', async () => {
+    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+    window.api.openLogFolder = vi.fn().mockResolvedValue({ success: true });
+    render(<AboutModal onClose={vi.fn()} />);
+    await screen.findByTestId('open-log-folder-button');
     await act(async () => {
       screen.getByTestId('open-log-folder-button').click();
     });
     expect(window.api.openLogFolder).toHaveBeenCalledTimes(1);
+  });
+
+  // ORAIN-0735 AC2: a copy icon next to the link copies the path to the
+  // clipboard and confirms with a check for ~2s.
+  it('copies the log path to the clipboard when the copy button is clicked and shows a check', async () => {
+    vi.useFakeTimers();
+    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+    let renderResult: ReturnType<typeof render> | undefined;
+    await act(async () => {
+      renderResult = render(<AboutModal onClose={vi.fn()} />);
+      // Flush microtasks so useEffect's getLogPath().then(setLogPath) settles
+      // before we look for the button.
+      await Promise.resolve();
+    });
+    const copyButton = renderResult!.getByTestId('copy-log-path-button');
+    await act(async () => {
+      copyButton.click();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith('/var/log/jellytunes/main.log');
+    // Right after clicking, the check confirmation is shown.
+    expect(screen.getByTestId('copy-log-path-button')).toHaveTextContent(/✓/);
+    // After ~2s, the copy icon is restored.
+    await act(async () => {
+      vi.advanceTimersByTime(2100);
+    });
+    expect(screen.getByTestId('copy-log-path-button')).not.toHaveTextContent(/✓/);
   });
 });
