@@ -121,15 +121,161 @@ describe('getJpegFrameType', () => {
     ]);
     expect(getJpegFrameType(bytes)).toBe('non-jpeg');
   });
+
+  it('skips FF padding (fill bytes) between markers per ITU-T T.81 §B.1.1.2', () => {
+    // SOI, then a stray 0xFF fill byte (allowed as padding between
+    // markers), then a normal APP segment, then SOF0. JPEG permits any
+    // number of 0xFF bytes as padding between markers — the marker
+    // type is identified by the first non-FF byte following any
+    // run of FFs.
+    const bytes = Buffer.from([
+      0xff,
+      0xd8, // SOI
+      0xff, // fill byte (padding)
+      0xff, // another fill byte
+      0xff,
+      0xe0,
+      0x00,
+      0x10,
+      0x4a,
+      0x46,
+      0x49,
+      0x46,
+      0x00,
+      0x01,
+      0x01,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x00, // APP0
+      0xff,
+      0xff,
+      0xff,
+      0xc0, // 3 fill bytes, then SOF0
+      0x00,
+      0x11,
+      0x08,
+      0x00,
+      0x10,
+      0x00,
+      0x20,
+      0x03,
+      0x01,
+      0x22,
+      0x00,
+      0x02,
+      0x11,
+      0x00,
+      0x03,
+      0x11,
+      0x01,
+    ]);
+    expect(getJpegFrameType(bytes)).toBe('baseline');
+  });
+
+  it('treats TEM (FF 01) as a standalone marker with no payload', () => {
+    // ITU-T T.81 §B.1.1.4: TEM (0x01) is a standalone marker that takes
+    // no segment body. After a TEM, the next marker must come
+    // immediately. If the walker treats it as variable-length, it reads
+    // the next two bytes as a length field and skips to an arbitrary
+    // offset, missing SOF0 entirely.
+    const bytes = Buffer.from([
+      0xff,
+      0xd8, // SOI
+      0xff,
+      0x01, // TEM — standalone, no payload
+      0xff,
+      0xc0, // SOF0 — baseline
+      0x00,
+      0x11,
+      0x08,
+      0x00,
+      0x10,
+      0x00,
+      0x20,
+      0x03,
+      0x01,
+      0x22,
+      0x00,
+      0x02,
+      0x11,
+      0x00,
+      0x03,
+      0x11,
+      0x01,
+    ]);
+    expect(getJpegFrameType(bytes)).toBe('baseline');
+  });
+
+  it('returns "non-jpeg" when a stray SOI marker (FF D8) appears inside the stream', () => {
+    // A stray FF D8 embedded inside a segment (e.g. an APP0 whose body
+    // happens to contain SOI bytes by accident, or a corrupt JPEG) is
+    // structurally invalid. The walker must not silently restart from
+    // the spurious SOI and find a downstream SOF that does not actually
+    // describe the image.
+    const bytes = Buffer.from([
+      0xff,
+      0xd8, // real SOI
+      0xff,
+      0xe0,
+      0x00,
+      0x10, // APP0 length 16 (header counted)
+      0x4a,
+      0x46,
+      0x49,
+      0x46,
+      0x00,
+      0x01,
+      0x01,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x00, // APP0 body
+      // End of APP0 — the byte sequence below continues the stream but
+      // does NOT contain a real SOF marker; the spurious 0xFF 0xD8 here
+      // would (before the fix) trick the walker into "restarting" and
+      // then reading the next 0xFF 0xC0 as a SOF0 of a "new" image.
+      0xff,
+      0xd8, // spurious SOI
+      0xff,
+      0xc0, // fake SOF0 (would have been picked up before fix)
+      0x00,
+      0x11,
+      0x08,
+      0x00,
+      0x10,
+      0x00,
+      0x20,
+      0x03,
+      0x01,
+      0x22,
+      0x00,
+      0x02,
+      0x11,
+      0x00,
+      0x03,
+      0x11,
+      0x01,
+    ]);
+    expect(getJpegFrameType(bytes)).toBe('non-jpeg');
+  });
 });
 
 describe('buildCoverArtUrl', () => {
   it('appends maxWidth, maxHeight, quality, format to the Primary URL', () => {
     const u = buildCoverArtUrl('https://jellyfin.test', 'user-1', 'abc-123');
-    expect(u).toBe(
-      'https://jellyfin.test/Users/user-1/Items/abc-123/Images/Primary' +
-        '?maxWidth=500&maxHeight=500&quality=85&format=Jpg',
-    );
+    // Pin each query parameter individually — HTTP does not depend on
+    // param order, so this test would break for harmless reordering.
+    expect(u).toContain('maxWidth=500');
+    expect(u).toContain('maxHeight=500');
+    expect(u).toContain('quality=85');
+    expect(u).toContain('format=Jpg');
   });
 
   it('matches Jellyfin path conventions: Users/{userId}/Items/{id}/Images/Primary', () => {

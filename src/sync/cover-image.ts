@@ -33,9 +33,14 @@ export type JpegFrameType = 'baseline' | 'extended' | 'progressive' | 'non-jpeg'
  * variable-length segment begins `FF xx LL LL` where the LL field is the
  * big-endian length of the segment body including itself.
  *
- * Standalone markers (no payload) we care about: SOI (D8), EOI (D9), and
- * RSTn (D0..D7). Anything else with a body — APPn (E0..EF), DQT (DB),
- * DHT (C4), COM (FE), etc. — uses the length field.
+ * Standalone markers (no payload) we care about: SOI (D8) — only valid
+ * at the very start of the stream, EOI (D9), TEM (01, ITU-T T.81
+ * §B.1.1.4), and RSTn (D0..D7). Anything else with a body — APPn
+ * (E0..EF), DQT (DB), DHT (C4), COM (FE), etc. — uses the length field.
+ *
+ * Per ITU-T T.81 §B.1.1.2 any number of `0xFF` bytes may appear
+ * between markers as fill (padding); the marker type is identified by
+ * the first non-`0xFF` byte following any run of FFs.
  */
 export function getJpegFrameType(bytes: Buffer): JpegFrameType {
   if (!isJpeg(bytes)) return 'non-jpeg';
@@ -44,22 +49,34 @@ export function getJpegFrameType(bytes: Buffer): JpegFrameType {
   while (offset + 1 < bytes.length) {
     if (bytes[offset] !== 0xff) return 'non-jpeg';
 
-    const marker = bytes[offset + 1];
+    // Skip any number of 0xFF fill bytes (JPEG §B.1.1.2). The marker
+    // type is the first non-FF byte after the run.
+    let markerOffset = offset + 1;
+    while (markerOffset < bytes.length && bytes[markerOffset] === 0xff) {
+      markerOffset++;
+    }
+    if (markerOffset >= bytes.length) return 'non-jpeg';
+    const marker = bytes[markerOffset];
+    const segmentStart = markerOffset - 1; // the last 0xFF before it
+
     if (marker === 0xc0) return 'baseline';
     if (marker === 0xc1) return 'extended';
     if (marker === 0xc2) return 'progressive';
 
-    // Standalone markers
-    if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
-      offset += 2;
+    // Standalone markers: SOI (D8) is only valid at offset 0 — anywhere
+    // else it indicates a corrupt or nested stream and we treat the
+    // image as invalid rather than restarting from the spurious SOI.
+    if (marker === 0xd8) return 'non-jpeg';
+    if (marker === 0x01 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset = segmentStart + 2;
       continue;
     }
 
     // Variable-length segment — need 2 more bytes for the length header.
-    if (offset + 3 >= bytes.length) return 'non-jpeg';
-    const len = (bytes[offset + 2] << 8) | bytes[offset + 3];
+    if (segmentStart + 3 >= bytes.length) return 'non-jpeg';
+    const len = (bytes[segmentStart + 2] << 8) | bytes[segmentStart + 3];
     if (len < 2) return 'non-jpeg';
-    offset += 2 + len;
+    offset = segmentStart + 2 + len;
   }
 
   return 'non-jpeg';
