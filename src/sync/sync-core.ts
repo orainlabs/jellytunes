@@ -1271,7 +1271,16 @@ class SyncCoreImpl {
         // 'data' event; if it fires we abort the stream and let the
         // outer catch classify the failure as a download error so the
         // retry loop runs.
-        const writeStream = await this.deps.fs.createWriteStream(tmpPath, { flags: 'wx' });
+        //
+        // `deps.fs.createWriteStream` returns `NodeJS.WritableStream`
+        // in the DI interface, but the real implementation returns
+        // `fs.WriteStream`, which exposes `destroy(err?)`. Intersect
+        // the type so the stall-abort path can call `destroy` without
+        // casting through `unknown`.
+        const writeStreamRaw = await this.deps.fs.createWriteStream(tmpPath, { flags: 'wx' });
+        const writeStream = writeStreamRaw as NodeJS.WritableStream & {
+          destroy: (e?: Error) => void;
+        };
 
         let receivedBytesLocal = 0;
         let stallTimer: NodeJS.Timeout | null = null;
@@ -1281,13 +1290,11 @@ class SyncCoreImpl {
           if (stallTimer) clearTimeout(stallTimer);
           stallTimer = setTimeout(() => {
             stallFired = true;
-            const err = new Error(
-              `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
-            );
-            (err as Error & { stallTimeout?: boolean }).stallTimeout = true;
-            // Node's Readable.fromWeb returns a stream with `destroy`;
-            // the public `NodeJS.ReadableStream` type does not expose
-            // it, so cast for the abort path.
+            // TS-2 rework: stall is its own typed error class
+            // (`DownloadStalledError`), so the catch block can use
+            // `instanceof` instead of an unsafe boxing via
+            // `(err as Error & { stallTimeout?: boolean }).stallTimeout = true`.
+            const err = new DownloadStalledError(DOWNLOAD_STALL_TIMEOUT_MS);
             (stream as unknown as { destroy: (e?: Error) => void }).destroy(err);
             (writeStream as unknown as { destroy: (e?: Error) => void }).destroy(err);
           }, DOWNLOAD_STALL_TIMEOUT_MS);
@@ -1295,11 +1302,33 @@ class SyncCoreImpl {
 
         try {
           await new Promise<void>((resolve, reject) => {
+            // CR-2: `cleanup` is re-entry safe. Pipe destroy can
+            // re-emit `error` after the first reject, and `finish` may
+            // arrive after `error` once the writeStream flushes its
+            // remaining buffer. Without the `done` guard a second
+            // `cleanup()` would `resolve()` a promise that already
+            // rejected, hiding the failure from the awaiting catch.
+            let done = false;
             const cleanup = (err?: Error) => {
+              if (done) return;
+              done = true;
+              // CR-3: kill the stall timer immediately so a late
+              // 'data' (which can fire from buffered bytes even after
+              // destroy) cannot re-arm it. The 30 s timeout would
+              // otherwise keep the event loop alive after we settle.
+              if (stallTimer) {
+                clearTimeout(stallTimer);
+                stallTimer = null;
+              }
               if (err) reject(err);
               else resolve();
             };
             stream.on('data', (chunk: Buffer | string) => {
+              // CR-3: gate byte counting + stall re-arm on `done` so
+              // buffered bytes emitted after destroy do not extend the
+              // session. `done` is also set inside `cleanup`, so a
+              // 'close' re-emit cannot re-arm the timer either.
+              if (done) return;
               receivedBytesLocal += Buffer.isBuffer(chunk)
                 ? chunk.length
                 : Buffer.byteLength(chunk);
@@ -1308,11 +1337,22 @@ class SyncCoreImpl {
             stream.on('error', (err: Error) => cleanup(err));
             writeStream.on('error', (err: Error) => cleanup(err));
             writeStream.on('finish', () => cleanup());
+            // CR-3: listen for 'close' as well — it always fires (even
+            // after `destroy()`) and is the only event guaranteed to
+            // settle the promise if `error` is suppressed by Node
+            // (a stream already in error state does not re-emit
+            // `'error'`). The `done` guard makes both 'close' and
+            // 'finish' safe to call in any order.
+            stream.on('close', () => cleanup());
+            writeStream.on('close', () => cleanup());
             armStallTimer();
             stream.pipe(writeStream);
           });
         } finally {
-          if (stallTimer) clearTimeout(stallTimer);
+          if (stallTimer) {
+            clearTimeout(stallTimer);
+            stallTimer = null;
+          }
         }
 
         attemptReceivedBytes = receivedBytesLocal;
@@ -1368,11 +1408,11 @@ class SyncCoreImpl {
         }
       } catch (error) {
         // Cancellation bubbles up untouched — the user has asked us to
-        // stop and we do not retry that.
-        if (
-          this.cancellation.isCancelled() ||
-          (error instanceof Error && error.name === 'SyncCancelledError')
-        ) {
+        // stop and we do not retry that. `instanceof SyncCancelledError`
+        // is exact; the previous `error.name === 'SyncCancelledError'`
+        // string match was fragile if the class name ever changed or
+        // another error happened to share it.
+        if (error instanceof SyncCancelledError || this.cancellation.isCancelled()) {
           await this.deps.fs.unlink(tmpPath).catch(() => {});
           throw error;
         }
@@ -1382,14 +1422,20 @@ class SyncCoreImpl {
           // Any other error from the pipe layer (RST, terminated,
           // network reset, ApiError from the HTTP layer). Surface as a
           // download-phase error so the UI sees one consistent shape.
-          const rawMessage = error instanceof Error ? error.message : String(error);
-          const stall = (error as Error & { stallTimeout?: boolean }).stallTimeout === true;
-          phaseError = new SyncPhaseError(
-            'download',
-            stall
-              ? `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`
-              : `Descarga fallida: ${rawMessage}`,
-          );
+          // Stalls get their own `DownloadStalledError` class —
+          // `instanceof` replaces the previous boxing-via-
+          // `(err as Error & { stallTimeout?: boolean })` trick and
+          // survives external `Error` objects that happen to carry a
+          // `stallTimeout` field.
+          if (error instanceof DownloadStalledError) {
+            phaseError = new SyncPhaseError(
+              'download',
+              `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
+            );
+          } else {
+            const rawMessage = error instanceof Error ? error.message : String(error);
+            phaseError = new SyncPhaseError('download', `Descarga fallida: ${rawMessage}`);
+          }
         }
       }
 
@@ -1404,8 +1450,10 @@ class SyncCoreImpl {
         await this.delay(DOWNLOAD_RETRY_DELAYS_MS[attempt - 1]!);
         continue;
       }
-      // Exhausted retries — throw the last phase error.
-      throw phaseError;
+      // Exhausted retries — throw the last phase error. The fallback
+      // covers the (currently impossible) case where phaseError was
+      // never assigned, so we never throw `null`.
+      throw phaseError ?? new SyncPhaseError('download', 'Descarga fallida');
     }
     // Unreachable: the loop either returns or throws above. TS needs a
     // fall-through; if the for-loop body ever returns without throwing
