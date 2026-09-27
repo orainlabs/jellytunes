@@ -701,10 +701,13 @@ class SyncApiImpl implements SyncApi {
     // ORAIN-0737 AC3: also expose Content-Length (parsed to number, or
     // undefined when the header is missing or malformed) so the sync
     // layer can do post-download validation without re-fetching.
-    // Number.isFinite rejects NaN, which `Number('foo')` would yield
-    // — important because ORAIN-0739 will compare `stream.contentLength
-    // > received_bytes`, and `NaN > X` is `false`, silently skipping
-    // the validation on a corrupt header.
+    // Number.isFinite rejects NaN AND Infinity, both of which `Number()`
+    // can yield for corrupt headers (`Number('foo')` → NaN,
+    // `Number('1e500')` → Infinity). Important because ORAIN-0739 will
+    // compare `stream.contentLength > received_bytes`, and both
+    // `NaN > X` and `Infinity > X` short-circuit to `false`/`true` in
+    // surprising ways — undefined lets ORAIN-0739 treat any parse
+    // failure uniformly as "unknown length" without special-casing.
     const contentLengthHeader = response.headers.get('content-length');
     const parsed =
       contentLengthHeader !== null && contentLengthHeader !== ''

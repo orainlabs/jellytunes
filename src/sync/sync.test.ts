@@ -1594,19 +1594,25 @@ describe('Error Handling', () => {
       deps: SyncDependencies;
       unlinkedPaths: string[];
       createdPaths: string[];
+      writeStreamFlags: Array<string | undefined>;
       fs: ReturnType<typeof createMockFileSystem>;
     } {
       const unlinkedPaths: string[] = [];
       const createdPaths: string[] = [];
+      const writeStreamFlags: Array<string | undefined> = [];
       const fs = createMockFileSystem();
-      // Wrap createWriteStream so we can record the path that the production
-      // code chose for the temp file — the test asserts that exact path
-      // ends up in the unlinked set.
+      // Wrap createWriteStream so we can record the path AND the options.flags
+      // (ORAIN-0737 cycle 3 CRITICAL): production code passes { flags: 'wx' }
+      // to refuse stale leftovers from a previous crash; without capturing
+      // options here, a regression that drops the flag would slip past the
+      // AC4 tests. Mock fs.createWriteStream also discards `_options.flags`,
+      // so the wrapper is the only place we can observe the production call.
       const originalCreateWriteStream = fs.createWriteStream.bind(fs);
       const wrappedFs: typeof fs = {
         ...fs,
         createWriteStream: async (path: string, options?: { flags?: string }) => {
           createdPaths.push(path);
+          writeStreamFlags.push(options?.flags);
           return originalCreateWriteStream(path, options);
         },
         unlink: async (path: string) => {
@@ -1652,6 +1658,7 @@ describe('Error Handling', () => {
         deps: { api, fs: wrappedFs, converter },
         unlinkedPaths,
         createdPaths,
+        writeStreamFlags,
         fs: wrappedFs,
       };
     }
@@ -1664,9 +1671,36 @@ describe('Error Handling', () => {
       return paths.filter((p) => /jt-copy_/.test(p));
     }
 
+    /**
+     * Locate the `jt-copy_*` temp path written by copyTrackFile. We cannot
+     * assume `createdPaths[0]` because the wrapper also captures any
+     * sidecar writes (cover-art companions, debug logs) that may run
+     * before the temp pipe is opened. Searching by prefix makes the test
+     * robust to ordering changes in the production code (ORAIN-0737 cycle
+     * 3 LOW hardening).
+     */
+    function jtCopyTempPath(paths: string[]): string | undefined {
+      return paths.find((p) => /jt-copy_/.test(p));
+    }
+
+    /**
+     * CRITICAL (cycle 3): every copyTrackFile exit path MUST have opened
+     * the temp file with `{ flags: 'wx' }` to refuse stale leftovers from a
+     * previous crash. The wrapper records the flag alongside the path; this
+     * helper returns the first wx flag used for a copy temp (mirrors the
+     * jtCopyTempPath lookup so order changes don't mask a missing flag).
+     */
+    function findWxFlagForCopyTemp(
+      paths: string[],
+      flags: Array<string | undefined>,
+    ): string | undefined {
+      const idx = paths.findIndex((p) => /jt-copy_/.test(p));
+      return idx >= 0 ? flags[idx] : undefined;
+    }
+
     it('unlinks the temp file on success', async () => {
       const { Readable } = require('stream');
-      const { deps, unlinkedPaths, createdPaths } = buildCopyDeps({
+      const { deps, unlinkedPaths, createdPaths, writeStreamFlags } = buildCopyDeps({
         streamFactory: () => Readable.from(Buffer.from('fake-mp3-bytes')),
       });
 
@@ -1682,17 +1716,23 @@ describe('Error Handling', () => {
       expect(result.tracksCopied).toBe(1);
       // The temp file MUST have been created under os.tmpdir() with the
       // copyTrackFile suffix…
-      expect(createdPaths.length).toBeGreaterThan(0);
-      expect(createdPaths[0].startsWith(require('os').tmpdir())).toBe(true);
+      const tempPath = jtCopyTempPath(createdPaths);
+      expect(tempPath).toBeDefined();
+      expect(tempPath!.startsWith(require('os').tmpdir())).toBe(true);
+      // CRITICAL (cycle 3): production code MUST open the temp file with
+      // `{ flags: 'wx' }` to refuse stale leftovers from a prior crash.
+      // A regression that drops the flag would still pass the unlink
+      // assertion below — this guards the exclusivity guarantee directly.
+      expect(findWxFlagForCopyTemp(createdPaths, writeStreamFlags)).toBe('wx');
       // …and it MUST have been unlinked before sync returned. Without
       // the `finally` block in copyTrackFile this assertion fires.
       const cleanup = jtCopyPaths(unlinkedPaths);
-      expect(cleanup).toContain(createdPaths[0]);
+      expect(cleanup).toContain(tempPath);
     });
 
     it('unlinks the temp file when tagFile (FFmpeg) fails', async () => {
       const { Readable } = require('stream');
-      const { deps, unlinkedPaths, createdPaths } = buildCopyDeps({
+      const { deps, unlinkedPaths, createdPaths, writeStreamFlags } = buildCopyDeps({
         streamFactory: () => Readable.from(Buffer.from('fake-mp3-bytes')),
         tagFile: async () => ({ success: false, error: 'FFmpeg exited with code 1' }),
       });
@@ -1709,14 +1749,18 @@ describe('Error Handling', () => {
       expect(result.success).toBe(false);
       expect(result.tracksFailed).toContain('track-copy-ac4');
       expect(result.errors.some((e) => e.includes('FFmpeg exited with code 1'))).toBe(true);
+      // CRITICAL (cycle 3): even on the FFmpeg-fail exit path, the temp
+      // file must have been opened with 'wx' — same exclusivity guarantee
+      // as the success path.
+      expect(findWxFlagForCopyTemp(createdPaths, writeStreamFlags)).toBe('wx');
       const cleanup = jtCopyPaths(unlinkedPaths);
       expect(cleanup.length).toBeGreaterThan(0);
-      expect(cleanup).toContain(createdPaths[0]);
+      expect(cleanup).toContain(jtCopyTempPath(createdPaths));
     });
 
     it('unlinks the temp file when the download stream errors', async () => {
       const { Readable } = require('stream');
-      const { deps, unlinkedPaths } = buildCopyDeps({
+      const { deps, unlinkedPaths, createdPaths, writeStreamFlags } = buildCopyDeps({
         streamFactory: () => {
           const stream = new Readable({ read() {} });
           setImmediate(() => stream.emit('error', new Error('network down')));
@@ -1736,9 +1780,19 @@ describe('Error Handling', () => {
       // try/finally around the pipe, the unlink never runs because the
       // promise rejects before the finally block.
       expect(result.tracksFailed).toContain('track-copy-ac4');
+      // CRITICAL (cycle 3): the temp file MUST have been created BEFORE
+      // the unlink — otherwise a regression that skips createWriteStream
+      // (e.g. wrapped in a try that the error avoids) would still pass a
+      // bare unlink-trace assertion. The mock unlink is a no-op for
+      // non-existent paths, so this assertion is what actually closes the
+      // gap. We assert both the temp path was created AND it was opened
+      // with 'wx' for the same exclusivity reason as the success path.
+      const tempPath = jtCopyTempPath(createdPaths);
+      expect(tempPath).toBeDefined();
+      expect(findWxFlagForCopyTemp(createdPaths, writeStreamFlags)).toBe('wx');
       const cleanup = jtCopyPaths(unlinkedPaths);
-      expect(cleanup.length).toBeGreaterThan(0);
-      // Crucially: no temp file leaks in os.tmpdir() under the copy prefix.
+      expect(cleanup).toContain(tempPath);
+      // No temp file leaks in os.tmpdir() under the copy prefix.
       for (const p of cleanup) {
         expect(p.startsWith(require('os').tmpdir())).toBe(true);
       }
@@ -1746,7 +1800,7 @@ describe('Error Handling', () => {
 
     it('unlinks the temp file when cancelled mid-download', async () => {
       const { Readable } = require('stream');
-      const { deps, unlinkedPaths } = buildCopyDeps({
+      const { deps, unlinkedPaths, createdPaths, writeStreamFlags } = buildCopyDeps({
         // Yield so cancel() can fire before the download completes and
         // hit the throwIfCancelled() checkpoint inside copyTrackFile.
         streamFactory: async () => {
@@ -1770,10 +1824,15 @@ describe('Error Handling', () => {
 
       expect(result.cancelled).toBe(true);
       expect(result.success).toBe(false);
-      // The temp file the stream did write MUST be cleaned up — cancellation
-      // is one of the four AC4 exit paths.
+      // CRITICAL (cycle 3): same reasoning as the stream-error test — the
+      // temp file MUST have been created (with 'wx') before the unlink.
+      // Without this guard, a copyTrackFile that calls unlink without
+      // createWriteStream would silently pass the unlink-count assertion.
+      const tempPath = jtCopyTempPath(createdPaths);
+      expect(tempPath).toBeDefined();
+      expect(findWxFlagForCopyTemp(createdPaths, writeStreamFlags)).toBe('wx');
       const cleanup = jtCopyPaths(unlinkedPaths);
-      expect(cleanup.length).toBeGreaterThan(0);
+      expect(cleanup).toContain(tempPath);
       for (const p of cleanup) {
         expect(p.startsWith(require('os').tmpdir())).toBe(true);
       }
