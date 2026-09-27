@@ -1147,6 +1147,34 @@ describe('sync-api', () => {
 
       await expect(api.getCoverArt('cover-art-1')).rejects.toThrow();
     });
+
+    it('ORAIN-0736: requests 500 px baseline JPEG from Jellyfin (maxWidth/Height/quality/format)', async () => {
+      const seenUrl: { value: string | null } = { value: null };
+      const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+        seenUrl.value = url;
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        };
+      });
+
+      const api = createApiClient({
+        baseUrl: 'https://jellyfin.test',
+        apiKey: 'k',
+        userId: 'user-1',
+        fetch: mockFetch,
+      });
+
+      await api.getCoverArt('track-1');
+      expect(seenUrl.value).not.toBeNull();
+      expect(seenUrl.value).toContain('/Items/track-1/Images/Primary');
+      expect(seenUrl.value).toContain('maxWidth=500');
+      expect(seenUrl.value).toContain('maxHeight=500');
+      expect(seenUrl.value).toContain('quality=85');
+      expect(seenUrl.value).toContain('format=Jpg');
+    });
   });
 
   describe('request() AbortController', () => {

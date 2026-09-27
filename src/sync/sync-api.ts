@@ -8,6 +8,7 @@
 import type { TrackInfo, ItemType, SyncLogger } from './types';
 import type { JellyfinTrackItem, JellyfinAlbumItem } from './types';
 import { buildAuthHeader, type BuildAuthHeaderInput } from '../shared/auth-headers';
+import { buildCoverArtUrl } from './cover-image';
 
 /**
  * ORAIN-0562: optional identity used to populate the `Authorization:
@@ -718,7 +719,12 @@ class SyncApiImpl implements SyncApi {
   }
 
   async getCoverArt(itemId: string): Promise<Buffer> {
-    const url = `${this.baseUrl}/Items/${itemId}/Images/Primary`;
+    // ORAIN-0736: ask Jellyfin for a 500 px baseline-quality JPEG so the
+    // sync layer doesn't have to downscale or re-encode the cover before
+    // embedding. A "smaller-than-the-source" original returns unchanged
+    // (Jellyfin's docs); the SOF gate in sync-files still falls back to
+    // `mjpeg` if for any reason the bytes aren't baseline JPEG.
+    const url = buildCoverArtUrl(this.baseUrl, this.userId, itemId);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
