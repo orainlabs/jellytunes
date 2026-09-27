@@ -244,6 +244,27 @@ export class SyncPhaseError extends Error {
   }
 }
 
+/**
+ * ORAIN-0739 rework: dedicated error class for stall-aborted downloads.
+ * The previous implementation tagged the stall via a `stallTimeout`
+ * boolean field on a plain `Error` set/read through unsafe casts
+ * (`(err as Error & { stallTimeout?: boolean }).stallTimeout = true`).
+ * That was fragile: any future `Error` with a truthy `stallTimeout`
+ * field would trip the branch. `instanceof DownloadStalledError` makes
+ * the classification exact and lets TS prove the relationship.
+ *
+ * This commit only adds the class. A follow-up commit wires the stall
+ * timer to throw it and the catch block to recognise it via instanceof.
+ */
+export class DownloadStalledError extends Error {
+  readonly stallTimeoutMs: number;
+  constructor(stallTimeoutMs: number) {
+    super(`Sin datos del servidor durante ${stallTimeoutMs / 1000} s`);
+    this.name = 'DownloadStalledError';
+    this.stallTimeoutMs = stallTimeoutMs;
+  }
+}
+
 // ORAIN-0739 AC4: retry delays in milliseconds between download attempts
 // (after the first). 2 retries → wait 1 s, then 3 s before re-issuing.
 const DOWNLOAD_RETRY_DELAYS_MS = [1000, 3000] as const;
