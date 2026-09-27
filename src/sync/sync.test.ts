@@ -20,6 +20,7 @@ import {
   getFilenameFromPath,
 } from './sync-config';
 import { createProgressEmitter, createCancellationController, progress } from './sync-progress';
+import { COVER_MAX_BYTES } from './cover-image';
 
 import {
   getSyncedTracksForDevice,
@@ -5706,8 +5707,10 @@ describe('cleanEmptyDir', () => {
       });
 
       expect(result.success).toBe(true);
-      // After fix: deduplication → totalSizeBytes = N × TRACK_SIZE
-      expect(result.totalSizeBytes).toBe(N * TRACK_SIZE);
+      // After fix: deduplication → totalSizeBytes = N × TRACK_SIZE, plus the
+      // bounded cover constant (ORAIN-0736/ORAIN-0738) once per track in
+      // embed mode (the default coverArtMode when no options are passed).
+      expect(result.totalSizeBytes).toBe(N * (TRACK_SIZE + COVER_MAX_BYTES));
     });
 
     /**

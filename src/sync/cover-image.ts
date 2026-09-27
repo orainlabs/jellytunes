@@ -21,6 +21,19 @@ export const COVER_MAX_DIM = 500;
 export const COVER_QUALITY = 85;
 export const COVER_FORMAT = 'Jpg';
 
+/**
+ * Upper bound for the size of an embedded or companion cover on the destination.
+ * Measured by ORAIN-0736: a typical 500px @ quality 85 baseline JPEG weighs
+ * ~50 KB (48,781 B for the *Biscuits* test cover). The 150 KB bound leaves
+ * ~3× headroom for harder content without inflating the storage estimate.
+ *
+ * ORAIN-0738: imported (not duplicated) by sync-core.ts for its single
+ * `estimateOutputBytes` estimator, used by both the storage bar and the
+ * progress bar. Together with the bounded cover pipeline in ORAIN-0736,
+ * the actual cover bytes written to disk stay under this cap.
+ */
+export const COVER_MAX_BYTES = 150 * 1024;
+
 /** SOI marker (start-of-image). A real JPEG starts with FFD8 FF. */
 export function isJpeg(bytes: Buffer): boolean {
   return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;

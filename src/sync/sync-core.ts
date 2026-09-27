@@ -30,6 +30,7 @@ import path from 'path';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
+import { COVER_MAX_BYTES } from './cover-image';
 
 import {
   validateSyncConfig,
@@ -181,6 +182,45 @@ function estimatedMp3Size(
 /** Parse arbitrary bitrate string to kbps (e.g. '192k' → 192, '320k' → 320) */
 function parseBitrateKbps(bitrate: string): number {
   return parseInt(bitrate.replace(/k$/i, ''), 10) || 192;
+}
+
+/**
+ * ORAIN-0738: single per-track output-size estimator shared by the storage
+ * bar (`estimateSize`) and the progress bar's numerator.
+ *
+ * Replaces the two previous ad-hoc calculations:
+ *  - `totalBytesEstimate` summed `track.size` blindly (sync-core.ts:599),
+ *    ignoring conversion AND the cover contribution.
+ *  - `estimateSize` re-implemented `needsConversion` (sync-core.ts:1122) and
+ *    ignored covers entirely.
+ *
+ * The conversion rule defers to {@link needsConversion}: an MP3 without
+ * `track.bitrate` returns false, so the estimator falls through to
+ * `track.size` — matching what the copy path does for that track. The
+ * cover contribution is the caller's responsibility (`addCover`) because
+ * "embed" applies per-track and "companion" applies once per album — the
+ * caller has the album-grouping context.
+ *
+ * The total can deviate up to ~10 % from the bytes actually written
+ * (cover bytes vary, bitrate-ratio is a coarse estimator); the real
+ * destination size is reported separately at `[sync-end]` (ORAIN-0740).
+ */
+export function estimateOutputBytes(
+  track: { format: string; size?: number; bitrate?: number },
+  options: {
+    convertToMp3: boolean;
+    bitrate: '128k' | '192k' | '320k';
+    targetBitrateKbps: number;
+    coverArtMode: CoverArtMode;
+    addCover: boolean;
+  },
+): number {
+  const audioSize =
+    options.convertToMp3 && needsConversion(track, options.targetBitrateKbps)
+      ? estimatedMp3Size(track.size ?? 0, (track.bitrate ?? 0) / 1000, options.targetBitrateKbps)
+      : (track.size ?? 0);
+  const coverSize = options.coverArtMode !== 'off' && options.addCover ? COVER_MAX_BYTES : 0;
+  return audioSize + coverSize;
 }
 
 /** No-op logger used when no logger is injected (keeps module testable) */
@@ -600,10 +640,41 @@ class SyncCoreImpl {
       options.convertToMp3 === true && tracks.some((t) => needsConversion(t, targetBitrateKbps));
     const concurrency = anyWillConvert ? CONVERT_CONCURRENCY : COPY_CONCURRENCY;
 
-    // Estimate total bytes before copying starts so progress bar can show bytesProcessed/totalBytes
+    // ORAIN-0738: storage and progress bars must share a single total —
+    // the per-track destination-size estimate. We compute the same totals
+    // for `totalBytesEstimate` (denominator) and per-track bumps
+    // (numerator, inside the loop) by reusing `estimateOutputBytes` and
+    // the same per-album companion-cover rule.
+    const coverArtMode = options.coverArtMode ?? 'embed';
+    const convertToMp3 = options.convertToMp3 === true;
+    // Track which albumIds we've already counted a companion cover for, in
+    // iteration order. Mirrors `processedCoverDirs` in writeCompanionCover
+    // (the actual cover.jpg write dedupes by output dir; this Set mirrors
+    // the per-track accounting). For the TOTAL it's only the unique
+    // albumIds; for the numerator we want the same "first track of album
+    // wins" rule so the two stay in sync.
+    const companionCoverAlbumIds = new Set<string>();
+
+    /** Does THIS track's destination estimate include a cover contribution? */
+    const shouldAddCover = (track: TrackInfo): boolean => {
+      if (coverArtMode === 'off') return false;
+      if (coverArtMode === 'embed') return true;
+      // companion: only the first track of each album contributes.
+      if (!track.albumId) return false;
+      if (companionCoverAlbumIds.has(track.albumId)) return false;
+      companionCoverAlbumIds.add(track.albumId);
+      return true;
+    };
+
     let totalBytesEstimate = 0;
     for (const track of tracks) {
-      totalBytesEstimate += track.size ?? 0;
+      totalBytesEstimate += estimateOutputBytes(track, {
+        convertToMp3,
+        bitrate: options.bitrate ?? '192k',
+        targetBitrateKbps,
+        coverArtMode,
+        addCover: shouldAddCover(track),
+      });
     }
 
     let completed = 0;
@@ -635,7 +706,6 @@ class SyncCoreImpl {
           options,
           targetBitrateKbps,
           syncedByTrackId,
-          stats,
         );
         if (result.processed) {
           stats.itemsProcessed++;
@@ -648,6 +718,19 @@ class SyncCoreImpl {
           errors.push({ trackName: track.name, message: result.error });
           tracksFailed.push(track.id);
         }
+
+        // ORAIN-0738 AC2: bump the numerator for EVERY outcome (copied,
+        // converted, skipped, failed, retagged). The estimate matches what
+        // would actually be on disk for this track — same number used in
+        // `totalBytesEstimate` above, so the bar lands on the total at the
+        // end of the sync regardless of which paths fired.
+        stats.bytesTransferred += estimateOutputBytes(track, {
+          convertToMp3,
+          bitrate: options.bitrate ?? '192k',
+          targetBitrateKbps,
+          coverArtMode,
+          addCover: shouldAddCover(track),
+        });
 
         // Collect basenames for embed-mode LRC cleanup
         // Add for both processed and skipped tracks (skipped tracks still sync lyrics)
@@ -710,7 +793,6 @@ class SyncCoreImpl {
     options: ReturnType<typeof resolveSyncOptions>,
     targetBitrateKbps: number,
     syncedByTrackId: Map<string, SyncedTrackRecord>,
-    stats: ReturnType<typeof createProgressStats>,
   ): Promise<{
     retagged: boolean;
     moved: boolean;
@@ -750,7 +832,6 @@ class SyncCoreImpl {
         destinationPath,
         trackMeta,
         options,
-        stats,
       );
     }
 
@@ -767,7 +848,6 @@ class SyncCoreImpl {
       destinationPath,
       trackMeta,
       options,
-      stats,
     );
   }
 
@@ -782,7 +862,6 @@ class SyncCoreImpl {
     destinationPath: string,
     trackMeta: TrackMetadata,
     options: ReturnType<typeof resolveSyncOptions>,
-    stats: ReturnType<typeof createProgressStats>,
   ): Promise<{
     retagged: boolean;
     moved: boolean;
@@ -919,7 +998,6 @@ class SyncCoreImpl {
       destinationPath,
       trackMeta,
       options,
-      stats,
     );
     return {
       ...copyResult,
@@ -939,7 +1017,6 @@ class SyncCoreImpl {
     destinationPath: string,
     trackMeta: TrackMetadata,
     options: ReturnType<typeof resolveSyncOptions>,
-    stats: ReturnType<typeof createProgressStats>,
   ): Promise<{
     retagged: boolean;
     moved: boolean;
@@ -1002,7 +1079,7 @@ class SyncCoreImpl {
           if (coverBuffer) await this.writeCompanionCover(outputDir, coverBuffer);
         }
       } else {
-        const bytesWritten = await this.copyTrackFile(
+        await this.copyTrackFile(
           track,
           outputDir,
           outputPath,
@@ -1010,7 +1087,9 @@ class SyncCoreImpl {
           trackMeta,
           options,
         );
-        stats.bytesTransferred += bytesWritten;
+        // ORAIN-0738: bytesTransferred is now bumped once per track in
+        // runCopyPhase (using estimateOutputBytes), uniformly for every
+        // outcome — including conversion and skipped/failed tracks.
       }
 
       this.saveSyncedRecord(
@@ -1133,13 +1212,28 @@ class SyncCoreImpl {
   async estimateSize(
     itemIds: string[],
     itemTypes: Map<string, ItemType>,
-    options?: { convertToMp3?: boolean; bitrate?: string; syncedIds?: Set<string> },
+    options?: {
+      convertToMp3?: boolean;
+      bitrate?: string;
+      coverArtMode?: CoverArtMode;
+      syncedIds?: Set<string>;
+    },
   ): Promise<SizeEstimate> {
     const { tracks: rawTracks, errors: _errors } = await this.deps.api.getTracksForItems(
       itemIds,
       itemTypes,
     );
     const tracks = deduplicateTracks(rawTracks);
+
+    // ORAIN-0738: route through estimateOutputBytes so the storage-bar total
+    // matches the progress-bar total exactly. Cover bytes are counted when
+    // the caller passes the same coverArtMode the sync will use, since the
+    // preview's job is to show what the sync will write. In `companion` mode
+    // each album's cover is counted once via `companionCoverAlbumIds`, like
+    // runCopyPhase does.
+    const convertToMp3 = options?.convertToMp3 === true;
+    const targetBitrateKbps = parseBitrateKbps(options?.bitrate ?? '192k');
+    const coverArtMode: CoverArtMode = options?.coverArtMode ?? 'off';
 
     const formatBreakdown = new Map<string, number>();
     const typeBreakdown = new Map<ItemType, number>();
@@ -1148,17 +1242,34 @@ class SyncCoreImpl {
     let syncedMusicBytes = 0;
     let newMusicBytes = 0;
 
+    // Companion-mode deduplication: a single cover is written once per
+    // album, no matter how many tracks share it. `runCopyPhase` keeps the
+    // same invariant.
+    const companionCoverAlbumIds = new Set<string>();
+    if (coverArtMode === 'companion') {
+      for (const t of tracks) {
+        if (t.albumId) companionCoverAlbumIds.add(t.albumId);
+      }
+    }
+
     for (const track of tracks) {
-      // Apply MP3 conversion size reduction if needed
-      const fmt = (track.format ?? '').toLowerCase();
-      const needsConversion = options?.convertToMp3 && fmt !== 'mp3';
-      const effectiveSize = needsConversion
-        ? estimatedMp3Size(
-            track.size ?? 0,
-            (track.bitrate ?? 0) / 1000, // track.bitrate is in bps, convert to kbps
-            parseBitrateKbps(options?.bitrate ?? '192k'),
-          )
-        : (track.size ?? 0);
+      const addCover =
+        coverArtMode === 'embed' ||
+        (coverArtMode === 'companion' &&
+          track.albumId !== undefined &&
+          companionCoverAlbumIds.has(track.albumId));
+      // Consume the per-album cover slot on the first companion track seen,
+      // so only one track of an album carries the constant.
+      if (coverArtMode === 'companion' && track.albumId !== undefined) {
+        companionCoverAlbumIds.delete(track.albumId);
+      }
+      const effectiveSize = estimateOutputBytes(track, {
+        convertToMp3,
+        bitrate: '192k',
+        targetBitrateKbps,
+        coverArtMode,
+        addCover,
+      });
 
       totalBytes += effectiveSize;
 
@@ -1170,6 +1281,7 @@ class SyncCoreImpl {
       }
 
       // Format breakdown (report effective size per format)
+      const fmt = (track.format ?? '').toLowerCase();
       formatBreakdown.set(fmt, (formatBreakdown.get(fmt) ?? 0) + effectiveSize);
 
       // Type breakdown
@@ -2433,7 +2545,7 @@ export function createSyncCore(config: SyncConfig, deps?: Partial<SyncDependenci
     sync: (input, onProgress) => core.sync(input, onProgress),
     cancel: () => core.cancel(),
     validateDestination: (path) => core.validateDestination(path),
-    estimateSize: (itemIds, itemTypes) => core.estimateSize(itemIds, itemTypes),
+    estimateSize: (itemIds, itemTypes, options) => core.estimateSize(itemIds, itemTypes, options),
     removeItems: (itemIds, itemTypes, destinationPath) =>
       core.removeItems(itemIds, itemTypes, destinationPath),
     testConnection: () => core.testConnection(),
@@ -2452,7 +2564,12 @@ export interface SyncCore {
   estimateSize(
     itemIds: string[],
     itemTypes: Map<string, ItemType>,
-    options?: { convertToMp3?: boolean; bitrate?: string; syncedIds?: Set<string> },
+    options?: {
+      convertToMp3?: boolean;
+      bitrate?: string;
+      coverArtMode?: CoverArtMode;
+      syncedIds?: Set<string>;
+    },
   ): Promise<SizeEstimate>;
   removeItems(
     itemIds: string[],
