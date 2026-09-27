@@ -1079,14 +1079,7 @@ class SyncCoreImpl {
           if (coverBuffer) await this.writeCompanionCover(outputDir, coverBuffer);
         }
       } else {
-        await this.copyTrackFile(
-          track,
-          outputDir,
-          outputPath,
-          coverArtMode,
-          trackMeta,
-          options,
-        );
+        await this.copyTrackFile(track, outputDir, outputPath, coverArtMode, trackMeta, options);
         // ORAIN-0738: bytesTransferred is now bumped once per track in
         // runCopyPhase (using estimateOutputBytes), uniformly for every
         // outcome — including conversion and skipped/failed tracks.
