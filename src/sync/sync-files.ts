@@ -1135,8 +1135,9 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
  */
 export function isBaselineOrExtendedJpeg(bytes: Buffer): boolean {
   if (!bytes || bytes.length < 4) return false;
-  // Cheap fast-path: confirm SOI before doing the SOF walk.
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return false;
+  // getJpegFrameType already runs isJpeg (SOI check) and returns
+  // 'non-jpeg' for anything that isn't a JPEG, so the predicate collapses
+  // to a single classification call.
   const frameType = getJpegFrameType(bytes);
   return frameType === 'baseline' || frameType === 'extended';
 }

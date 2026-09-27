@@ -5685,9 +5685,13 @@ describe('cleanEmptyDir', () => {
 describe('ORAIN-0736 — companion cover.jpg byte equality', () => {
   // Use a JPEG-shaped buffer so the bytes look like a real cover; the
   // content itself is irrelevant since we're only checking pass-through.
+  // We pin a baseline (SOF0) JPEG so the AC2 "baseline, never
+  // progressive" constraint is part of the byte contract — a future
+  // regression that fed a progressive cover through would fail here.
   const coverBytes = Buffer.from([
     0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
-    0x00, 0x01, 0x00, 0x00, 0xff, 0xd9, 0xde, 0xad, 0xbe, 0xef,
+    0x00, 0x01, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x20, 0x03, 0x01, 0x22,
+    0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x01, 0xff, 0xd9,
   ]);
 
   function makeMinimalTrack(overrides: Partial<TrackInfo> = {}): TrackInfo {
@@ -5734,5 +5738,29 @@ describe('ORAIN-0736 — companion cover.jpg byte equality', () => {
       Buffer | undefined;
     expect(written).toBeDefined();
     expect(Buffer.compare(written as Buffer, coverBytes)).toBe(0);
+  });
+
+  it('AC2 byte shape: cover.jpg starts with SOI and the first SOF is baseline (FFC0)', async () => {
+    // Defence in depth: a future regression that fed a progressive
+    // cover through `writeCompanionCover` would corrupt the bytes that
+    // car radios / Walkmans read. The mock filesystem cannot decode
+    // the JPEG, so we walk the SOF marker by hand.
+    const mockFs = createMockFileSystem();
+    const result = await runCompanionSync(mockFs);
+    expect(result.success).toBe(true);
+
+    const written = (mockFs as any).__getFile('/mnt/usb/Artist/Album/cover.jpg') as Buffer;
+    expect(written).toBeDefined();
+    // SOI: FFD8
+    expect(written[0]).toBe(0xff);
+    expect(written[1]).toBe(0xd8);
+    // First SOF marker must be baseline (0xC0), not progressive (0xC2).
+    // We don't fully parse the JPEG — we just check the SOF marker byte
+    // (immediately after the leading 0xFF) is still 0xC0. If a future
+    // refactor swapped the input for a progressive cover, that single
+    // byte would flip to 0xC2 and this test would catch it.
+    // Fixture layout: SOI (0..1) | APP0 (2..19) | SOF0 (20..21) | len (22..)
+    expect(written[20]).toBe(0xff);
+    expect(written[21]).toBe(0xc0);
   });
 });

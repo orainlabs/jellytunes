@@ -2134,12 +2134,18 @@ class SyncCoreImpl {
 
   /**
    * Write cover.jpg companion file to an album directory (once per directory).
+   *
+   * The directory is marked as processed only after a successful write:
+   * if the write fails the next track in the same directory will retry
+   * instead of silently being left without a cover.jpg. Today's sync
+   * pipeline is sequential so the race doesn't materialise, but adding
+   * before the await would silently break a future concurrent path.
    */
   private async writeCompanionCover(dir: string, coverBuffer: Buffer): Promise<void> {
     if (this.processedCoverDirs.has(dir)) return;
-    this.processedCoverDirs.add(dir);
     try {
       await this.deps.fs.writeFile(`${dir}/cover.jpg`, coverBuffer);
+      this.processedCoverDirs.add(dir);
       this.log.debug(`Companion cover written: ${dir}/cover.jpg`);
     } catch (err) {
       this.log.warn(
