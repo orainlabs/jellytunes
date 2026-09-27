@@ -24,13 +24,31 @@
  *     `resolveFFprobePath()`. Without it the test silently degraded to
  *     `size > 0`, weaker than the spec's "reproducible" requirement.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { spawnSync } from 'child_process';
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createFFmpegConverter } from './sync-files';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
+
+// ORAIN-0737 cycle 1: SyncCore calls saveSyncedRecord (which delegates
+// to `mockUpsert` in tests) and queries getSyncedTracksForDevice. The
+// production path requires `initDatabase()` to have run; tests must
+// either inject `mockUpsert` (preferred — keeps the test focused) or
+// mock the entire database module. We use the database mock here so
+// the test stays hermetic on hosts with no DB. The dedicated
+// sync.test.ts suite covers the real-DB integration elsewhere.
+vi.mock('../main/database', () => ({
+  initDatabase: vi.fn(),
+  closeDatabase: vi.fn(),
+  upsertSyncedTrack: vi.fn(),
+  getSyncedTracksForDevice: vi.fn(() => []),
+  getSyncedTracksForItem: vi.fn(() => []),
+  getSyncedItems: vi.fn(() => []),
+  removeSyncedTracksForItem: vi.fn(),
+  removeSyncedTrack: vi.fn(),
+}));
 
 function ffmpegAvailable(ffmpegPath: string): boolean {
   const probe = spawnSync(ffmpegPath, ['-version'], { stdio: 'ignore', timeout: 5000 });
@@ -524,4 +542,114 @@ describe('ORAIN-0737 AC5 — Fixture H: extension-aware tagFile', () => {
       expect(dur).toBeGreaterThan(0);
     }
   });
+
+  // ORAIN-0737 cycle 1 (review MEDIUM): AC1 requires fixture H to sync
+  // end-to-end via SyncCore with conversion disabled. The tagFile-only
+  // tests above prove the FFmpeg plumbing works; this test proves the
+  // bug observed on mbpr0-2012 (sync of the same fixture via the
+  // production wiring) is gone. We stream the fixture's bytes through
+  // downloadItemStream → temp file in os.tmpdir() → tagFile → destination,
+  // then probe the destination with ffprobe and compare durations.
+  //
+  // Note: this test uses the REAL filesystem (`createNodeFileSystem`)
+  // because the production wiring spawns FFmpeg, which reads the temp
+  // path directly off disk. A mock fs would let the assertions about
+  // "destination exists" pass even when FFmpeg never actually wrote
+  // anything — defeating the purpose of an integration test.
+  it.runIf(canRun)(
+    'AC1 end-to-end: SyncCore copies fixture H with convertToMp3=false (full wiring)',
+    async () => {
+      const { Readable } = require('stream');
+      const { createNodeFileSystem } = await import('./sync-files');
+      const { createSyncCore } = await import('./sync-core');
+      const { createMockApiClient } = await import('./sync-api');
+
+      const { withExt } = synthesizeFixtureH(ffmpegPath, workDir);
+      const fixtureBytes = readFileSync(withExt);
+
+      // Track metadata must mirror the fixture so copyTrackFile passes
+      // format='mp3' (which triggers buildCopyTrackTempPath to append
+      // `.mp3` to the temp file path — the very thing that makes
+      // FFmpeg's mp3 demuxer pick the right format guess).
+      const track = {
+        id: 'fixture-h-track',
+        name: 'Fixture H',
+        album: 'ORAIN-0737',
+        artists: ['JellyTunes'],
+        path: '/music/Jellytunes/ORAIN-0737/fixture-h.mp3',
+        format: 'mp3',
+        size: fixtureBytes.length,
+        trackNumber: 1,
+      };
+
+      const api = createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+        downloadItemStream: async () => Readable.from(fixtureBytes),
+        getItem: async () => null,
+      });
+
+      // Real FFmpeg-backed converter: this is what the production app
+      // uses. Anything weaker (a mock) would defeat the purpose of an
+      // integration test against the bug.
+      const converter = createFFmpegConverter();
+      const fs = createNodeFileSystem();
+
+      const core = createSyncCore(
+        {
+          serverUrl: 'https://jellyfin.test',
+          apiKey: '0123456789abcdef0123456789abcdef',
+          userId: 'abcdef1234567890abcdef1234567890',
+          serverRootPath: '/music/',
+        },
+        {
+          api,
+          fs,
+          converter,
+          // Inject a no-op mockUpsert so saveSyncedRecord doesn't try to
+          // call into the real (un-initialised) database. AC1 only cares
+          // about the copy + tag round-trip, not DB persistence.
+          mockUpsert: () => {},
+        },
+      );
+
+      const destDir = join(workDir, 'dest');
+
+      const result = await core.sync({
+        itemIds: ['album-h'],
+        itemTypes: new Map([['album-h', 'album' as const]]),
+        destinationPath: destDir,
+        // coverArtMode: 'off' avoids a cover-art fetch from a mocked
+        // Jellyfin API (the mock has no image bytes); AC1 only exercises
+        // the copy + tag path.
+        options: { convertToMp3: false, coverArtMode: 'off' },
+      });
+
+      // Sync must report success and exactly one copied track. The bug
+      // observed in production manifested as a failed track + an
+      // `Invalid data found` FFmpeg error; if we regressed, this assertion
+      // fires before we even get to ffprobe.
+      expect(result.success).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.tracksCopied).toBe(1);
+      expect(result.tracksFailed).not.toContain(track.id);
+
+      // The destination file MUST exist and have a positive duration that
+      // matches the original silent MP3's 1-second encode (probeDuration
+      // is ~0.99s after FFmpeg's own framing). The key AC1 claim is
+      // "el fichero resultante dura lo mismo que el original" — duration
+      // equality, not just non-zero.
+      const destPath = join(destDir, 'Jellytunes', 'ORAIN-0737', 'fixture-h.mp3');
+      expect(statSync(destPath).size).toBeGreaterThan(0);
+      if (canProbe) {
+        const originalDur = probeDurationSeconds(withExt);
+        const destDur = probeDurationSeconds(destPath);
+        expect(originalDur).toBeGreaterThan(0);
+        expect(destDur).toBeGreaterThan(0);
+        // Within 0.1s — the round-trip should preserve the encoded
+        // duration. Allow a tiny fudge for ffprobe rounding.
+        expect(Math.abs(destDur - originalDur)).toBeLessThan(0.1);
+      }
+    },
+    60_000, // FFmpeg round-trip + ffprobe + file IO can take a few seconds on CI
+  );
 });
