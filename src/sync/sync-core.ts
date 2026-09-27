@@ -2260,14 +2260,18 @@ class SyncCoreImpl {
     const tmpPath = buildConvertTempPath(track.format, Date.now());
     const stream = await this.deps.api.downloadItemStream(track.id);
 
-    // Capture Content-Type off the stream before piping (ORAIN-0729). The
-    // property is set by sync-api's downloadItemStream when the response
-    // has a Content-Type header; older/mocked streams may not have it.
-    const downloadContentType = (
-      stream as NodeJS.ReadableStream & {
-        contentType?: string;
-      }
-    ).contentType;
+    // Capture Content-Type AND Content-Length off the stream before piping
+    // (ORAIN-0729, ORAIN-0737 AC3). Both properties are set by sync-api's
+    // downloadItemStream when the response has the headers; older/mocked
+    // streams may not have them. `downloadContentLength` is currently
+    // consumed only by the diagnostic logger; ORAIN-0739 will pick it up
+    // for post-download validation.
+    const downloadMeta = stream as NodeJS.ReadableStream & {
+      contentType?: string;
+      contentLength?: number;
+    };
+    const downloadContentType = downloadMeta.contentType;
+    const downloadContentLength = downloadMeta.contentLength;
 
     // ORAIN-0732 AC6 (cycle 2): wrap the download pipe and the conversion in
     // a single try/finally so the temp file is unlinked on EVERY exit path —
@@ -2324,6 +2328,7 @@ class SyncCoreImpl {
           track,
           tmpPath,
           downloadContentType,
+          downloadContentLength,
           result.error,
         );
         throw new Error(result.error ?? 'Conversion failed');
@@ -2350,6 +2355,7 @@ class SyncCoreImpl {
     track: TrackInfo,
     tmpPath: string,
     downloadContentType: string | undefined,
+    downloadContentLength: number | undefined,
     ffmpegError: string | undefined,
   ): Promise<void> {
     let size = track.size;
@@ -2377,8 +2383,10 @@ class SyncCoreImpl {
 
     this.log.warn(
       `[ffmpeg-received] trackId=${track.id} format=${track.format} extension=${extension} ` +
-        `contentType=${downloadContentType ?? '(none)'} size=${size ?? '(unknown)'} ` +
-        `first16Hex=${first16Hex} ffmpegError=${ffmpegError ?? '(none)'}`,
+        `contentType=${downloadContentType ?? '(none)'} ` +
+        `contentLength=${downloadContentLength ?? '(unknown)'} ` +
+        `size=${size ?? '(unknown)'} first16Hex=${first16Hex} ` +
+        `ffmpegError=${ffmpegError ?? '(none)'}`,
     );
   }
 }

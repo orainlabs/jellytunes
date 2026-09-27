@@ -698,6 +698,15 @@ class SyncApiImpl implements SyncApi {
     // subsequent reads of the stream body do not invalidate it.
     const contentType = response.headers.get('content-type') ?? undefined;
 
+    // ORAIN-0737 AC3: also expose Content-Length (parsed to number, or
+    // undefined when the header is missing) so the sync layer can do
+    // post-download validation without re-fetching.
+    const contentLengthHeader = response.headers.get('content-length');
+    const contentLength =
+      contentLengthHeader !== null && contentLengthHeader !== ''
+        ? Number(contentLengthHeader)
+        : undefined;
+
     // Convert Web ReadableStream → Node.js Readable (Node 16.7+, Electron 22+)
     const { Readable } = require('stream');
     const nodeStream = Readable.fromWeb(response.body);
@@ -706,6 +715,14 @@ class SyncApiImpl implements SyncApi {
     // event handlers that look at properties) are unaffected.
     Object.defineProperty(nodeStream, 'contentType', {
       value: contentType,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    // ORAIN-0737 AC3: same pattern for Content-Length. `Number('')` is 0,
+    // so the empty-string check above prevents that trap.
+    Object.defineProperty(nodeStream, 'contentLength', {
+      value: contentLength,
       writable: false,
       enumerable: false,
       configurable: false,

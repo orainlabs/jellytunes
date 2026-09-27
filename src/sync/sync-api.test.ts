@@ -1317,3 +1317,91 @@ describe('auth header (ORAIN-0562)', () => {
     expect(headers.Authorization).toBe('MediaBrowser Token="k-only"');
   });
 });
+
+// ORAIN-0737 AC3: downloadItemStream must expose Content-Type AND Content-Length
+// on the returned stream so the sync layer (and ORAIN-0739's post-download
+// validation) can read them without re-fetching.
+describe('downloadItemStream (ORAIN-0737 AC3)', () => {
+  const { Readable } = require('stream') as typeof import('stream');
+
+  function makeDownloadResponse(headers: Record<string, string>, body: string): Response {
+    return new Response(body, {
+      status: 200,
+      headers,
+    });
+  }
+
+  it('exposes contentType when the response has a Content-Type header', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        makeDownloadResponse({ 'content-type': 'audio/mpeg', 'content-length': '4' }, 'ID3x'),
+      );
+    const api = createApiClient({
+      baseUrl: 'https://jellyfin.test',
+      apiKey: 'k',
+      userId: 'u',
+      fetch: mockFetch,
+    });
+    const stream = await api.downloadItemStream('item-1');
+    expect((stream as { contentType?: string }).contentType).toBe('audio/mpeg');
+    // Drain the stream so the test does not leak handles.
+    await new Promise<void>((resolve, reject) => {
+      stream.on('data', () => {});
+      stream.on('end', resolve);
+      stream.on('error', reject);
+    });
+  });
+
+  it('exposes contentLength as a number when Content-Length is present', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        makeDownloadResponse({ 'content-type': 'audio/mpeg', 'content-length': '1024' }, 'x'),
+      );
+    const api = createApiClient({
+      baseUrl: 'https://jellyfin.test',
+      apiKey: 'k',
+      userId: 'u',
+      fetch: mockFetch,
+    });
+    const stream = await api.downloadItemStream('item-1');
+    expect((stream as { contentLength?: number }).contentLength).toBe(1024);
+    Readable.from(stream as unknown as NodeJS.ReadableStream).resume();
+  });
+
+  it('exposes contentLength as undefined when Content-Length is absent', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(makeDownloadResponse({ 'content-type': 'audio/mpeg' }, 'x'));
+    const api = createApiClient({
+      baseUrl: 'https://jellyfin.test',
+      apiKey: 'k',
+      userId: 'u',
+      fetch: mockFetch,
+    });
+    const stream = await api.downloadItemStream('item-1');
+    expect((stream as { contentLength?: number }).contentLength).toBeUndefined();
+    Readable.from(stream as unknown as NodeJS.ReadableStream).resume();
+  });
+
+  it('exposes contentType as undefined when Content-Type is absent (explicit null)', async () => {
+    // Node's Response defaults Content-Type to text/plain when the body is a
+    // string, so we have to use a Blob body to keep the header absent.
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(new Blob([new Uint8Array([1, 2, 3, 4])]), {
+        status: 200,
+        headers: { 'content-length': '4' },
+      }),
+    );
+    const api = createApiClient({
+      baseUrl: 'https://jellyfin.test',
+      apiKey: 'k',
+      userId: 'u',
+      fetch: mockFetch,
+    });
+    const stream = await api.downloadItemStream('item-1');
+    expect((stream as { contentType?: string }).contentType).toBeUndefined();
+    Readable.from(stream as unknown as NodeJS.ReadableStream).resume();
+  });
+});
