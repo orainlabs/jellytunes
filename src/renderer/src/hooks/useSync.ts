@@ -77,7 +77,7 @@ export function useSync({
     tracksRetagged: number;
     lyricsAdded?: number;
     removed: number;
-    errors: string[];
+    errors: Array<{ trackName: string; message: string; phase?: string }>;
     lyricsMode?: string;
   } | null>(null);
 
@@ -296,7 +296,9 @@ export function useSync({
         tracksRetagged: 0,
         lyricsAdded: 0,
         removed: 0,
-        errors: [error instanceof Error ? error.message : String(error)],
+        errors: [
+          { trackName: '', message: error instanceof Error ? error.message : String(error) },
+        ],
       });
     }
   };
@@ -309,7 +311,7 @@ export function useSync({
         tracksRetagged: 0,
         lyricsAdded: 0,
         removed: 0,
-        errors: ['Please select a sync destination folder first'],
+        errors: [{ trackName: '', message: 'Please select a sync destination folder first' }],
       });
       return;
     }
@@ -320,7 +322,7 @@ export function useSync({
         tracksRetagged: 0,
         lyricsAdded: 0,
         removed: 0,
-        errors: ['Not connected to Jellyfin'],
+        errors: [{ trackName: '', message: 'Not connected to Jellyfin' }],
       });
       return;
     }
@@ -333,7 +335,7 @@ export function useSync({
         tracksRetagged: 0,
         lyricsAdded: 0,
         removed: 0,
-        errors: ['Please select at least one item to sync'],
+        errors: [{ trackName: '', message: 'Please select at least one item to sync' }],
       });
       return;
     }

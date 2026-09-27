@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react';
 
+interface SyncError {
+  trackName: string;
+  message: string;
+  phase?: string;
+}
+
 interface SyncSuccessModalProps {
   tracksCopied: number;
   tracksSkipped: number;
   tracksRetagged: number;
   lyricsAdded?: number;
   removed: number;
-  errors: string[];
+  errors: SyncError[];
   lyricsMode?: string;
   onClose: () => void;
 }
@@ -47,13 +53,21 @@ export function SyncSuccessModal({
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
+  const handleOpenLogFolder = async () => {
+    try {
+      await window.api.openLogFolder();
+    } catch {
+      // best-effort: support the user wanted the button, log folder may not exist
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
       onClick={onClose}
     >
       <div
-        className="bg-surface_container_low border border-outline_variant rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl"
+        className="bg-surface_container_low border border-outline_variant rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 mb-4">
@@ -104,13 +118,34 @@ export function SyncSuccessModal({
             )}
           </div>
         ) : (
-          <div className="text-body-md text-error mb-5 space-y-1">
-            {errors.slice(0, 3).map((e, i) => (
-              <p key={i}>{e}</p>
+          // ORAIN-0734: full scrollable list with per-track header + wrapped
+          // message. The container is constrained to max-h-80 + overflow-y-auto
+          // so the modal never grows past the viewport's 90% cap.
+          <div
+            data-testid="sync-errors-list"
+            className="text-body-md text-error max-h-80 overflow-y-auto mb-5 pr-1"
+          >
+            {errors.map((err, i) => (
+              <div
+                key={`${err.trackName}-${i}`}
+                className="border-b border-outline_variant/40 last:border-b-0 py-2"
+              >
+                {err.trackName && (
+                  <div
+                    data-testid="sync-error-header"
+                    className="text-on_surface font-medium break-words"
+                  >
+                    {err.trackName}
+                  </div>
+                )}
+                <div
+                  data-testid="sync-error-message"
+                  className="text-on_surface_variant text-xs break-words [overflow-wrap:anywhere]"
+                >
+                  {err.message}
+                </div>
+              </div>
             ))}
-            {errors.length > 3 && (
-              <p className="text-on_surface_variant">+{errors.length - 3} more</p>
-            )}
           </div>
         )}
 
@@ -125,6 +160,15 @@ export function SyncSuccessModal({
           >
             {cta.label}
           </a>
+        )}
+
+        {errors.length > 0 && (
+          <button
+            onClick={handleOpenLogFolder}
+            className="w-full px-4 py-2 text-body-md text-on_surface_variant hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors mb-2"
+          >
+            Open log folder
+          </button>
         )}
 
         <button

@@ -101,7 +101,7 @@ const api = {
     tracksRetagged?: number;
     lyricsAdded?: number;
     tracksFailed: string[];
-    errors: string[];
+    errors: Array<{ trackName: string; message: string; phase?: string }>;
     totalSizeBytes?: number;
   }> => ipcRenderer.invoke('sync:start2', options),
 

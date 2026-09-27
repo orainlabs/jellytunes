@@ -207,6 +207,23 @@ export type ProgressCallback = (progress: SyncProgress) => void;
 // =============================================================================
 
 /**
+ * Structured error from a sync operation. ORAIN-0734: previously a flat
+ * `string[]`, now carries the originating track name (when known) so the
+ * renderer can show a per-track list with full scroll instead of an
+ * arbitrary "+N more" cut-off. `phase` is reserved for ORAIN-0739 to fill
+ * in with its taxonomy without breaking the contract again — when missing
+ * the renderer just shows `message`.
+ */
+export interface SyncError {
+  /** Track name (e.g. file basename without extension). Empty for global sync failures. */
+  trackName: string;
+  /** Human-readable error message (e.g. FFmpeg stderr tail, "Permission denied"). */
+  message: string;
+  /** Optional sync phase (download | validation | conversion | tagging | write). ORAIN-0739. */
+  phase?: string;
+}
+
+/**
  * Sync operation result
  */
 export interface SyncResult {
@@ -226,8 +243,8 @@ export interface SyncResult {
   lyricsAdded: number;
   /** Track IDs that failed to sync */
   tracksFailed: string[];
-  /** Detailed error messages */
-  errors: string[];
+  /** Structured sync errors (ORAIN-0734). */
+  errors: SyncError[];
   /** Total size of files synced (bytes) */
   totalSizeBytes: number;
   /** Duration in milliseconds */

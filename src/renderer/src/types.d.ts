@@ -79,7 +79,8 @@ interface Api {
     tracksRetagged?: number;
     lyricsAdded?: number;
     tracksFailed: string[];
-    errors: string[];
+    /** ORAIN-0734: per-track structured errors. Empty trackName for global failures. */
+    errors: Array<{ trackName: string; message: string; phase?: string }>;
     totalSizeBytes?: number;
   }>;
   cancelSync: () => Promise<{ cancelled: boolean }>;

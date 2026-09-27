@@ -23,6 +23,7 @@ import type {
   SyncDiffResult,
   FilesystemType,
   LyricsMode,
+  SyncError,
 } from './types';
 
 import path from 'path';
@@ -400,7 +401,7 @@ class SyncCoreImpl {
     const unsubscribe = onProgress ? this.progressEmitter.subscribe(onProgress) : () => {};
 
     const phaseManager = new PhaseManager(this.progressEmitter);
-    const errors: string[] = [];
+    const errors: SyncError[] = [];
     const tracksFailed: string[] = [];
     let totalTracks = 0;
     let lyricsAdded = 0;
@@ -428,18 +429,22 @@ class SyncCoreImpl {
       // Phase 1: Validation
       const destValidation = await this.runValidationPhase(input.destinationPath);
       if (!destValidation.valid) {
-        return this.buildFailureResult(startTime, destValidation.errors, stats);
+        return this.buildFailureResult(
+          startTime,
+          destValidation.errors.map((message) => ({ trackName: '', message })),
+          stats,
+        );
       }
 
       // Phase 2: Fetch
       const fetchResult = await this.runFetchPhase(input.itemIds, input.itemTypes, phaseManager);
-      errors.push(...fetchResult.errors);
+      errors.push(...fetchResult.errors.map((message) => ({ trackName: '', message })));
       totalTracks = fetchResult.tracks.length;
 
       if (totalTracks === 0) {
         return this.buildFailureResult(
           startTime,
-          ['No tracks found for selected items', ...errors],
+          [{ trackName: '', message: 'No tracks found for selected items' }, ...errors],
           stats,
         );
       }
@@ -515,7 +520,7 @@ class SyncCoreImpl {
           tracksRemoved: 0,
           lyricsAdded: 0,
           tracksFailed: [],
-          errors: ['Sync was cancelled by user'],
+          errors: [{ trackName: '', message: 'Sync was cancelled by user' }],
           totalSizeBytes: stats.bytesTransferred,
           durationMs: Date.now() - startTime,
           cancelled: true,
@@ -534,7 +539,7 @@ class SyncCoreImpl {
         tracksRemoved: 0,
         lyricsAdded,
         tracksFailed,
-        errors: [...errors, errorMsg],
+        errors: [...errors, { trackName: '', message: errorMsg }],
         totalSizeBytes: stats.bytesTransferred,
         durationMs: Date.now() - startTime,
       };
@@ -579,7 +584,7 @@ class SyncCoreImpl {
     options: ReturnType<typeof resolveSyncOptions>,
     phaseManager: PhaseManager,
     tracksFailed: string[],
-    errors: string[],
+    errors: SyncError[],
     stats: ReturnType<typeof createProgressStats>,
   ): Promise<{
     statsRetagged: number;
@@ -640,7 +645,7 @@ class SyncCoreImpl {
         lyricsAdded += result.lyricsAdded ?? 0;
 
         if (result.error) {
-          errors.push(result.error);
+          errors.push({ trackName: track.name, message: result.error });
           tracksFailed.push(track.id);
         }
 
@@ -680,7 +685,7 @@ class SyncCoreImpl {
 
   private buildFailureResult(
     startTime: number,
-    errors: string[],
+    errors: SyncError[],
     stats: ReturnType<typeof createProgressStats>,
   ): SyncResult {
     return {

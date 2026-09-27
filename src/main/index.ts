@@ -1039,7 +1039,12 @@ ipcMain.handle('sync:start2', async (_event, options) => {
     log.error('Sync v2 error:', error);
     return {
       success: false,
-      errors: [error instanceof Error ? error.message : String(error)],
+      errors: [
+        {
+          trackName: '',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ],
       tracksCopied: 0,
     };
   }

@@ -4,6 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { SyncSuccessModal } from './SyncSuccessModal';
 
+interface SyncError {
+  trackName: string;
+  message: string;
+  phase?: string;
+}
+
 const mockApi = {
   listUsbDevices: vi.fn().mockResolvedValue([]),
   getDeviceInfo: vi.fn().mockResolvedValue({ total: 32e9, free: 16e9, used: 16e9 }),
@@ -11,9 +17,12 @@ const mockApi = {
   getSyncedItems: vi.fn().mockResolvedValue([]),
   analyzeDiff: vi.fn().mockResolvedValue({ success: true, items: [] }),
   estimateSize: vi.fn().mockResolvedValue({ trackCount: 0, totalBytes: 0, formatBreakdown: {} }),
-  startSync2: vi
-    .fn()
-    .mockResolvedValue({ success: true, tracksCopied: 10, tracksSkipped: 5, errors: [] }),
+  startSync2: vi.fn().mockResolvedValue({
+    success: true,
+    tracksCopied: 10,
+    tracksSkipped: 5,
+    errors: [] as SyncError[],
+  }),
   removeItems: vi.fn().mockResolvedValue({ removed: 0, errors: [] }),
   cancelSync: vi.fn().mockResolvedValue({ cancelled: true }),
   onSyncProgress: vi.fn().mockReturnValue(() => {}),
@@ -22,6 +31,7 @@ const mockApi = {
   saveSession: vi.fn().mockResolvedValue({ success: true }),
   loadSession: vi.fn().mockResolvedValue(null),
   clearSession: vi.fn().mockResolvedValue(undefined),
+  openLogFolder: vi.fn().mockResolvedValue({ success: true }),
 };
 beforeAll(() => {
   Object.defineProperty(window, 'api', { value: mockApi, writable: true });
@@ -36,12 +46,12 @@ const defaultProps = {
   tracksRetagged: 3,
   lyricsAdded: 2,
   removed: 5,
-  errors: [] as string[],
+  errors: [] as SyncError[],
   onClose: vi.fn(),
 };
 
 describe('SyncSuccessModal', () => {
-  // 1. success: shows tracks copied/skipped/removed
+  // AC: success state shows counts
   it('shows tracks copied, skipped, and removed counts on success', () => {
     render(<SyncSuccessModal {...defaultProps} />);
     expect(screen.getByText('Copied:')).toBeInTheDocument();
@@ -52,24 +62,92 @@ describe('SyncSuccessModal', () => {
     expect(screen.getByText('5 items')).toBeInTheDocument();
   });
 
-  // 2. failure: shows errors (max 3 + "+N more")
-  it('shows errors with max 3 displayed and "+N more" for additional errors', () => {
-    const manyErrors = [
-      'Error: File not found',
-      'Error: Permission denied',
-      'Error: Disk full',
-      'Error: Network timeout',
-      'Error: Unknown error',
-    ];
-    render(<SyncSuccessModal {...defaultProps} tracksCopied={0} errors={manyErrors} />);
-    expect(screen.getByText('Error: File not found')).toBeInTheDocument();
-    expect(screen.getByText('Error: Permission denied')).toBeInTheDocument();
-    expect(screen.getByText('Error: Disk full')).toBeInTheDocument();
-    expect(screen.getByText('+2 more')).toBeInTheDocument();
-    expect(screen.queryByText('Error: Network timeout')).not.toBeInTheDocument();
+  // AC1: with 1, 5, and 50 errors all of them are readable, list has max-h-80
+  // and overflow-y-auto. Popup never exceeds 90% of window height.
+  describe('AC1 — all errors visible with scroll', () => {
+    const counts = [1, 5, 50];
+    for (const n of counts) {
+      it(`renders all ${n} errors in the DOM with a scrollable container`, () => {
+        const errors: SyncError[] = Array.from({ length: n }, (_, i) => ({
+          trackName: `Track ${i}`,
+          message: `Failure ${i}`,
+        }));
+        render(<SyncSuccessModal {...defaultProps} tracksCopied={0} errors={errors} />);
+
+        // Every track name and message is in the DOM
+        for (let i = 0; i < n; i++) {
+          expect(screen.getByText(`Track ${i}`)).toBeInTheDocument();
+          expect(screen.getByText(`Failure ${i}`)).toBeInTheDocument();
+        }
+        expect(screen.queryByText(/\+\d+ more/)).not.toBeInTheDocument();
+
+        // The list container has max-h-80 + overflow-y-auto
+        const list = screen.getByTestId('sync-errors-list');
+        expect(list.className).toMatch(/max-h-80/);
+        expect(list.className).toMatch(/overflow-y-auto/);
+      });
+    }
   });
 
-  // 3. close calls onClose
+  // AC2: track name on its own line, message on the next. A 200-char
+  // unspaced string must wrap inside the modal width without horizontal
+  // scroll or text overflow.
+  it('AC2 — renders track name and message on separate lines and wraps a 200-char unspaced path', () => {
+    const longPath =
+      'file:C:\\Users\\dev\\AppData\\Local\\Temp\\jellytunes_conv_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz.mp3: Invalid argument';
+    // Pad to >= 200 chars to assert the wrap
+    const message200 = (longPath + longPath).slice(0, 220);
+    const errors: SyncError[] = [
+      { trackName: 'Long Path Track', message: message200 },
+      { trackName: 'Short', message: 'Disk full' },
+    ];
+    render(<SyncSuccessModal {...defaultProps} tracksCopied={0} errors={errors} />);
+
+    // Track name and message for the long-path entry are in the DOM
+    expect(screen.getByText('Long Path Track')).toBeInTheDocument();
+    expect(screen.getByText(message200)).toBeInTheDocument();
+
+    // The message container applies a wrapping class
+    const messageEl = screen.getByText(message200);
+    // Either break-words OR [overflow-wrap:anywhere] (Tailwind arbitrary value)
+    const wraps = /break-words|overflow-wrap:anywhere|break-all/;
+    // Look at the message container OR the message element itself
+    const candidate = messageEl.closest('[data-testid="sync-error-message"]') ?? messageEl;
+    expect(candidate.className).toMatch(wraps);
+  });
+
+  // AC3: when there are errors, a "Open log folder" button is shown and
+  // clicking it calls the existing ORAIN-0727 IPC.
+  it('AC3 — shows "Open log folder" button when errors are present and invokes openLogFolder on click', async () => {
+    const user = userEvent.setup({ delay: null });
+    const errors: SyncError[] = [{ trackName: 'T', message: 'oops' }];
+    render(<SyncSuccessModal {...defaultProps} tracksCopied={0} errors={errors} />);
+
+    const openBtn = screen.getByRole('button', { name: /open log folder/i });
+    await user.click(openBtn);
+    expect(window.api.openLogFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC3 — does NOT show "Open log folder" button on success (no errors)', () => {
+    render(<SyncSuccessModal {...defaultProps} />);
+    expect(screen.queryByRole('button', { name: /open log folder/i })).not.toBeInTheDocument();
+  });
+
+  // Errors without a track name (global sync failure) render only the
+  // message, no track-name header.
+  it('renders a trackName="" error without a header line, only the message', () => {
+    const errors: SyncError[] = [
+      { trackName: '', message: 'Sync was cancelled by user' },
+      { trackName: 'Real', message: 'oops' },
+    ];
+    render(<SyncSuccessModal {...defaultProps} tracksCopied={0} errors={errors} />);
+
+    expect(screen.getByText('Sync was cancelled by user')).toBeInTheDocument();
+    // Header for the empty-trackName entry must NOT be rendered as a name
+    expect(screen.queryByTestId('sync-error-header')).toHaveTextContent('Real');
+  });
+
+  // close calls onClose
   it('calls onClose when close button is clicked', async () => {
     const user = userEvent.setup({ delay: null });
     render(<SyncSuccessModal {...defaultProps} />);

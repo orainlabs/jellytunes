@@ -5,7 +5,7 @@
  * Tests use mocked dependencies to isolate unit behavior.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { SyncConfig, SyncInput, TrackInfo, ItemType, SyncLogger } from './types';
+import type { SyncConfig, SyncInput, TrackInfo, ItemType, SyncLogger, SyncError } from './types';
 import { createSyncCore, createTestSyncCore, type SyncDependencies } from './sync-core';
 import { createMockApiClient } from './sync-api';
 import { createMockFileSystem, type AudioConverter } from './sync-files';
@@ -678,7 +678,9 @@ describe('sync-core', () => {
 
       const result = await core.sync(input);
       expect(result.success).toBe(false);
-      expect(result.errors).toContain('No tracks found for selected items');
+      expect(result.errors.some((e) => e.message === 'No tracks found for selected items')).toBe(
+        true,
+      );
     });
 
     it('should sync tracks successfully', async () => {
@@ -918,7 +920,7 @@ describe('Integration: Full Sync Flow', () => {
     // No tracks should have been recorded as synced
     expect(result.tracksCopied).toBe(0);
     // The error should reflect cancellation, not a generic failure
-    expect(result.errors).toContain('Sync was cancelled by user');
+    expect(result.errors.some((e) => e.message === 'Sync was cancelled by user')).toBe(true);
   });
 
   it('should cancel when cancel is called before copy phase', async () => {
@@ -940,7 +942,7 @@ describe('Integration: Full Sync Flow', () => {
     // Must be cancelled — no race since cancel was called before copy phase started
     expect(result.cancelled).toBe(true);
     expect(result.success).toBe(false);
-    expect(result.errors).toContain('Sync was cancelled by user');
+    expect(result.errors.some((e) => e.message === 'Sync was cancelled by user')).toBe(true);
   });
 });
 
@@ -6000,5 +6002,95 @@ describe('ORAIN-0736 — companion cover.jpg byte equality', () => {
       Buffer | undefined;
     expect(written).toBeDefined();
     expect(Buffer.compare(written as Buffer, coverBytes)).toBe(0);
+  });
+});
+
+// =============================================================================
+// ORAIN-0734: SyncResult.errors is a structured SyncError[] (trackName + message)
+// =============================================================================
+
+describe('ORAIN-0734: SyncResult.errors is structured SyncError[]', () => {
+  const validConfig: SyncConfig = {
+    serverUrl: 'https://example.com',
+    apiKey: 'a'.repeat(32),
+    userId: 'b'.repeat(32),
+  };
+
+  it('errors from a per-track failure carry the track name and the message', async () => {
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({
+          tracks: [
+            {
+              id: 'track-1',
+              name: 'A.mp3',
+              path: '/music/A.mp3',
+              format: 'mp3',
+              size: 1000,
+            },
+          ],
+          errors: [],
+        }),
+        // processTrack will call downloadItem; force a failure
+        downloadItem: async () => {
+          throw new Error('Disk full');
+        },
+      }),
+    });
+
+    const core = createTestSyncCore(validConfig, deps);
+    const result = await core.sync({
+      itemIds: ['track-1'],
+      itemTypes: new Map([['track-1', 'album']]),
+      destinationPath: '/dest',
+    });
+
+    expect(result.errors).toEqual([
+      expect.objectContaining({
+        trackName: 'A.mp3',
+        message: expect.stringContaining('Disk full'),
+      }),
+    ]);
+  });
+
+  it('global sync failures use trackName "" (no header) and carry the message', async () => {
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [], errors: [] }),
+      }),
+    });
+
+    const core = createTestSyncCore(validConfig, deps);
+    const result = await core.sync({
+      itemIds: [],
+      itemTypes: new Map(),
+      destinationPath: '/dest',
+    });
+
+    expect(result.success).toBe(false);
+    const noTracksError = result.errors.find((e: SyncError) =>
+      e.message.includes('No tracks found'),
+    );
+    expect(noTracksError).toBeDefined();
+    expect(noTracksError!.trackName).toBe('');
+  });
+
+  it('cancellation produces a global error with trackName "" and the cancellation message', async () => {
+    const deps = createMockDeps();
+    const core = createTestSyncCore(validConfig, deps);
+
+    const syncPromise = core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album']]),
+      destinationPath: '/dest',
+    });
+    core.cancel();
+    const result = await syncPromise;
+
+    const cancelledError = result.errors.find((e: SyncError) =>
+      e.message.includes('Sync was cancelled'),
+    );
+    expect(cancelledError).toBeDefined();
+    expect(cancelledError!.trackName).toBe('');
   });
 });
