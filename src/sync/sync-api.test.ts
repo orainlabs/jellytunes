@@ -1169,7 +1169,10 @@ describe('sync-api', () => {
 
       await api.getCoverArt('track-1');
       expect(seenUrl.value).not.toBeNull();
-      expect(seenUrl.value).toContain('/Items/track-1/Images/Primary');
+      // Pin the user-scoped path prefix; a regression that silently drops
+      // `/Users/{userId}/` (Jellyfin requires the user segment) would
+      // otherwise pass as long as `/Items/track-1/...` is intact.
+      expect(seenUrl.value).toContain('/Users/user-1/Items/track-1/Images/Primary');
       expect(seenUrl.value).toContain('maxWidth=500');
       expect(seenUrl.value).toContain('maxHeight=500');
       expect(seenUrl.value).toContain('quality=85');

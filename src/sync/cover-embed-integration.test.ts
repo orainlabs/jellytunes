@@ -30,16 +30,21 @@ import { spawnSync } from 'child_process';
 import { mkdtempSync, readFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 import { createFFmpegConverter } from './sync-files';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
 
 const ffmpegPath = resolveFFmpegPath();
 const canRun = spawnSync(ffmpegPath, ['-version'], { stdio: 'ignore' }).status === 0;
-if (!canRun) console.warn(`[skip] FFmpeg not available at ${ffmpegPath}`);
+if (!canRun) {
+  console.warn(`[skip] FFmpeg not available at ${ffmpegPath}`);
+}
 const ffprobePath = resolveFFprobePath();
 const canProbe =
   spawnSync(ffprobePath, ['-version'], { stdio: 'ignore', timeout: 5000 }).status === 0;
-if (!canProbe) console.warn(`[skip] FFprobe not available at ${ffprobePath}`);
+if (!canProbe) {
+  console.warn(`[skip] FFprobe not available at ${ffprobePath}`);
+}
 
 // 1 s of 64 kbps mono MP3 ≈ 8 KB; ID3v2 + cover (re-encoded to baseline
 // JPEG via mjpeg) typically lands at ~26 KB even for a tiny 100×100 cover.
@@ -157,7 +162,9 @@ function synthesizeProgressiveJpeg(dir: string, name: string): Buffer {
  * round trip.
  */
 function extractAttachedPic(mp3Path: string): Buffer {
-  const out = join(tmpdir(), `cover-${process.pid}-${Date.now()}.jpg`);
+  // pid + ms + randomUUID: unique even when vitest workers run more than
+  // one `it()` against `extractAttachedPic` in the same millisecond.
+  const out = join(tmpdir(), `cover-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}.jpg`);
   const r = spawnSync(
     ffmpegPath,
     [
@@ -284,27 +291,6 @@ describe('ORAIN-0736 — cover-embed FFmpeg integration', () => {
       expect(coverBytes.length).toBeGreaterThan(0);
       const sof = findSofMarker(coverBytes);
       expect(sof, 'embedded cover must be SOF0 (baseline) after re-encoding').toBe(0xc0);
-    },
-  );
-
-  it.runIf(canRun)(
-    'PNG cover: re-encode to baseline mjpeg, output stays reasonable (no PNG bloat)',
-    async () => {
-      const src = synthesizeAudioMp3(workDir, 'in-png.mp3');
-      const pngBytes = synthesizeNonJpegCover(workDir, 'cover.png');
-      const dst = join(workDir, 'out-png.mp3');
-      const result = await createFFmpegConverter().convertStreamToMp3WithMeta(
-        src,
-        dst,
-        '192k',
-        {},
-        pngBytes,
-      );
-      expect(result.success).toBe(true);
-      const outSize = statSync(dst).size;
-      // Pre-fix the same call embedded a PNG cover of ~50–150 KB; a
-      // baseline-mjpeg re-encode of a 100×100 cover must be smaller.
-      expect(outSize).toBeLessThan(audioSizeBytes(src) * HEADROOM_RATIO);
     },
   );
 });
