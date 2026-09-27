@@ -111,8 +111,13 @@ export interface FileSystem {
   /** Create a readable stream from a file (Node.js Readable) */
   createReadStream(path: string): Promise<NodeJS.ReadableStream>;
 
-  /** Create a writable stream to a file (Node.js Writable) */
-  createWriteStream(path: string): Promise<NodeJS.WritableStream>;
+  /**
+   * Create a writable stream to a file (Node.js Writable). Optional
+   * `options.flags` lets callers request exclusive open mode
+   * (`'wx'`) to avoid clobbering a stale temp file from a previous
+   * crash — ORAIN-0737 AC4.
+   */
+  createWriteStream(path: string, options?: { flags?: string }): Promise<NodeJS.WritableStream>;
 
   /** @internal Check if a path is an implicit directory (has children in mock FS) */
   __isImplicitDir?(path: string): boolean;
@@ -215,9 +220,9 @@ export function createNodeFileSystem(): FileSystem {
       return nodeCreateReadStream(path);
     },
 
-    createWriteStream: async (path: string) => {
+    createWriteStream: async (path: string, options?: { flags?: string }) => {
       const { createWriteStream: nodeCreateWriteStream } = require('fs');
-      return nodeCreateWriteStream(path);
+      return nodeCreateWriteStream(path, options);
     },
   };
 }
@@ -298,7 +303,7 @@ export function createMockFileSystem(overrides?: Partial<FileSystem>): FileSyste
       return Readable.from(data);
     },
 
-    createWriteStream: async (path: string) => {
+    createWriteStream: async (path: string, _options?: { flags?: string }) => {
       const chunks: Buffer[] = [];
       const { Writable } = require('stream');
       const writeStream = new Writable({

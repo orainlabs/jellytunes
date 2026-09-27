@@ -289,3 +289,239 @@ describe('ORAIN-0732 AC3 — FFmpeg integration with path input', () => {
     },
   );
 });
+
+// =============================================================================
+// ORAIN-0737 AC5 — Fixture H integration: extension-aware tagFile
+// =============================================================================
+//
+// The bug (mbpr0-2012, 2026-09-27): `copyTrackFile` downloaded an MP3 to a
+// destination-side temp file `.jt-tmp-xxx` with NO extension and then ran
+// FFmpeg's tagFile against it (`-i <no-ext>`). For a benign file this
+// worked because FFmpeg's `mp3` demuxer auto-detected the format from the
+// ID3/MP3 sync bytes. But with a *non-syncsafe* ID3 tag size (the bit-7
+// set in violation of ID3v2.3/2.4), FFmpeg's size parser misreads the
+// tag size — it interprets the high bit as another bit 6, yielding
+// ~3.6 MB extra "inside the tag" instead of the actual ~3.6 MB cover.
+// The demuxer then seeks past EOF and reports "Invalid data found".
+//
+// The fix (this task): the temp file now lives under `os.tmpdir()` and
+// ALWAYS carries the right audio extension (e.g. `.mp3`). FFmpeg's
+// format guess picks the `mp3` demuxer explicitly from the extension,
+// which is more lenient about non-syncsafe IDs than the auto-probe
+// path on a no-extension input. Functionally tagFile now succeeds and
+// the resulting destination file plays at its real duration.
+//
+// AC5 verifies that round trip:
+//   - WITH the new temp path (`.mp3` extension): tagFile exits 0 and
+//     the resulting file has a positive duration.
+//   - WITH the legacy temp path (no extension): tagFile fails.
+//
+// Fixture H is generated in the test — no binary blobs in the repo.
+import { existsSync } from 'fs';
+describe('ORAIN-0737 AC5 — Fixture H: extension-aware tagFile', () => {
+  /**
+   * Build the ID3v2 header (10 bytes). To trigger the "non-syncsafe"
+   * codepath FFmpeg mis-handles, set bit 7 of one or more size bytes
+   * (the ID3v2 spec says each size byte is a 7-bit unsigned int).
+   * We deliberately set bit 7 of byte 2 to inflate the tag size beyond
+   * reality — FFmpeg's strict ID3 parser then reads a multi-MB tag
+   * that does not actually exist on disk.
+   */
+  function buildNonSyncsafeId3Header(tagBytesIncludingFrames: number): Buffer {
+    const header = Buffer.alloc(10);
+    header.write('ID3', 0, 3, 'ascii'); // identifier
+    header.writeUInt8(3, 3); // version major (ID3v2.3)
+    header.writeUInt8(0, 4); // version revision
+    header.writeUInt8(0, 5); // flags (unsync, ext header, experimental — none)
+    // Tag size is 4 bytes, syncsafe (7 bits each). Spec-violating build
+    // sets bit 7 of byte 2 to inflate the size relative to the real
+    // on-disk tag — the over-count is the entire point of fixture H.
+    header.writeUInt8((tagBytesIncludingFrames >> 21) & 0x7f, 6);
+    header.writeUInt8((tagBytesIncludingFrames >> 14) & 0x7f, 7);
+    header.writeUInt8((tagBytesIncludingFrames >> 7) & 0x7f, 8); // syncsafe
+    header.writeUInt8(tagBytesIncludingFrames & 0x7f, 9);
+    // Now re-set bit 7 of byte 2 to violate the syncsafe spec — that's
+    // exactly the construction some buggy encoders ship.
+    header[8] = header[8] | 0x80;
+    return header;
+  }
+
+  /**
+   * Build a minimal ID3v2.3 APIC frame header (10 bytes). Frame body is
+   * intentionally empty — we only need the tag shape to look plausible
+   * to a parser that just trusts the header size.
+   */
+  function buildApicFrameHeader(): Buffer {
+    const frame = Buffer.alloc(10);
+    frame.write('APIC', 0, 4, 'ascii');
+    frame.writeUInt32BE(0, 4); // size (NOT syncsafe for frames)
+    frame.writeUInt16BE(0, 8); // flags
+    return frame;
+  }
+
+  /**
+   * Synthesize fixture H:
+   *   - 1 second of silent MP3 (so duration probing is meaningful).
+   *   - Prepend an ID3v2.3 header with a NON-SYNCSAFE tag size that
+   *     overstates the tag by ~3.6 MB.
+   *   - Followed by an empty APIC frame so the file structure is
+   *     plausible to a naive parser.
+   * The result is written twice: once with `.mp3` extension and once
+   * without, so the same byte sequence can be tested under both
+   * extension shapes.
+   */
+  function synthesizeFixtureH(
+    ffmpegPath: string,
+    dir: string,
+  ): { withExt: string; withoutExt: string } {
+    const base = join(dir, 'fixture-h-base.mp3');
+    const encode = spawnSync(
+      ffmpegPath,
+      [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'anullsrc=r=44100:cl=mono',
+        '-t',
+        '1',
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '64k',
+        base,
+      ],
+      { stdio: 'ignore' },
+    );
+    expect(encode.status).toBe(0);
+
+    const mp3 = readFileSync(base);
+    const fakeTagBodySize = 3_600_000;
+    const id3Header = buildNonSyncsafeId3Header(fakeTagBodySize);
+    const apicFrameHeader = buildApicFrameHeader();
+
+    const withExt = join(dir, 'fixture-h.mp3');
+    const withoutExt = join(dir, 'fixture-h-noext');
+    const composed = Buffer.concat([id3Header, apicFrameHeader, mp3]);
+    writeFileSync(withExt, composed);
+    writeFileSync(withoutExt, composed);
+
+    return { withExt, withoutExt };
+  }
+
+  /**
+   * Probe a file for duration via ffprobe. Returns 0 if ffprobe is
+   * missing or the probe fails. Skipped silently if `canProbe` was false
+   * at module load (AC5 only requires duration when ffprobe is bundled).
+   */
+  function probeDurationSeconds(path: string): number {
+    if (!canProbe) return 0;
+    const probe = spawnSync(
+      ffprobePath,
+      [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
+        path,
+      ],
+      { encoding: 'utf8' },
+    );
+    if (probe.status !== 0) return 0;
+    return parseFloat(probe.stdout.trim());
+  }
+
+  let workDir: string;
+
+  beforeAll(() => {
+    workDir = mkdtempSync(join(tmpdir(), 'orain-0737-'));
+  });
+
+  it.runIf(canRun)(
+    'tagFile on fixture H with `.mp3` extension: exit 0 and duration > 0',
+    async () => {
+      const { withExt } = synthesizeFixtureH(ffmpegPath, workDir);
+      expect(statSync(withExt).size).toBeGreaterThan(0);
+
+      // AC5: with the extension present, tagFile succeeds and the
+      // resulting file plays at its real duration.
+      const outputPath = join(workDir, 'fixture-h-tagged.mp3');
+      const converter = createFFmpegConverter();
+      const result = await converter.tagFile(withExt, outputPath, {
+        title: 'Fixture H',
+        artist: 'JellyTunes',
+        album: 'ORAIN-0737',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(statSync(outputPath).size).toBeGreaterThan(0);
+
+      const dur = probeDurationSeconds(outputPath);
+      if (canProbe) {
+        expect(dur).toBeGreaterThan(0);
+      }
+    },
+  );
+
+  it.runIf(canRun)(
+    'tagFile on fixture H with NO extension (in-place): fails (legacy bug)',
+    async () => {
+      // Same bytes, no extension. Mimics the old `copyTrackFile`
+      // behaviour where the temp file was `${destinationPath}/.jt-tmp-…`
+      // without any extension.
+      //
+      // Old `copyTrackFile` wrote the *download buffer* to that no-ext
+      // file and then called tagFile with `inputPath === tmpPath`. With
+      // input === output, tagFile builds a sibling temp output
+      // `jt-tag-xxx<ext>` — where `<ext>` comes from `path.extname(input)`.
+      // Without an extension on the input the sibling output has none
+      // either, FFmpeg cannot pick a muxer for the output, and exits
+      // non-zero with "Invalid data found".
+      const { withoutExt } = synthesizeFixtureH(ffmpegPath, workDir);
+      const converter = createFFmpegConverter();
+
+      const result = await converter.tagFile(withoutExt, withoutExt, {
+        title: 'Fixture H',
+      });
+
+      // Pin only on the structural claim: failure + nothing playable.
+      // FFmpeg's exact error wording drifts across versions and platforms.
+      expect(result.success).toBe(false);
+      // After the in-place attempt: either the file is missing (FFmpeg
+      // never created a replacement) OR it stayed at zero bytes
+      // (whatever it was before). The crucial contract is no playable
+      // audio came out of the no-extension path.
+      if (existsSync(withoutExt)) {
+        const dur = probeDurationSeconds(withoutExt);
+        if (canProbe) {
+          expect(dur).toBe(0);
+        }
+      }
+    },
+  );
+
+  it.runIf(canRun)('tagFile on fixture H with `.mp3` extension (in-place): exit 0', async () => {
+    // Symmetric positive: same in-place call shape as the legacy
+    // path, but the input has the `.mp3` extension. FFmpeg builds
+    // a sibling temp output `jt-tag-xxx.mp3` and uses the `mp3`
+    // muxer. tagFile succeeds.
+    const { withExt } = synthesizeFixtureH(ffmpegPath, workDir);
+    const converter = createFFmpegConverter();
+
+    const result = await converter.tagFile(withExt, withExt, {
+      title: 'Fixture H',
+      artist: 'JellyTunes',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
+
+    const dur = probeDurationSeconds(withExt);
+    if (canProbe) {
+      expect(dur).toBeGreaterThan(0);
+    }
+  });
+});

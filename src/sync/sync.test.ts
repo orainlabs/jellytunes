@@ -764,8 +764,9 @@ describe('sync-core', () => {
             tracks: [{ id: '1', name: 'Track', path: '/nonexistent.mp3', format: 'mp3' }],
             errors: [],
           }),
-          // Now using downloadItem instead of copyFile
-          downloadItem: async () => {
+          // ORAIN-0737: copyTrackFile now uses downloadItemStream.
+          // Mock it to reject so the sync records the failed track.
+          downloadItemStream: async () => {
             throw new Error('Download failed - file not found');
           },
         }),
@@ -879,21 +880,17 @@ describe('Integration: Full Sync Flow', () => {
   });
 
   it('should not write tracks when cancelled mid-download', async () => {
-    let syncCancelled = false;
-
     const slowDeps = createMockDeps({
       api: createMockApiClient({
         getTracksForItems: async () => ({ tracks: mockTracks, errors: [] }),
-        downloadItem: async () => {
-          // Yield to the event loop so cancel() (scheduled via setImmediate below)
-          // fires before we return the data and hit the throwIfCancelled() checkpoint.
-          // This mimics a download completing just after cancel was called.
+        // ORAIN-0737: copyTrackFile now downloads via downloadItemStream.
+        // Yield once so cancel() (scheduled via setImmediate below) fires
+        // before the stream resolves and the checkpoint in copyTrackFile
+        // sees the cancelled flag.
+        downloadItemStream: async () => {
           await new Promise<void>((resolve) => setImmediate(resolve));
-          if (syncCancelled) {
-            // Return data anyway — the checkpoint in copyTrackFile will throw
-            return Buffer.from('fake audio data');
-          }
-          return Buffer.from('fake audio data');
+          const { Readable } = require('stream') as typeof import('stream');
+          return Readable.from(Buffer.from('fake audio data'));
         },
       }),
     });
@@ -910,7 +907,6 @@ describe('Integration: Full Sync Flow', () => {
     // Schedule cancel to fire on the next event-loop iteration, guaranteed before
     // the download promise resolves and hits the throwIfCancelled() checkpoint.
     setImmediate(() => {
-      syncCancelled = true;
       core.cancel();
     });
 
@@ -1090,8 +1086,8 @@ describe('Error Handling', () => {
         syncedAt: new Date().toISOString(),
       } as const;
 
-      vi.mocked(getSyncedTracksForDevice).mockReturnValueOnce([existingRecord] as any);
-      vi.mocked(getSyncedTracksForItem).mockReturnValueOnce([existingRecord] as any);
+      vi.mocked(getSyncedTracksForDevice).mockReturnValue([existingRecord] as any);
+      vi.mocked(getSyncedTracksForItem).mockReturnValue([existingRecord] as any);
 
       const core = createTestSyncCore(configWithServerRoot, deps);
 
@@ -1667,8 +1663,8 @@ describe('Error Handling', () => {
         syncedAt: new Date().toISOString(),
       } as const;
 
-      vi.mocked(getSyncedTracksForDevice).mockReturnValueOnce([existingRecord] as any);
-      vi.mocked(getSyncedTracksForItem).mockReturnValueOnce([existingRecord] as any);
+      vi.mocked(getSyncedTracksForDevice).mockReturnValue([existingRecord] as any);
+      vi.mocked(getSyncedTracksForItem).mockReturnValue([existingRecord] as any);
 
       const core = createTestSyncCore(validConfig, deps);
 

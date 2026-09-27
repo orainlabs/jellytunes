@@ -28,7 +28,7 @@ import type {
 import path from 'path';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
-import { buildConvertTempPath } from './temp-path';
+import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
 
 import {
   validateSyncConfig,
@@ -1002,7 +1002,6 @@ class SyncCoreImpl {
           outputDir,
           outputPath,
           coverArtMode,
-          destinationPath,
           trackMeta,
           options,
         );
@@ -1052,39 +1051,67 @@ class SyncCoreImpl {
     outputDir: string,
     outputPath: string,
     coverArtMode: CoverArtMode,
-    destinationPath: string,
     trackMeta: TrackMetadata,
     options: ReturnType<typeof resolveSyncOptions>,
   ): Promise<number> {
-    const data = await this.deps.api.downloadItem(track.id);
+    // ORAIN-0737 AC2: stream the download through a temp file under
+    // os.tmpdir() with extension iff track.format names a known audio
+    // format. Mirrors convertAndCopy and reuses buildCopyTrackTempPath so
+    // the rules don't drift. The destination USB is NEVER written with a
+    // temp file directly (no .jt-tmp-* artefacts left behind — AC4).
+    const tmpPath = buildCopyTrackTempPath(track.format, Date.now());
+    try {
+      const stream = await this.deps.api.downloadItemStream(track.id);
 
-    // Check for cancellation after download returns, before writing anything to disk.
-    // This prevents completing a track that was already in-flight when cancel was called.
-    this.cancellation.throwIfCancelled();
+      // AC4: 'wx' refuses to clobber a stale temp from a previous crash.
+      const writeStream = await this.deps.fs.createWriteStream(tmpPath, { flags: 'wx' });
+      await new Promise<void>((resolve, reject) => {
+        writeStream.on('error', reject);
+        stream.on('error', reject);
+        stream.pipe(writeStream);
+        writeStream.on('finish', resolve);
+      });
 
-    const embedMetadata = options.embedMetadata !== false;
+      // Check for cancellation after the download completes, mirroring the
+      // convert path so cancel mid-pipe and cancel-after-pipe are handled
+      // the same way.
+      this.cancellation.throwIfCancelled();
 
-    if (embedMetadata) {
-      const tmpPath = `${destinationPath}/.jt-tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      await this.deps.fs.writeFile(tmpPath, data);
-      const embedCover =
-        coverArtMode === 'embed'
-          ? await this.getCoverArtBuffer(track.id, track.albumId, coverArtMode)
-          : undefined;
-      const originalMeta = await this.deps.converter.readFileMetadata(tmpPath);
-      const mergedMeta = mergeMetadata(originalMeta, trackMeta);
-      const result = await this.deps.converter.tagFile(tmpPath, outputPath, mergedMeta, embedCover);
-      await this.deps.fs.unlink(tmpPath).catch(() => {});
-      if (!result.success) throw new Error(result.error ?? 'Tagging failed');
+      const embedMetadata = options.embedMetadata !== false;
 
-      if (coverArtMode === 'companion') {
-        const coverBuffer = await this.getCoverArtBuffer(track.id, track.albumId, coverArtMode);
-        if (coverBuffer) await this.writeCompanionCover(outputDir, coverBuffer);
+      if (embedMetadata) {
+        const embedCover =
+          coverArtMode === 'embed'
+            ? await this.getCoverArtBuffer(track.id, track.albumId, coverArtMode)
+            : undefined;
+        const originalMeta = await this.deps.converter.readFileMetadata(tmpPath);
+        const mergedMeta = mergeMetadata(originalMeta, trackMeta);
+        const result = await this.deps.converter.tagFile(
+          tmpPath,
+          outputPath,
+          mergedMeta,
+          embedCover,
+        );
+        if (!result.success) throw new Error(result.error ?? 'Tagging failed');
+
+        if (coverArtMode === 'companion') {
+          const coverBuffer = await this.getCoverArtBuffer(track.id, track.albumId, coverArtMode);
+          if (coverBuffer) await this.writeCompanionCover(outputDir, coverBuffer);
+        }
+      } else {
+        // No-metadata branch: copy the buffered temp directly onto the
+        // destination. Use the existing fs.read+write path so the FileSystem
+        // mock (which doesn't expose a true read stream) works unchanged.
+        const data = await this.deps.fs.readFile(tmpPath);
+        await this.deps.fs.writeFile(outputPath, data);
       }
-    } else {
-      await this.deps.fs.writeFile(outputPath, data);
+      return track.size ?? 0;
+    } finally {
+      // AC4: unlink on every exit — success, FFmpeg failure, stream error,
+      // cancellation. The `.catch(() => {})` pattern matches convertAndCopy
+      // so a missing temp at cleanup time does not propagate.
+      await this.deps.fs.unlink(tmpPath).catch(() => {});
     }
-    return track.size ?? 0;
   }
 
   /**
@@ -2281,10 +2308,10 @@ class SyncCoreImpl {
     // entering the try, leaking the partial temp file in os.tmpdir().
     try {
       // Pipe stream to temp file — handle errors to prevent hangs on disk-full.
-      // Use 'finish' event (not 'end') to ensure writable has flushed kernel buffers
-      // before we read metadata from the file. Also resolves race condition where
-      // readable 'end' fires before writable finishes flushing.
-      const writeStream = await this.deps.fs.createWriteStream(tmpPath);
+      // ORAIN-0737 AC4: 'wx' refuses to clobber a stale temp file from a
+      // previous crash, matching copyTrackFile. Without exclusivity a
+      // leftover from a prior run would silently be reused.
+      const writeStream = await this.deps.fs.createWriteStream(tmpPath, { flags: 'wx' });
       await new Promise<void>((resolve, reject) => {
         writeStream.on('error', reject);
         stream.on('error', reject);
