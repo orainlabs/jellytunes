@@ -93,6 +93,9 @@ export interface FileSystem {
   /** Delete file */
   unlink(path: string): Promise<void>;
 
+  /** Atomically rename a file. Throws if source does not exist or src→dst crosses devices. */
+  rename(source: string, destination: string): Promise<void>;
+
   /** Write file */
   writeFile(path: string, data: Buffer): Promise<void>;
 
@@ -171,6 +174,10 @@ export function createNodeFileSystem(): FileSystem {
 
     unlink: async (path: string) => {
       await unlink(path);
+    },
+
+    rename: async (source: string, destination: string) => {
+      await fs.promises.rename(source, destination);
     },
 
     writeFile: async (path: string, data: Buffer) => {
@@ -270,6 +277,13 @@ export function createMockFileSystem(overrides?: Partial<FileSystem>): FileSyste
 
     unlink: async (path: string) => {
       files.delete(path);
+    },
+
+    rename: async (source: string, destination: string) => {
+      const data = files.get(source);
+      if (data === undefined) throw new Error(`rename: source not found: ${source}`);
+      files.set(destination, Buffer.from(data));
+      files.delete(source);
     },
 
     writeFile: async (path: string, data: Buffer) => {
