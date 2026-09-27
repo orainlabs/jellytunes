@@ -699,13 +699,18 @@ class SyncApiImpl implements SyncApi {
     const contentType = response.headers.get('content-type') ?? undefined;
 
     // ORAIN-0737 AC3: also expose Content-Length (parsed to number, or
-    // undefined when the header is missing) so the sync layer can do
-    // post-download validation without re-fetching.
+    // undefined when the header is missing or malformed) so the sync
+    // layer can do post-download validation without re-fetching.
+    // Number.isFinite rejects NaN, which `Number('foo')` would yield
+    // — important because ORAIN-0739 will compare `stream.contentLength
+    // > received_bytes`, and `NaN > X` is `false`, silently skipping
+    // the validation on a corrupt header.
     const contentLengthHeader = response.headers.get('content-length');
-    const contentLength =
+    const parsed =
       contentLengthHeader !== null && contentLengthHeader !== ''
         ? Number(contentLengthHeader)
         : undefined;
+    const contentLength = parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined;
 
     // Convert Web ReadableStream → Node.js Readable (Node 16.7+, Electron 22+)
     const { Readable } = require('stream');

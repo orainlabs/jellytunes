@@ -1385,6 +1385,27 @@ describe('downloadItemStream (ORAIN-0737 AC3)', () => {
     Readable.from(stream as unknown as NodeJS.ReadableStream).resume();
   });
 
+  it('exposes contentLength as undefined when Content-Length is malformed (NaN guard)', async () => {
+    // ORAIN-0737 cycle 1: a corrupt Content-Length header (e.g. a proxy
+    // returning "abc" or "unknown") would otherwise be parsed to NaN via
+    // Number(). NaN silently breaks the post-download validation
+    // (`NaN > received_bytes` is false) planned for ORAIN-0739.
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(
+        makeDownloadResponse({ 'content-type': 'audio/mpeg', 'content-length': 'abc' }, 'x'),
+      );
+    const api = createApiClient({
+      baseUrl: 'https://jellyfin.test',
+      apiKey: 'k',
+      userId: 'u',
+      fetch: mockFetch,
+    });
+    const stream = await api.downloadItemStream('item-1');
+    expect((stream as { contentLength?: number }).contentLength).toBeUndefined();
+    Readable.from(stream as unknown as NodeJS.ReadableStream).resume();
+  });
+
   it('exposes contentType as undefined when Content-Type is absent (explicit null)', async () => {
     // Node's Response defaults Content-Type to text/plain when the body is a
     // string, so we have to use a Blob body to keep the header absent.
