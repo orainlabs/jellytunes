@@ -8,6 +8,7 @@
 import path from 'path';
 import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
+import { getJpegFrameType } from './cover-image';
 
 /**
  * Sanitize a metadata string field for safe use in FFmpeg -metadata arguments.
@@ -603,6 +604,12 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         // Map streams: audio from input 0 (the temp file), video from cover (input 1)
         if (embedCover) {
           args.push('-map', '0:a', '-map', '1:v', '-disposition:v', 'attached_pic');
+          // ORAIN-0736: pick -c:v so the cover stays the size Jellyfin returned
+          // instead of being silently re-encoded by the MP3 muxer to PNG (which
+          // costs ~40% of file size and isn't accepted by most car radios).
+          // Baseline/extended JPEG → copy; otherwise re-encode to mjpeg.
+          const coverCodec = isBaselineOrExtendedJpeg(embedCover) ? 'copy' : 'mjpeg';
+          args.push('-c:v', coverCodec);
         }
 
         // Metadata flags — all fields sanitized before passing to FFmpeg
@@ -712,6 +719,12 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
             '-disposition:v',
             'attached_pic',
           );
+          // ORAIN-0736: tagFile already runs -c copy for the audio stream; the
+          // cover still needs an explicit codec choice or FFmpeg's MP3 muxer
+          // will pick PNG (its default). Copy the bytes for baseline/extended
+          // JPEG, otherwise re-encode to mjpeg so the result is still a JPEG.
+          const coverCodec = isBaselineOrExtendedJpeg(embedCover) ? 'copy' : 'mjpeg';
+          args.push('-c:v', coverCodec);
         }
 
         args.push('-c', 'copy', '-y');
@@ -1107,6 +1120,25 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
       });
     },
   };
+}
+
+/**
+ * Decide whether the cover bytes can be stream-copied into the MP3. Returns
+ * true for JPEG SOF0 (baseline) and SOF1 (extended) — the two forms whose
+ * bytes FFmpeg's mjpeg decoder identifies as "mjpeg", which `-c:v copy` can
+ * carry verbatim. SOF2 (progressive) is also mjpeg but `-c:v copy` would
+ * embed a progressive JPEG that many car readers reject, so we re-encode
+ * it (and PNG/WEBP/etc.) to baseline mjpeg via the encoder below.
+ *
+ * ORAIN-0736: this predicate replaces FFmpeg's default "use the muxer
+ * default codec (PNG)" path that bloated embedded covers by ~40 %.
+ */
+export function isBaselineOrExtendedJpeg(bytes: Buffer): boolean {
+  if (!bytes || bytes.length < 4) return false;
+  // Cheap fast-path: confirm SOI before doing the SOF walk.
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return false;
+  const frameType = getJpegFrameType(bytes);
+  return frameType === 'baseline' || frameType === 'extended';
 }
 
 /**
