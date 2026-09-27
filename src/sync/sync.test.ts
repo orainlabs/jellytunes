@@ -5670,3 +5670,69 @@ describe('cleanEmptyDir', () => {
     });
   });
 });
+
+// =============================================================================
+// ORAIN-0736 — companion cover.jpg must equal the bytes returned by Jellyfin
+// =============================================================================
+//
+// AC: in `companion` coverArtMode the bytes written to `<albumDir>/cover.jpg`
+// on disk are exactly what `getCoverArt` returned. Earlier versions stored
+// the buffer through a helper that re-encoded (or in the worst case did not
+// run at all); this test pins the byte-level contract so a future regression
+// in the writeCompanionCover → fs.writeFile chain cannot silently store a
+// recompression, a 0-byte placeholder, or a previously cached cover.
+
+describe('ORAIN-0736 — companion cover.jpg byte equality', () => {
+  // Use a JPEG-shaped buffer so the bytes look like a real cover; the
+  // content itself is irrelevant since we're only checking pass-through.
+  const coverBytes = Buffer.from([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+    0x00, 0x01, 0x00, 0x00, 0xff, 0xd9, 0xde, 0xad, 0xbe, 0xef,
+  ]);
+
+  function makeMinimalTrack(overrides: Partial<TrackInfo> = {}): TrackInfo {
+    return {
+      id: 'track-companion',
+      name: 'Companion Track',
+      album: 'Album',
+      artists: ['Artist'],
+      path: '/music/Artist/Album/track.mp3',
+      format: 'mp3',
+      size: 5_000_000,
+      trackNumber: 1,
+      ...overrides,
+    };
+  }
+
+  async function runCompanionSync(mockFs: ReturnType<typeof createMockFileSystem>): Promise<any> {
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({
+          tracks: [makeMinimalTrack()],
+          errors: [],
+        }),
+        getCoverArt: async () => coverBytes,
+      }),
+      fs: mockFs,
+    });
+    const config: SyncConfig = { ...validConfig, serverRootPath: '/music/' };
+    const core = createTestSyncCore(config, deps);
+    return core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map([['album-1', 'album' as ItemType]]),
+      destinationPath: '/mnt/usb',
+      options: { coverArtMode: 'companion' },
+    });
+  }
+
+  it('writes the same bytes Jellyfin returned at <albumDir>/cover.jpg', async () => {
+    const mockFs = createMockFileSystem();
+    const result = await runCompanionSync(mockFs);
+    expect(result.success).toBe(true);
+
+    const written = (mockFs as any).__getFile('/mnt/usb/Artist/Album/cover.jpg') as
+      Buffer | undefined;
+    expect(written).toBeDefined();
+    expect(Buffer.compare(written as Buffer, coverBytes)).toBe(0);
+  });
+});
