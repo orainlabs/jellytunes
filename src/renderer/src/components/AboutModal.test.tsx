@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { render, screen, act, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { cleanup, render, screen, act, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AboutModal } from './AboutModal';
+
+const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard') ?? undefined;
 
 beforeEach(() => {
   const mockApi = {
@@ -34,12 +36,28 @@ beforeEach(() => {
   window.api = mockApi;
   // jsdom does not implement navigator.clipboard — provide a stub that
   // individual tests can override. Without this, copying throws.
-  if (!('clipboard' in navigator)) {
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-      configurable: true,
-      writable: true,
-    });
+  // Always re-assign (never gate on 'clipboard' in navigator) so the
+  // mock is reset between tests; the previous gate kept the first
+  // test's vi.fn() alive across tests.
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    configurable: true,
+    writable: true,
+  });
+});
+
+afterEach(() => {
+  // React unmounts so any leaked setTimeout would attempt setState on an
+  // unmounted component, and any leaked vi.useFakeTimers() would freeze
+  // the next test.
+  cleanup();
+  vi.useRealTimers();
+  // Restore the descriptor jsdom originally exposed so we never leak
+  // the stub into other test files that share this worker.
+  if (clipboardDescriptor) {
+    Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+  } else {
+    delete (navigator as { clipboard?: unknown }).clipboard;
   }
 });
 
@@ -195,6 +213,18 @@ describe('AboutModal', () => {
     await waitFor(() => {
       expect(screen.getByText(/Open log folder/)).toBeInTheDocument();
     });
+    // AC1 is about *position*, not just presence. Walk up to the closest
+    // flex-row container; "View on GitHub", "Support on Ko-fi" and the
+    // open-log-folder link must all sit on the same flex-row (i.e. be
+    // descendants of the same `flex flex-row` ancestor). This catches
+    // the case where the link is rendered in a separate row even though
+    // a find-by-text would happily pass.
+    const openLog = screen.getByTestId('open-log-folder-button');
+    const flexRow = openLog.closest('.flex.flex-row');
+    expect(flexRow).not.toBeNull();
+    expect(flexRow).toContainElement(screen.getByText(/View on GitHub/));
+    expect(flexRow).toContainElement(screen.getByText(/Support on Ko-fi/));
+    expect(flexRow).toContainElement(openLog);
   });
 
   // ORAIN-0735 AC2: the full log path is exposed via tooltip (title attr)
@@ -229,6 +259,16 @@ describe('AboutModal', () => {
     expect(window.api.openLogFolder).toHaveBeenCalledTimes(1);
   });
 
+  // ORAIN-0735 / studio-qa finding [MEDIUM]: the copy button's aria-label
+  // currently says only "Copy log path". Blind users learn the destination
+  // only after pressing the button. Surface the path in the label.
+  it('exposes the log path in the copy button aria-label', async () => {
+    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+    render(<AboutModal onClose={vi.fn()} />);
+    const copyButton = await screen.findByTestId('copy-log-path-button');
+    expect(copyButton).toHaveAttribute('aria-label', 'Copy log path: /var/log/jellytunes/main.log');
+  });
+
   // ORAIN-0735 AC2: a copy icon next to the link copies the path to the
   // clipboard and confirms with a check for ~2s.
   it('copies the log path to the clipboard when the copy button is clicked and shows a check', async () => {
@@ -258,5 +298,43 @@ describe('AboutModal', () => {
       vi.advanceTimersByTime(2100);
     });
     expect(screen.getByTestId('copy-log-path-button')).not.toHaveTextContent(/✓/);
+  });
+
+  // studio-qa finding [HIGH]: the 2s setTimeout used to revert the copy
+  // confirmation previously had no handle saved and no cleanup. We verify
+  // it cancels on unmount so React does not warn about setState on an
+  // unmounted component and so the confirmation does not flash after
+  // the modal is gone.
+  it('clears the copy confirmation setTimeout when unmounted before 2s elapse', async () => {
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
+    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+    const { unmount } = render(<AboutModal onClose={vi.fn()} />);
+    const copyButton = await screen.findByTestId('copy-log-path-button');
+    await act(async () => {
+      copyButton.click();
+      await Promise.resolve();
+    });
+    setTimeoutSpy.mockClear();
+    clearTimeoutSpy.mockClear();
+    unmount();
+    // The unmount path must call clearTimeout on the confirmation handle.
+    // Before the fix this call would not happen because the handle was
+    // never stored.
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    setTimeoutSpy.mockRestore();
+    clearTimeoutSpy.mockRestore();
+  });
+
+  // studio-qa finding [HIGH]: per-test useFakeTimers must be paired with
+  // useRealTimers, otherwise the next test in the same file (or another
+  // file in the same worker) silently inherits fake timers. The
+  // afterEach above restores them; this test asserts the invariant holds
+  // for any test that opted in.
+  it('restore vi.useFakeTimers() in afterEach so subsequent tests use real timers', () => {
+    vi.useFakeTimers();
+    // afterEach runs after the test body. If it forgets useRealTimers(),
+    // the assertion below would fail.
+    expect(vi.isFakeTimers()).toBe(true);
   });
 });

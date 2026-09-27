@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GradientMusicIcon } from './GradientMusicIcon';
 import { SnapPermissionsSection } from './SnapPermissionsSection';
 import {
@@ -34,6 +34,20 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   // ORAIN-0735: visual confirmation that the path was copied — toggled for
   // 2s after a successful clipboard write, then reverts to the copy icon.
   const [logPathCopied, setLogPathCopied] = useState(false);
+  // studio-qa finding [HIGH]: keep the timer handle so we can cancel it
+  // when the modal unmounts (or the user clicks copy again) and avoid the
+  // "setState on unmounted component" warning + the race where two quick
+  // clicks wipe each other's confirmation.
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     window.api
@@ -124,10 +138,22 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     try {
       await navigator.clipboard.writeText(logPath);
       setLogPathCopied(true);
-      window.setTimeout(() => setLogPathCopied(false), 2000);
-    } catch {
-      // Clipboard denied (e.g. focus / permission) — stay silent rather
-      // than flashing an error in a modal the user can already close.
+      // studio-qa finding [HIGH]: cancel any pending revert before
+      // scheduling a new one so a second click during the 2s window does
+      // not get its confirmation wiped by the earlier timer.
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setLogPathCopied(false);
+        copyTimerRef.current = null;
+      }, 2000);
+    } catch (err) {
+      // Clipboard denied (e.g. focus / permission). Surface to the
+      // console so it's discoverable in DevTools — the visual
+      // confirmation stays silent to avoid flashing an error in a modal
+      // the user can already close.
+      console.warn('AboutModal: failed to copy log path to clipboard', err);
     }
   };
 
@@ -211,7 +237,10 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           )}
         </div>
 
-        {/* ── Row 2: Tertiary links ── */}
+        {/* ── Row 2: Tertiary links (View on GitHub, Support on Ko-fi, and
+             the ORAIN-0735 Open-log-folder link) — AC1 places the log
+             entry on the same row so the three actions sit visually
+             together as the modal's "more" links. ── */}
         <div className="flex flex-row gap-4 mb-4 items-stretch">
           <a
             href="#"
@@ -234,40 +263,41 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           >
             Support on Ko-fi ☕
           </a>
-        </div>
 
-        {/* ── ORAIN-0735: compact "Open log folder" link + copy-to-clipboard.
-             Replaces the ORAIN-0727 LOG PATH block. Same style as Row 2
-             tertiary links, plus a small copy icon for the path. ── */}
-        <div className="flex flex-row gap-2 mb-4 items-center justify-center">
-          {/* data-testid="log-path" is preserved (sr-only) so QA can read the
-              resolved path and the copy button picks it up. */}
-          <span data-testid="log-path" className="sr-only">
-            {logPath}
-          </span>
-          <a
-            href="#"
-            data-testid="open-log-folder-button"
-            onClick={(e) => {
-              e.preventDefault();
-              void handleOpenLogFolder();
-            }}
-            title={logPath || undefined}
-            className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-body-sm text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
-          >
-            Open log folder 📂
-          </a>
-          <button
-            type="button"
-            data-testid="copy-log-path-button"
-            onClick={() => void handleCopyLogPath()}
-            disabled={!logPath}
-            title="Copy log path"
-            aria-label="Copy log path"
-            className="flex items-center justify-center w-7 h-7 rounded-md border border-transparent text-on_surface_variant hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high transition-colors disabled:opacity-40"
-          >
-            {logPathCopied ? '✓' : '⧉'}
-          </button>
+          {/* ORAIN-0735: compact "Open log folder" link sits in this row
+              alongside the other tertiary actions. The copy button lives
+              next to it so users can grab the path as well as open the
+              folder in the OS file manager. */}
+          <div className="flex-1 flex items-center justify-center gap-2 min-w-0">
+            {/* data-testid="log-path" is preserved (sr-only) so QA can read the
+                resolved path and the copy button picks it up. */}
+            <span data-testid="log-path" className="sr-only">
+              {logPath}
+            </span>
+            <a
+              href="#"
+              data-testid="open-log-folder-button"
+              onClick={(e) => {
+                e.preventDefault();
+                void handleOpenLogFolder();
+              }}
+              title={logPath || undefined}
+              className="flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors min-w-0"
+            >
+              <span className="truncate">Open log folder 📂</span>
+            </a>
+            <button
+              type="button"
+              data-testid="copy-log-path-button"
+              onClick={() => void handleCopyLogPath()}
+              disabled={!logPath}
+              title="Copy log path"
+              aria-label={logPath ? `Copy log path: ${logPath}` : 'Copy log path'}
+              className="flex items-center justify-center w-9 h-9 rounded-md border border-transparent text-on_surface_variant hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high transition-colors disabled:opacity-40"
+            >
+              {logPathCopied ? '✓' : '⧉'}
+            </button>
+          </div>
         </div>
 
         {/* ── Analytics toggle ── */}
