@@ -9,6 +9,7 @@ import type { TrackInfo, ItemType, SyncLogger } from './types';
 import type { JellyfinTrackItem, JellyfinAlbumItem } from './types';
 import { buildAuthHeader, type BuildAuthHeaderInput } from '../shared/auth-headers';
 import { buildCoverArtUrl } from './cover-image';
+import type { Readable } from 'stream';
 
 /**
  * ORAIN-0562: optional identity used to populate the `Authorization:
@@ -104,7 +105,7 @@ export interface SyncApi {
   downloadItem(itemId: string): Promise<Buffer>;
 
   /** Stream item from Jellyfin server as a Node.js Readable */
-  downloadItemStream(itemId: string): Promise<NodeJS.ReadableStream>;
+  downloadItemStream(itemId: string): Promise<Readable>;
 
   /** Get primary cover art image for an item */
   getCoverArt(itemId: string): Promise<Buffer>;
@@ -685,7 +686,7 @@ class SyncApiImpl implements SyncApi {
     }
   }
 
-  async downloadItemStream(itemId: string): Promise<NodeJS.ReadableStream> {
+  async downloadItemStream(itemId: string): Promise<Readable> {
     const response = await this.fetchDownloadResponse(itemId, this.timeout * 10);
 
     if (!response.body) {
@@ -715,6 +716,17 @@ class SyncApiImpl implements SyncApi {
         : undefined;
     const contentLength = parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined;
 
+    // ORAIN-0739 AC2(b): expose Content-Encoding too. Without this the
+    // encoding-aware branch in `validateDownloadSize` was unreachable
+    // — every download saw `contentEncoding === undefined`, normalised
+    // to 'identity', and the (gzip/br) skip path was dead. Lowercased
+    // here so the downstream `'.toLowerCase()` doesn't have to.
+    const contentEncodingHeader = response.headers.get('content-encoding');
+    const contentEncoding =
+      contentEncodingHeader !== null && contentEncodingHeader !== ''
+        ? contentEncodingHeader.toLowerCase()
+        : undefined;
+
     // Convert Web ReadableStream → Node.js Readable (Node 16.7+, Electron 22+)
     const { Readable } = require('stream');
     const nodeStream = Readable.fromWeb(response.body);
@@ -731,6 +743,15 @@ class SyncApiImpl implements SyncApi {
     // so the empty-string check above prevents that trap.
     Object.defineProperty(nodeStream, 'contentLength', {
       value: contentLength,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+    // ORAIN-0739 AC2(b): Content-Encoding. Empty string falls through to
+    // undefined and is normalised to 'identity' downstream, matching the
+    // pre-existing behaviour for the missing-header case.
+    Object.defineProperty(nodeStream, 'contentEncoding', {
+      value: contentEncoding,
       writable: false,
       enumerable: false,
       configurable: false,
