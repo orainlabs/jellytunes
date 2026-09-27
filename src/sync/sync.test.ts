@@ -1750,7 +1750,7 @@ describe('Error Handling', () => {
       // Track is marked failed — but the temp must still be cleaned.
       expect(result.success).toBe(false);
       expect(result.tracksFailed).toContain('track-copy-ac4');
-      expect(result.errors.some((e) => e.includes('FFmpeg exited with code 1'))).toBe(true);
+      expect(result.errors.some((e) => e.message.includes('FFmpeg exited with code 1'))).toBe(true);
       // CRITICAL (cycle 3): even on the FFmpeg-fail exit path, the temp
       // file must have been opened with 'wx' — same exclusivity guarantee
       // as the success path.
@@ -6031,8 +6031,10 @@ describe('ORAIN-0734: SyncResult.errors is structured SyncError[]', () => {
           ],
           errors: [],
         }),
-        // processTrack will call downloadItem; force a failure
-        downloadItem: async () => {
+        // ORAIN-0737: copyTrackFile downloads via downloadItemStream.
+        // Force a failure here so the sync records the failed track as a
+        // structured SyncError (trackName + message) instead of a string.
+        downloadItemStream: async () => {
           throw new Error('Disk full');
         },
       }),
