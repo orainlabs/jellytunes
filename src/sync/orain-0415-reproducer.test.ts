@@ -68,7 +68,15 @@ describe('ORAIN-0415 Reproducer: embed lyrics sync', () => {
     mockApi.downloadItem = vi.fn().mockResolvedValue(Buffer.from('fake mp3 audio data'));
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -128,7 +136,15 @@ describe('ORAIN-0415 Reproducer: embed lyrics sync', () => {
     mockApi.downloadItem = vi.fn().mockResolvedValue(Buffer.from('audio data'));
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -179,7 +195,15 @@ describe('ORAIN-0415 Reproducer: embed lyrics sync', () => {
     mockApi.downloadItem = vi.fn().mockResolvedValue(Buffer.from('audio data'));
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -228,7 +252,15 @@ describe('ORAIN-0415 Reproducer: embed lyrics sync', () => {
     mockApi.downloadItem = vi.fn().mockResolvedValue(Buffer.from('audio data'));
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -274,7 +306,15 @@ describe('ORAIN-0415 Reproducer: embed lyrics sync', () => {
     mockApi.downloadItem = vi.fn().mockResolvedValue(Buffer.from('audio data'));
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()

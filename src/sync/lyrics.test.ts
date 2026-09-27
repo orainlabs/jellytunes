@@ -448,7 +448,21 @@ describe('JSON to LRC text conversion', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -501,7 +515,21 @@ describe('JSON to LRC text conversion', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -742,7 +770,21 @@ describe('processLyrics for unchanged files — ORAIN-0313', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks: [makeTrack()], errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -798,7 +840,21 @@ describe('processLyrics for unchanged files — ORAIN-0313', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks: [makeTrack()], errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -868,7 +924,21 @@ describe('processLyrics behavior', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -907,7 +977,21 @@ describe('processLyrics behavior', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -949,7 +1033,21 @@ describe('processLyrics behavior', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -1014,7 +1112,21 @@ describe('processLyrics behavior', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()
@@ -1139,7 +1251,21 @@ describe('embed mode uses temp file — AC-1', () => {
     mockApi.getTracksForItems = vi.fn().mockResolvedValue({ tracks, errors: [] });
     mockApi.downloadItemStream = async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from('fake audio'));
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts the payload. Pre-0739 this was
+      // a textual placeholder ('fake audio'), which the new validator
+      // correctly rejects. These tests focus on lyrics handling, not
+      // body validation, so a default-valid audio stream is the right
+      // shape to keep them exercising their target behaviour.
+      return Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(100 - 13),
+        ]),
+      );
     };
     mockApi.getItem = vi
       .fn()

@@ -31,6 +31,7 @@ import path from 'path';
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
 import { COVER_MAX_BYTES } from './cover-image';
+import { validateAudioBody, validateDownloadSize } from './download-validation';
 
 import {
   validateSyncConfig,
@@ -225,6 +226,33 @@ export function estimateOutputBytes(
 
 /** No-op logger used when no logger is injected (keeps module testable) */
 const noopLogger: SyncLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+
+/**
+ * ORAIN-0739 AC7: typed phase-tagged error raised from the download /
+ * validation pipeline. `copyOrConvertTrack` catches it, reads `phase`, and
+ * emits a structured `SyncError` with the same `message`. Non-sync errors
+ * (FFmpeg, tag, write) bubble up as plain `Error` and the existing catch
+ * block fills `phase: 'conversion' | 'tagging' | 'write'` based on the
+ * failing method (kept by convention, no extra signal needed).
+ */
+export class SyncPhaseError extends Error {
+  readonly phase: 'download' | 'validation';
+  constructor(phase: 'download' | 'validation', message: string) {
+    super(message);
+    this.name = 'SyncPhaseError';
+    this.phase = phase;
+  }
+}
+
+// ORAIN-0739 AC4: retry delays in milliseconds between download attempts
+// (after the first). 2 retries → wait 1 s, then 3 s before re-issuing.
+const DOWNLOAD_RETRY_DELAYS_MS = [1000, 3000] as const;
+// ORAIN-0739 AC5: abort a download that sits idle for this long. The
+// timeout fires from the LAST data event on the stream, so a slow track
+// that consistently trickles bytes is unaffected; a stalled connection is
+// killed promptly. The abort tears down the stream pipe and bubbles into
+// the existing error handling.
+const DOWNLOAD_STALL_TIMEOUT_MS = 30_000;
 
 // ORAIN-0709: deduplicate tracks by id. When the selection contains overlapping
 // items (e.g. artist + albumArtist + album + playlist), the same track.id appears
@@ -715,7 +743,11 @@ class SyncCoreImpl {
         lyricsAdded += result.lyricsAdded ?? 0;
 
         if (result.error) {
-          errors.push({ trackName: track.name, message: result.error });
+          errors.push({
+            trackName: track.name,
+            message: result.error,
+            phase: result.errorPhase,
+          });
           tracksFailed.push(track.id);
         }
 
@@ -800,6 +832,9 @@ class SyncCoreImpl {
     skipped: boolean;
     lyricsAdded: number;
     error?: string;
+    /** ORAIN-0739 AC7: passed through from copyOrConvertTrack so the
+     * outer loop can fill `SyncError.phase`. */
+    errorPhase?: SyncError['phase'];
   }> {
     const outputDir = this.getOutputDir(
       track,
@@ -1001,6 +1036,7 @@ class SyncCoreImpl {
     );
     return {
       ...copyResult,
+      // ORAIN-0739 AC7: errorPhase is already on the spread.
     };
   }
 
@@ -1024,6 +1060,10 @@ class SyncCoreImpl {
     skipped: boolean;
     lyricsAdded: number;
     error?: string;
+    /** ORAIN-0739 AC7: phase where the error originated, used by the
+     * outer loop to fill `SyncError.phase`. Defaults are inferred from
+     * the calling path so non-download errors still carry a phase. */
+    errorPhase?: SyncError['phase'];
   }> {
     try {
       // Handle existing file at output path
@@ -1111,6 +1151,25 @@ class SyncCoreImpl {
         lyricsAdded: lyricsResult,
       };
     } catch (error) {
+      // ORAIN-0739 AC7: read the typed phase off `SyncPhaseError` so the
+      // outer loop can fill `SyncError.phase`. For everything else
+      // (FFmpeg stderr, tagger rejection, write error) we fall back to a
+      // sensible phase inferred from which step threw.
+      let errorPhase: SyncError['phase'];
+      if (error instanceof SyncPhaseError) {
+        errorPhase = error.phase;
+      } else if (willConvert) {
+        // Either FFmpeg rejected the body, FFmpeg itself crashed, or
+        // something blew up while reading the temp file for metadata.
+        // All three originate inside the conversion step.
+        errorPhase = 'conversion';
+      } else if (options.embedMetadata !== false) {
+        // The copy+tag path runs `readFileMetadata` + `tagFile` after the
+        // download; both throw plain `Error`s, neither carries a phase.
+        errorPhase = 'tagging';
+      } else {
+        errorPhase = 'write';
+      }
       const errorMsg = `Failed to sync "${track.name}": ${error instanceof Error ? error.message : 'Unknown error'}`;
       return {
         retagged: false,
@@ -1119,8 +1178,226 @@ class SyncCoreImpl {
         skipped: false,
         lyricsAdded: 0,
         error: errorMsg,
+        errorPhase,
       };
     }
+  }
+
+  /**
+   * ORAIN-0739 — single post-download validation point shared by
+   * `copyTrackFile` (no conversion) and `convertAndCopy` (FFmpeg path).
+   * The unit of work is: download a track to a temp file under
+   * `os.tmpdir()`, retry on transient transport failures, watch for stalls
+   * mid-stream, then verify the buffered body fingerprint and length
+   * before any consumer (FFmpeg, tagger, raw copy) ever touches it.
+   *
+   * Returns `{ tmpPath, receivedBytes, contentLength, contentEncoding,
+   * contentType, declaredSize }` on success. Throws `SyncPhaseError`
+   * (carrying `phase: 'download' | 'validation'`) on failure. The caller
+   * is responsible for `unlink(tmpPath)` in a `finally`.
+   *
+   * AC1: empty / textual / unknown-signature bodies are rejected at the
+   * body-validation step (FFmpeg never sees them).
+   * AC2/AC6: size check runs on the raw buffered body, honouring
+   * Content-Length, encoding and the declared-size stability rule.
+   * AC4: 1 s + 3 s between attempts (max 2 retries); cancellation does
+   * not retry.
+   * AC5: a stream that goes silent for 30 s is aborted and counted as a
+   * download failure (so the retry loop catches it).
+   */
+  private async _downloadWithValidation(
+    track: TrackInfo,
+    tmpPath: string,
+  ): Promise<{
+    tmpPath: string;
+    receivedBytes: number;
+    contentLength: number | undefined;
+    contentEncoding: string | undefined;
+    contentType: string | undefined;
+    declaredSize: number | undefined;
+  }> {
+    const declaredSize =
+      typeof track.size === 'number' && Number.isFinite(track.size) && track.size > 0
+        ? track.size
+        : undefined;
+
+    const maxAttempts = DOWNLOAD_RETRY_DELAYS_MS.length + 1; // 3 attempts total
+    let previousReceivedBytes: number | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Cancellation is global — do not retry once the user has asked to
+      // stop. Throwing SyncCancelledError preserves the existing cancel
+      // contract; the outer catch handles it before the structured-error
+      // pipeline.
+      this.cancellation.throwIfCancelled();
+
+      let phaseError: SyncPhaseError | null = null;
+      let attemptReceivedBytes: number | undefined;
+
+      try {
+        const stream = await this.deps.api.downloadItemStream(track.id);
+        const streamMeta = stream as NodeJS.ReadableStream & {
+          contentType?: string;
+          contentLength?: number;
+          contentEncoding?: string;
+        };
+        const contentType = streamMeta.contentType;
+        const contentLength = streamMeta.contentLength;
+        const contentEncoding = streamMeta.contentEncoding;
+
+        // AC4/AC5: open with 'wx' (refuse stale temp from prior crash)
+        // and pipe, watching for stalls. The timer resets on every
+        // 'data' event; if it fires we abort the stream and let the
+        // outer catch classify the failure as a download error so the
+        // retry loop runs.
+        const writeStream = await this.deps.fs.createWriteStream(tmpPath, { flags: 'wx' });
+
+        let receivedBytesLocal = 0;
+        let stallTimer: NodeJS.Timeout | null = null;
+        let stallFired = false;
+
+        const armStallTimer = () => {
+          if (stallTimer) clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => {
+            stallFired = true;
+            const err = new Error(
+              `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
+            );
+            (err as Error & { stallTimeout?: boolean }).stallTimeout = true;
+            // Node's Readable.fromWeb returns a stream with `destroy`;
+            // the public `NodeJS.ReadableStream` type does not expose
+            // it, so cast for the abort path.
+            (stream as unknown as { destroy: (e?: Error) => void }).destroy(err);
+            (writeStream as unknown as { destroy: (e?: Error) => void }).destroy(err);
+          }, DOWNLOAD_STALL_TIMEOUT_MS);
+        };
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const cleanup = (err?: Error) => {
+              if (err) reject(err);
+              else resolve();
+            };
+            stream.on('data', (chunk: Buffer | string) => {
+              receivedBytesLocal += Buffer.isBuffer(chunk)
+                ? chunk.length
+                : Buffer.byteLength(chunk);
+              armStallTimer();
+            });
+            stream.on('error', (err: Error) => cleanup(err));
+            writeStream.on('error', (err: Error) => cleanup(err));
+            writeStream.on('finish', () => cleanup());
+            armStallTimer();
+            stream.pipe(writeStream);
+          });
+        } finally {
+          if (stallTimer) clearTimeout(stallTimer);
+        }
+
+        attemptReceivedBytes = receivedBytesLocal;
+
+        if (stallFired) {
+          // Stream was torn down by the stall timer. Surface as a
+          // download-phase error so the retry loop catches it.
+          phaseError = new SyncPhaseError(
+            'download',
+            `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
+          );
+        } else {
+          // AC2: size check on the raw buffered body. AC2(c) compares
+          // against the previous attempt's byte count — every failed
+          // attempt feeds its size into the next call so the stability
+          // rule can accept a stable different size.
+          const sizeResult = validateDownloadSize({
+            contentLength,
+            contentEncoding,
+            declaredSize,
+            receivedBytes: receivedBytesLocal,
+            previousReceivedBytes,
+          });
+          if (!sizeResult.ok) {
+            phaseError = new SyncPhaseError('download', sizeResult.reason);
+          } else {
+            if (sizeResult.warning) {
+              this.log.warn(`[download-validation] ${track.name}: ${sizeResult.warning}`);
+            }
+            // AC3: body fingerprint. Read the whole buffered body (the
+            // validator inspects only the first 64 bytes for the
+            // textual heuristic; the signatures match even shorter
+            // heads). The full read is cheap for audio files — the
+            // alternative (streaming the head) adds complexity for no
+            // win. Bodies that fail here are rejected, so FFmpeg never
+            // sees them.
+            const body = await this.deps.fs.readFile(tmpPath);
+            const bodyResult = validateAudioBody(body);
+            if (!bodyResult.ok) {
+              phaseError = new SyncPhaseError('validation', bodyResult.reason);
+            } else {
+              // SUCCESS
+              return {
+                tmpPath,
+                receivedBytes: receivedBytesLocal,
+                contentLength,
+                contentEncoding,
+                contentType,
+                declaredSize,
+              };
+            }
+          }
+        }
+      } catch (error) {
+        // Cancellation bubbles up untouched — the user has asked us to
+        // stop and we do not retry that.
+        if (
+          this.cancellation.isCancelled() ||
+          (error instanceof Error && error.name === 'SyncCancelledError')
+        ) {
+          await this.deps.fs.unlink(tmpPath).catch(() => {});
+          throw error;
+        }
+        if (error instanceof SyncPhaseError) {
+          phaseError = error;
+        } else {
+          // Any other error from the pipe layer (RST, terminated,
+          // network reset, ApiError from the HTTP layer). Surface as a
+          // download-phase error so the UI sees one consistent shape.
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const stall = (error as Error & { stallTimeout?: boolean }).stallTimeout === true;
+          phaseError = new SyncPhaseError(
+            'download',
+            stall
+              ? `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`
+              : `Descarga fallida: ${rawMessage}`,
+          );
+        }
+      }
+
+      // If we got here, phaseError is set. Capture the attempt's measured
+      // size BEFORE unlinking so AC2(c) can compare it on the next
+      // attempt (same body, same fingerprint, just different byte count).
+      if (typeof attemptReceivedBytes === 'number') {
+        previousReceivedBytes = attemptReceivedBytes;
+      }
+      await this.deps.fs.unlink(tmpPath).catch(() => {});
+      if (attempt < maxAttempts) {
+        await this.delay(DOWNLOAD_RETRY_DELAYS_MS[attempt - 1]!);
+        continue;
+      }
+      // Exhausted retries — throw the last phase error.
+      throw phaseError;
+    }
+    // Unreachable: the loop either returns or throws above. TS needs a
+    // fall-through; if the for-loop body ever returns without throwing
+    // (impossible today) we surface a generic failure.
+    throw new SyncPhaseError('download', 'Descarga fallida tras varios intentos');
+  }
+
+  /**
+   * Promise-friendly sleep. Used by the download retry loop (AC4). Pulled
+   * out so tests can monkey-patch it if they ever need to skip the wait.
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async copyTrackFile(
@@ -1138,16 +1415,10 @@ class SyncCoreImpl {
     // temp file directly (no .jt-tmp-* artefacts left behind — AC4).
     const tmpPath = buildCopyTrackTempPath(track.format, Date.now());
     try {
-      const stream = await this.deps.api.downloadItemStream(track.id);
-
-      // AC4: 'wx' refuses to clobber a stale temp from a previous crash.
-      const writeStream = await this.deps.fs.createWriteStream(tmpPath, { flags: 'wx' });
-      await new Promise<void>((resolve, reject) => {
-        writeStream.on('error', reject);
-        stream.on('error', reject);
-        stream.pipe(writeStream);
-        writeStream.on('finish', resolve);
-      });
+      // ORAIN-0739: download + retry + stall + size + body validation in
+      // one shot. Returns the buffered temp file (already validated) and
+      // the three byte-count fields for the diagnostic log (AC8).
+      await this._downloadWithValidation(track, tmpPath);
 
       // Check for cancellation after the download completes, mirroring the
       // convert path so cancel mid-pipe and cancel-after-pipe are handled
@@ -2395,20 +2666,6 @@ class SyncCoreImpl {
     // surfacing as broken tracks on the player, Windows MAX_PATH on FAT32,
     // and Snap confinement blocking writes under $HOME on removable-media.
     const tmpPath = buildConvertTempPath(track.format, Date.now());
-    const stream = await this.deps.api.downloadItemStream(track.id);
-
-    // Capture Content-Type AND Content-Length off the stream before piping
-    // (ORAIN-0729, ORAIN-0737 AC3). Both properties are set by sync-api's
-    // downloadItemStream when the response has the headers; older/mocked
-    // streams may not have them. `downloadContentLength` is currently
-    // consumed only by the diagnostic logger; ORAIN-0739 will pick it up
-    // for post-download validation.
-    const downloadMeta = stream as NodeJS.ReadableStream & {
-      contentType?: string;
-      contentLength?: number;
-    };
-    const downloadContentType = downloadMeta.contentType;
-    const downloadContentLength = downloadMeta.contentLength;
 
     // ORAIN-0732 AC6 (cycle 2): wrap the download pipe and the conversion in
     // a single try/finally so the temp file is unlinked on EVERY exit path —
@@ -2417,17 +2674,13 @@ class SyncCoreImpl {
     // (network, disk full, cancelled response) rejected the promise before
     // entering the try, leaking the partial temp file in os.tmpdir().
     try {
-      // Pipe stream to temp file — handle errors to prevent hangs on disk-full.
-      // ORAIN-0737 AC4: 'wx' refuses to clobber a stale temp file from a
-      // previous crash, matching copyTrackFile. Without exclusivity a
-      // leftover from a prior run would silently be reused.
-      const writeStream = await this.deps.fs.createWriteStream(tmpPath, { flags: 'wx' });
-      await new Promise<void>((resolve, reject) => {
-        writeStream.on('error', reject);
-        stream.on('error', reject);
-        stream.pipe(writeStream);
-        writeStream.on('finish', resolve);
-      });
+      // ORAIN-0739: download + retry + stall + size + body validation in
+      // one shot. The returned `downloadContentType` / `downloadContentLength`
+      // are needed by the diagnostic log (AC8). FFmpeg only runs if the
+      // buffered body passed the fingerprint check (AC1).
+      const downloadResult = await this._downloadWithValidation(track, tmpPath);
+      const downloadContentType = downloadResult.contentType;
+      const downloadContentLength = downloadResult.contentLength;
 
       // Check for cancellation after download stream is buffered, before expensive conversion.
       this.cancellation.throwIfCancelled();
@@ -2457,15 +2710,19 @@ class SyncCoreImpl {
         embedCover,
       );
       if (!result.success) {
-        // ORAIN-0729: emit a diagnostic log line so the next failure does
-        // not require asking the reporter what FFmpeg received. We log the
-        // five AC1 fields together, then re-throw so the existing failure
-        // path (copyOrConvertTrack → sync result error) keeps working.
+        // ORAIN-0729 + ORAIN-0739 AC8: emit a diagnostic log line so the
+        // next failure does not require asking the reporter what FFmpeg
+        // received. The five AC1 fields are logged plus the three byte
+        // counts (receivedBytes vs contentLength vs declaredSize) as
+        // separate fields — this is the AC8 fix the 0.7.2 release was
+        // shipping wrong.
         await this.logConversionFailureDiagnostic(
           track,
           tmpPath,
           downloadContentType,
           downloadContentLength,
+          downloadResult.receivedBytes,
+          downloadResult.declaredSize,
           result.error,
         );
         throw new Error(result.error ?? 'Conversion failed');
@@ -2485,6 +2742,17 @@ class SyncCoreImpl {
    *   - size in bytes (track.size, or measured temp-file size as fallback)
    *   - first 16 bytes of the buffered temp file, in hex
    *
+   * ORAIN-0739 AC8: the prior release logged `size=track.size` and called
+   * it the bytes FFmpeg received — but `track.size` is what Jellyfin
+   * says about the original on-disk file, NOT what the proxy delivered.
+   * Now we log three separate fields:
+   *   - receivedBytes: bytes actually buffered into the temp file
+   *   - contentLength: the Content-Length header value
+   *   - declaredSize: track.size (Jellyfin's view of the original)
+   * `size=…` is kept (now sourced from the temp file's stat, falling back
+   * to track.size) so the existing log scrapers still find a token by
+   * that name.
+   *
    * Logging happens BEFORE the throw so the existing error envelope
    * (sync-failed popup) keeps its behaviour unchanged.
    */
@@ -2493,13 +2761,17 @@ class SyncCoreImpl {
     tmpPath: string,
     downloadContentType: string | undefined,
     downloadContentLength: number | undefined,
+    receivedBytes: number | undefined,
+    declaredSize: number | undefined,
     ffmpegError: string | undefined,
   ): Promise<void> {
-    let size = track.size;
+    let size: number | undefined = typeof track.size === 'number' ? track.size : undefined;
     let first16Hex = 'unavailable';
     try {
       const stat = await this.deps.fs.stat(tmpPath);
-      if (typeof size !== 'number') size = stat.size;
+      // Prefer the measured temp-file size; fall back to track.size only
+      // if stat somehow fails (it shouldn't for a file we just wrote).
+      size = stat.size;
       // Best-effort: read the first 16 bytes of the temp file. If the file
       // is empty or unreadable, leave the placeholder so the log line is
       // still well-formed.
@@ -2521,7 +2793,9 @@ class SyncCoreImpl {
     this.log.warn(
       `[ffmpeg-received] trackId=${track.id} format=${track.format} extension=${extension} ` +
         `contentType=${downloadContentType ?? '(none)'} ` +
+        `receivedBytes=${receivedBytes ?? '(unknown)'} ` +
         `contentLength=${downloadContentLength ?? '(unknown)'} ` +
+        `declaredSize=${declaredSize ?? '(unknown)'} ` +
         `size=${size ?? '(unknown)'} first16Hex=${first16Hex} ` +
         `ffmpegError=${ffmpegError ?? '(none)'}`,
     );

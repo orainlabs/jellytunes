@@ -1298,7 +1298,21 @@ describe('Error Handling', () => {
       // undefined. The diagnostic must still be well-formed so the support
       // log line is parseable.
       const { Readable } = require('stream');
-      const payload = Buffer.from('JT-ORAIN-0729-FALLBACK'); // 21 bytes
+      // ORAIN-0739: feed a valid ID3+MPEG body so the post-download body
+      // validator accepts it; the assertion below checks the diagnostic
+      // placeholders (contentType/extension/size), not body fingerprint,
+      // so we keep the legacy 21-byte size exactly. Pre-0739 the body
+      // was a textual placeholder which the new validator now correctly
+      // rejects before FFmpeg runs — that earlier behaviour is now the
+      // happy-path bug fix this test was guarding against, so it no
+      // longer models a realistic FFmpeg input.
+      const payload = Buffer.concat([
+        Buffer.from('ID3'),
+        Buffer.from([0x03, 0x00]),
+        Buffer.from([0x00, 0x00, 0x00, 0x00]),
+        Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+        Buffer.alloc(21 - 13),
+      ]); // 21 bytes (preserves the size=21 assertion below)
 
       const track: TrackInfo = {
         id: 'track-no-meta',
@@ -1589,7 +1603,7 @@ describe('Error Handling', () => {
     });
 
     function buildCopyDeps(options: {
-      streamFactory: () => NodeJS.ReadableStream | Promise<NodeJS.ReadableStream>;
+      streamFactory?: () => NodeJS.ReadableStream | Promise<NodeJS.ReadableStream>;
       tagFile?: (input: string, output: string) => Promise<{ success: boolean; error?: string }>;
       readFileMetadata?: () => Promise<Record<string, unknown>>;
       getCoverArtBuffer?: () => Promise<Buffer | undefined>;
@@ -1635,9 +1649,30 @@ describe('Error Handling', () => {
         trackNumber: 1,
       };
 
+      // ORAIN-0739: default to a synthetic ID3 + MPEG-sync body so the
+      // body validator (AC1/AC3) accepts it out of the box. Callers that
+      // want to test validation failures can still override
+      // `streamFactory`. Pre-0739 the stream was a 16-byte ASCII string
+      // which the new validator correctly rejects — those tests have
+      // since been split out under the validation suites. The body size
+      // matches the track's declared size so AC2's Content-Length /
+      // track.size check passes on the first attempt (no 1s + 3s retry
+      // delay in the temp-file-lifecycle tests).
+      const VALID_AUDIO_BODY = Buffer.concat([
+        Buffer.from('ID3'),
+        Buffer.from([0x03, 0x00]),
+        Buffer.from([0x00, 0x00, 0x00, 0x00]),
+        Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+        // Pad to exactly track.size (100) bytes total — header takes 13
+        // bytes (3 + 2 + 4 + 4).
+        Buffer.alloc(100 - 13),
+      ]);
+      const streamFactory =
+        options.streamFactory ?? (() => require('stream').Readable.from(VALID_AUDIO_BODY));
+
       const api = createMockApiClient({
         getTracksForItems: async () => ({ tracks: [track], errors: [] }),
-        downloadItemStream: async () => options.streamFactory(),
+        downloadItemStream: async () => streamFactory(),
       });
 
       const converter: AudioConverter = {
@@ -1703,8 +1738,22 @@ describe('Error Handling', () => {
 
     it('unlinks the temp file on success', async () => {
       const { Readable } = require('stream');
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // body validator (AC1/AC3) accepts it. The bytes here are the
+      // helper-blessed VALID_AUDIO_BODY (track.size 100). Pre-0739 this
+      // test used a textual placeholder, which the new validator now
+      // correctly rejects; the success path of copyTrackFile is what
+      // AC4 cares about, not body content, so we feed a real audio
+      // body and assert only on the temp-file lifecycle.
+      const VALID_AUDIO_BODY = Buffer.concat([
+        Buffer.from('ID3'),
+        Buffer.from([0x03, 0x00]),
+        Buffer.from([0x00, 0x00, 0x00, 0x00]),
+        Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+        Buffer.alloc(100 - 13),
+      ]);
       const { deps, unlinkedPaths, createdPaths, writeStreamFlags } = buildCopyDeps({
-        streamFactory: () => Readable.from(Buffer.from('fake-mp3-bytes')),
+        streamFactory: () => Readable.from(VALID_AUDIO_BODY),
       });
 
       const core = createSyncCore(validConfig, deps);
@@ -1735,8 +1784,20 @@ describe('Error Handling', () => {
 
     it('unlinks the temp file when tagFile (FFmpeg) fails', async () => {
       const { Readable } = require('stream');
+      // ORAIN-0739: stream a valid ID3+MPEG body so the post-download
+      // validator accepts it; this test specifically exercises the
+      // FFmpeg-fail exit path that follows the successful download.
+      // Pre-0739 the stream was a textual placeholder that the new
+      // validator correctly rejects before reaching tagFile.
+      const VALID_AUDIO_BODY = Buffer.concat([
+        Buffer.from('ID3'),
+        Buffer.from([0x03, 0x00]),
+        Buffer.from([0x00, 0x00, 0x00, 0x00]),
+        Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+        Buffer.alloc(100 - 13),
+      ]);
       const { deps, unlinkedPaths, createdPaths, writeStreamFlags } = buildCopyDeps({
-        streamFactory: () => Readable.from(Buffer.from('fake-mp3-bytes')),
+        streamFactory: () => Readable.from(VALID_AUDIO_BODY),
         tagFile: async () => ({ success: false, error: 'FFmpeg exited with code 1' }),
       });
 
@@ -4001,6 +4062,20 @@ describe('sync loop healing on skip', () => {
 describe('cover art size limit — ORAIN-0232', () => {
   const FIVE_MB = 5 * 1024 * 1024;
 
+  // ORAIN-0739: a synthetic MP3 body of arbitrary size so the body
+  // validator (AC1/AC3) accepts the mock download. The cover-art tests
+  // only care about cover handling, not validation — but the new
+  // download-validation pipeline rejects textual bodies, so the stream
+  // factory now returns a real audio-shaped buffer.
+  const fakeAudioBodyOf = (size: number): Buffer =>
+    Buffer.concat([
+      Buffer.from('ID3'),
+      Buffer.from([0x03, 0x00]),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+      Buffer.alloc(Math.max(0, size - 13), 0x00),
+    ]);
+
   it('embeds cover art when buffer is exactly 5 MB (not greater than)', async () => {
     const fiveMbBuffer = Buffer.alloc(FIVE_MB, 0xff);
     const progressWarnings: string[] = [];
@@ -4022,10 +4097,10 @@ describe('cover art size limit — ORAIN-0232', () => {
       api: createMockApiClient({
         getTracksForItems: getTracksForItemsSpy,
         getCoverArt: async () => fiveMbBuffer,
-        downloadItem: async () => Buffer.from('fake-audio-data'),
+        downloadItem: async () => Buffer.from(fakeAudioBodyOf(5000000)),
         downloadItemStream: async () => {
           const { Readable } = require('stream');
-          return Readable.from(Buffer.from('fake-audio-data'));
+          return Readable.from(fakeAudioBodyOf(5000000));
         },
       }),
     });
@@ -4065,10 +4140,10 @@ describe('cover art size limit — ORAIN-0232', () => {
       api: createMockApiClient({
         getTracksForItems: getTracksForItemsSpy,
         getCoverArt: async () => overLimitBuffer,
-        downloadItem: async () => Buffer.from('fake-audio-data'),
+        downloadItem: async () => Buffer.from(fakeAudioBodyOf(5000000)),
         downloadItemStream: async () => {
           const { Readable } = require('stream');
-          return Readable.from(Buffer.from('fake-audio-data'));
+          return Readable.from(fakeAudioBodyOf(5000000));
         },
       }),
     });
@@ -4107,10 +4182,10 @@ describe('cover art size limit — ORAIN-0232', () => {
       api: createMockApiClient({
         getTracksForItems: getTracksForItemsSpy,
         getCoverArt: async () => overLimitBuffer,
-        downloadItem: async () => Buffer.from('fake-audio-data'),
+        downloadItem: async () => Buffer.from(fakeAudioBodyOf(5000000)),
         downloadItemStream: async () => {
           const { Readable } = require('stream');
-          return Readable.from(Buffer.from('fake-audio-data'));
+          return Readable.from(fakeAudioBodyOf(5000000));
         },
       }),
     });

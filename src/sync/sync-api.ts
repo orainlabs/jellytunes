@@ -1030,6 +1030,20 @@ export function parseLyricsResponse(responseText: string): string {
  * Create mock API client for testing
  */
 export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
+  // ORAIN-0739: a few bytes of synthetic MP3 data so the default mock
+  // produces a body that passes download validation (ID3v2 header +
+  // MPEG sync). Pre-0739 the empty buffer was tolerated because no
+  // validation ran; after the validator landed, an empty body is
+  // explicitly rejected as "0 B". Tests that need a custom shape still
+  // override `downloadItemStream` / `downloadItem` directly.
+  const MOCK_MP3_HEADER = Buffer.concat([
+    Buffer.from('ID3'),
+    Buffer.from([0x03, 0x00]),
+    Buffer.from([0x00, 0x00, 0x00, 0x00]),
+    Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+    Buffer.alloc(1024),
+  ]);
+
   const defaultMock: SyncApi = {
     testConnection: async () => ({ success: true, serverName: 'Mock Server' }),
     getUser: async () => ({ id: 'mock-user', name: 'Mock User' }),
@@ -1040,10 +1054,10 @@ export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
     getTracksForItems: async () => ({ tracks: [], errors: [] }),
     getItem: async () => null,
     getLibraryStats: async () => ({ artists: 0, albums: 0, tracks: 0 }),
-    downloadItem: async () => Buffer.from(''),
+    downloadItem: async () => Buffer.from(MOCK_MP3_HEADER),
     downloadItemStream: async () => {
       const { Readable } = require('stream');
-      return Readable.from(Buffer.from(''));
+      return Readable.from(Buffer.from(MOCK_MP3_HEADER));
     },
     getCoverArt: async () => Buffer.from(''),
     fetchLyrics: async () => null,
