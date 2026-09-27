@@ -499,6 +499,17 @@ describe('ORAIN-0737 AC5 — Fixture H: extension-aware tagFile', () => {
       // either, FFmpeg cannot pick a muxer for the output, and exits
       // non-zero with "Invalid data found".
       const { withoutExt } = synthesizeFixtureH(ffmpegPath, workDir);
+      // ORAIN-0743: capture the input bytes before calling tagFile so the
+      // negative-control can assert the product contract — "no playable
+      // substitute came out of the no-extension path" — without relying
+      // on ffprobe's interpretation of the fixture's bytes (Windows
+      // ffprobe reads them; Linux ffprobe does not, and we cannot pin
+      // behaviour on a third-party tool's tolerance for spec-violating
+      // ID3v2 tag sizes). The real product claim is: if the file still
+      // exists after the failed tagFile call, its bytes are IDENTICAL to
+      // what tagFile was handed. Hash or Buffer compare — both are valid,
+      // Buffer.compare is the most direct and avoids an extra dep.
+      const expectedBytes = readFileSync(withoutExt);
       const converter = createFFmpegConverter();
 
       const result = await converter.tagFile(withoutExt, withoutExt, {
@@ -508,15 +519,14 @@ describe('ORAIN-0737 AC5 — Fixture H: extension-aware tagFile', () => {
       // Pin only on the structural claim: failure + nothing playable.
       // FFmpeg's exact error wording drifts across versions and platforms.
       expect(result.success).toBe(false);
-      // After the in-place attempt: either the file is missing (FFmpeg
-      // never created a replacement) OR it stayed at zero bytes
-      // (whatever it was before). The crucial contract is no playable
-      // audio came out of the no-extension path.
+      // After the in-place attempt the contract is: either the file is
+      // missing (tagFile never replaced it) OR its bytes equal what we
+      // handed in. Crucially we do NOT probe duration here — see the
+      // comment above. Duration-as-proxy leaks platform-specific ffprobe
+      // behaviour into a test whose job is to pin tagFile's contract.
       if (existsSync(withoutExt)) {
-        const dur = probeDurationSeconds(withoutExt);
-        if (canProbe) {
-          expect(dur).toBe(0);
-        }
+        const actualBytes = readFileSync(withoutExt);
+        expect(Buffer.compare(actualBytes, expectedBytes)).toBe(0);
       }
     },
   );
