@@ -1573,6 +1573,213 @@ describe('Error Handling', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // ORAIN-0737 AC4: copyTrackFile must unlink its temp file on EVERY exit
+  // path — success, FFmpeg failure, stream error, cancellation. The
+  // production code lives in sync-core.ts copyTrackFile(); these tests
+  // mirror the convertAndCopy AC6 suite above (sync.test.ts:1506) so a
+  // future refactor that drops the `finally` block fails the suite loudly.
+  // ---------------------------------------------------------------------------
+  describe('ORAIN-0737 AC4: copyTrackFile unlinks its temp file on every exit path', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    function buildCopyDeps(options: {
+      streamFactory: () => NodeJS.ReadableStream | Promise<NodeJS.ReadableStream>;
+      tagFile?: (input: string, output: string) => Promise<{ success: boolean; error?: string }>;
+      readFileMetadata?: () => Promise<Record<string, unknown>>;
+      getCoverArtBuffer?: () => Promise<Buffer | undefined>;
+    }): {
+      deps: SyncDependencies;
+      unlinkedPaths: string[];
+      createdPaths: string[];
+      fs: ReturnType<typeof createMockFileSystem>;
+    } {
+      const unlinkedPaths: string[] = [];
+      const createdPaths: string[] = [];
+      const fs = createMockFileSystem();
+      // Wrap createWriteStream so we can record the path that the production
+      // code chose for the temp file — the test asserts that exact path
+      // ends up in the unlinked set.
+      const originalCreateWriteStream = fs.createWriteStream.bind(fs);
+      const wrappedFs: typeof fs = {
+        ...fs,
+        createWriteStream: async (path: string, options?: { flags?: string }) => {
+          createdPaths.push(path);
+          return originalCreateWriteStream(path, options);
+        },
+        unlink: async (path: string) => {
+          unlinkedPaths.push(path);
+          return fs.unlink(path);
+        },
+      };
+
+      const track: TrackInfo = {
+        id: 'track-copy-ac4',
+        name: 'Track Copy AC4',
+        album: 'Album',
+        artists: ['Artist'],
+        path: '/music/Artist/Album/track.mp3',
+        format: 'mp3',
+        size: 100,
+        trackNumber: 1,
+      };
+
+      const api = createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+        downloadItemStream: async () => options.streamFactory(),
+      });
+
+      const converter: AudioConverter = {
+        isAvailable: async () => true,
+        convertToMp3: async () => ({ success: true }),
+        convertStreamToMp3: async () => ({ success: true }),
+        convertStreamToMp3WithMeta: async () => ({ success: true }),
+        tagFile: options.tagFile ?? (async () => ({ success: true })),
+        readFileMetadata: options.readFileMetadata ?? (async () => ({})),
+        embedLyrics: async () => ({ success: true }),
+        stripCoverArt: async () => ({ success: true, hadCover: false }),
+        embedReplayGain: async () => ({ success: true }),
+      };
+
+      // Cover-art fetch is called by copyTrackFile when embedMetadata is on
+      // and coverArtMode === 'embed'. Returning undefined here is fine for
+      // AC4 — we only assert the temp file lifecycle, not cover handling.
+      void options.getCoverArtBuffer;
+
+      return {
+        deps: { api, fs: wrappedFs, converter },
+        unlinkedPaths,
+        createdPaths,
+        fs: wrappedFs,
+      };
+    }
+
+    function jtCopyPaths(paths: string[]): string[] {
+      // copyTrackFile uses buildCopyTrackTempPath which prefixes with
+      // `jt-copy_` (see temp-path.ts). Filter for that exact prefix so the
+      // assertion does not catch unlinks from convertAndCopy or other
+      // modules running in the same process.
+      return paths.filter((p) => /jt-copy_/.test(p));
+    }
+
+    it('unlinks the temp file on success', async () => {
+      const { Readable } = require('stream');
+      const { deps, unlinkedPaths, createdPaths } = buildCopyDeps({
+        streamFactory: () => Readable.from(Buffer.from('fake-mp3-bytes')),
+      });
+
+      const core = createSyncCore(validConfig, deps);
+      const result = await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/music',
+        options: { convertToMp3: false },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.tracksCopied).toBe(1);
+      // The temp file MUST have been created under os.tmpdir() with the
+      // copyTrackFile suffix…
+      expect(createdPaths.length).toBeGreaterThan(0);
+      expect(createdPaths[0].startsWith(require('os').tmpdir())).toBe(true);
+      // …and it MUST have been unlinked before sync returned. Without
+      // the `finally` block in copyTrackFile this assertion fires.
+      const cleanup = jtCopyPaths(unlinkedPaths);
+      expect(cleanup).toContain(createdPaths[0]);
+    });
+
+    it('unlinks the temp file when tagFile (FFmpeg) fails', async () => {
+      const { Readable } = require('stream');
+      const { deps, unlinkedPaths, createdPaths } = buildCopyDeps({
+        streamFactory: () => Readable.from(Buffer.from('fake-mp3-bytes')),
+        tagFile: async () => ({ success: false, error: 'FFmpeg exited with code 1' }),
+      });
+
+      const core = createSyncCore(validConfig, deps);
+      const result = await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/music',
+        options: { convertToMp3: false },
+      });
+
+      // Track is marked failed — but the temp must still be cleaned.
+      expect(result.success).toBe(false);
+      expect(result.tracksFailed).toContain('track-copy-ac4');
+      expect(result.errors.some((e) => e.includes('FFmpeg exited with code 1'))).toBe(true);
+      const cleanup = jtCopyPaths(unlinkedPaths);
+      expect(cleanup.length).toBeGreaterThan(0);
+      expect(cleanup).toContain(createdPaths[0]);
+    });
+
+    it('unlinks the temp file when the download stream errors', async () => {
+      const { Readable } = require('stream');
+      const { deps, unlinkedPaths } = buildCopyDeps({
+        streamFactory: () => {
+          const stream = new Readable({ read() {} });
+          setImmediate(() => stream.emit('error', new Error('network down')));
+          return stream;
+        },
+      });
+
+      const core = createSyncCore(validConfig, deps);
+      const result = await core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/music',
+        options: { convertToMp3: false },
+      });
+
+      // Track is failed; the temp file must NOT be left behind. Without the
+      // try/finally around the pipe, the unlink never runs because the
+      // promise rejects before the finally block.
+      expect(result.tracksFailed).toContain('track-copy-ac4');
+      const cleanup = jtCopyPaths(unlinkedPaths);
+      expect(cleanup.length).toBeGreaterThan(0);
+      // Crucially: no temp file leaks in os.tmpdir() under the copy prefix.
+      for (const p of cleanup) {
+        expect(p.startsWith(require('os').tmpdir())).toBe(true);
+      }
+    });
+
+    it('unlinks the temp file when cancelled mid-download', async () => {
+      const { Readable } = require('stream');
+      const { deps, unlinkedPaths } = buildCopyDeps({
+        // Yield so cancel() can fire before the download completes and
+        // hit the throwIfCancelled() checkpoint inside copyTrackFile.
+        streamFactory: async () => {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          return Readable.from(Buffer.from('late-bytes'));
+        },
+      });
+
+      const core = createSyncCore(validConfig, deps);
+      const syncPromise = core.sync({
+        itemIds: ['album-1'],
+        itemTypes: new Map([['album-1', 'album' as ItemType]]),
+        destinationPath: '/music',
+        options: { convertToMp3: false },
+      });
+      // Fire cancel on the next tick — guaranteed before the stream factory
+      // resolves and copyTrackFile reaches its throwIfCancelled() guard.
+      setImmediate(() => core.cancel());
+
+      const result = await syncPromise;
+
+      expect(result.cancelled).toBe(true);
+      expect(result.success).toBe(false);
+      // The temp file the stream did write MUST be cleaned up — cancellation
+      // is one of the four AC4 exit paths.
+      const cleanup = jtCopyPaths(unlinkedPaths);
+      expect(cleanup.length).toBeGreaterThan(0);
+      for (const p of cleanup) {
+        expect(p.startsWith(require('os').tmpdir())).toBe(true);
+      }
+    });
+  });
+
   describe('tagFile error handling', () => {
     afterEach(() => {
       vi.restoreAllMocks();
