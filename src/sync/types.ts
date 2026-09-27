@@ -220,7 +220,7 @@ export interface SyncError {
   /** Human-readable error message (e.g. FFmpeg stderr tail, "Permission denied"). */
   message: string;
   /** Optional sync phase (download | validation | conversion | tagging | write). ORAIN-0739. */
-  phase?: string;
+  phase?: 'download' | 'validation' | 'conversion' | 'tagging' | 'write';
 }
 
 /**
