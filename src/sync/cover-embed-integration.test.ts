@@ -9,19 +9,21 @@
  *      would push a 100×100 PNG cover above 50 KB; the budget is sized
  *      so a JPEG copy-and-embed fits comfortably while a PNG regression
  *      does NOT.
- *   2. The non-baseline fallback (`-c:v mjpeg`) is exercised by feeding
- *      a malformed JPEG-like header. Constructing a structurally valid
- *      progressive JPEG without libjpeg is brittle; the unit tests in
- *      `cover-image.test.ts` already pin `getJpegFrameType` for SOF2.
- *      Here we only need to confirm the wrapper picks `mjpeg` and
- *      doesn't blow up.
+ *   2. Progressive JPEG cover → re-encoding via `-c:v mjpeg` must yield
+ *      a SOF0 (baseline) cover stream in the output MP3. AC4 requires
+ *      this end-to-end check, not just unit-level SOF detection — if
+ *      FFmpeg ever flipped the encoder default to progressive (SOF2)
+ *      the embedded cover would silently stop working on the
+ *      car-stereo / Walkman players that are the whole reason AC3
+ *      cares about baseline.
  *   3. PNG cover → end-to-end re-encode → output is alive (cover bytes
  *      accepted) and small, never the ~880 KB a default-passthrough PNG
  *      embedding produced.
  *
  * Modelled on `sync-files-ffmpeg-integration.test.ts` (skipIf pattern,
- * bundled binary). We don't depend on ffprobe so the test degrades
- * gracefully when the ffprobe-installer binary is missing.
+ * bundled binary). ffprobe is optional — the baseline-bytes check (case
+ * 1) and the size budget (case 3) run with just FFmpeg; case 2 is
+ * skipped cleanly when ffprobe-installer isn't available.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spawnSync } from 'child_process';
@@ -29,11 +31,15 @@ import { mkdtempSync, readFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createFFmpegConverter } from './sync-files';
-import { resolveFFmpegPath } from './ffmpeg-path';
+import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
 
 const ffmpegPath = resolveFFmpegPath();
 const canRun = spawnSync(ffmpegPath, ['-version'], { stdio: 'ignore' }).status === 0;
 if (!canRun) console.warn(`[skip] FFmpeg not available at ${ffmpegPath}`);
+const ffprobePath = resolveFFprobePath();
+const canProbe =
+  spawnSync(ffprobePath, ['-version'], { stdio: 'ignore', timeout: 5000 }).status === 0;
+if (!canProbe) console.warn(`[skip] FFprobe not available at ${ffprobePath}`);
 
 // 1 s of 64 kbps mono MP3 ≈ 8 KB; ID3v2 + cover (re-encoded to baseline
 // JPEG via mjpeg) typically lands at ~26 KB even for a tiny 100×100 cover.
@@ -118,6 +124,73 @@ function synthesizeNonJpegCover(dir: string, name: string): Buffer {
   return bytes;
 }
 
+/**
+ * Take a baseline JPEG produced by FFmpeg and patch its SOF0 marker to
+ * SOF2 (progressive). FFmpeg's `mjpeg` encoder only emits baseline, so
+ * this is the only practical way to feed the wrapper a progressive
+ * cover without bundling libjpeg. The cover is bit-identical apart
+ * from the one-byte SOF type, which is exactly what we want — we want
+ * the wrapper to see "this is progressive, re-encode it", not a
+ * structurally invalid JPEG that FFmpeg would reject outright.
+ */
+function synthesizeProgressiveJpeg(dir: string, name: string): Buffer {
+  const baseline = synthesizeBaselineJpeg(dir, name);
+  expect(baseline.length).toBeGreaterThan(4);
+  // The baseline fixture is a JFIF image: SOI, APP0 (JFIF), SOF0. The
+  // SOF0 marker is the first 0xFF 0xC0 byte pair — there is no other
+  // segment in this fixture that starts with 0xFF 0xC0.
+  const sof0 = Buffer.from([0xff, 0xc0]);
+  const offset = baseline.indexOf(sof0);
+  expect(offset, 'baseline JPEG must contain a SOF0 marker').toBeGreaterThan(0);
+  // Sanity: nothing before it should match SOF1/SOF2/SOF3 either.
+  expect(baseline.indexOf(Buffer.from([0xff, 0xc1]))).toBe(-1);
+  expect(baseline.indexOf(Buffer.from([0xff, 0xc2]))).toBe(-1);
+  const patched = Buffer.from(baseline);
+  patched[offset + 1] = 0xc2;
+  return patched;
+}
+
+/**
+ * Extract the embedded cover bytes from an MP3 and return them as a
+ * Buffer. Uses `-c:v copy` so the cover bytes are preserved verbatim —
+ * any baseline/progressive decision made at embed time survives the
+ * round trip.
+ */
+function extractAttachedPic(mp3Path: string): Buffer {
+  const out = join(tmpdir(), `cover-${process.pid}-${Date.now()}.jpg`);
+  const r = spawnSync(
+    ffmpegPath,
+    [
+      '-y',
+      '-i',
+      mp3Path,
+      '-map',
+      '0:v',
+      // id3v2 attaches cover via disposition:attached_pic; -map 0:v picks
+      // exactly that stream. -c:v copy keeps the bytes unchanged.
+      '-c:v',
+      'copy',
+      '-frames:v',
+      '1',
+      out,
+    ],
+    { stdio: 'ignore', timeout: 10000 },
+  );
+  expect(r.status, 'cover must extract cleanly').toBe(0);
+  return readFileSync(out);
+}
+
+/**
+ * Locate the first SOF0/SOF1/SOF2 marker in a JPEG byte stream. Returns
+ * the marker byte (0xC0/0xC1/0xC2) or -1 if none is found.
+ */
+function findSofMarker(bytes: Buffer): number {
+  for (const m of [0xc0, 0xc1, 0xc2]) {
+    if (bytes.indexOf(Buffer.from([0xff, m])) >= 0) return m;
+  }
+  return -1;
+}
+
 describe('ORAIN-0736 — cover-embed FFmpeg integration', () => {
   let workDir: string;
 
@@ -174,34 +247,64 @@ describe('ORAIN-0736 — cover-embed FFmpeg integration', () => {
     },
   );
 
-  it.runIf(canRun)(
-    'garbage-looking cover bytes still pass through the mjpeg branch without crashing',
+  it.runIf(canRun && canProbe)(
+    'progressive JPEG cover: re-encoded to baseline SOF0, embedded cover is JPEG baseline',
     async () => {
-      // Sanity for the `non-jpeg → mjpeg` fallback: take bytes that look
-      // suspicious enough that a stricter pipeline would refuse to embed.
-      const src = synthesizeAudioMp3(workDir, 'in-garbage.mp3');
-      // Some bytes that aren't a JPEG and aren't a PNG either. The
-      // wrapper should still embed via mjpeg (FFmpeg refuses non-image
-      // input here, so we still get success: true OR a handled error —
-      // the regression that matters is "FFmpeg silently produces a
-      // multi-MB default codec output", not "FFmpeg refuses the input").
-      const garbage = Buffer.from('NOT A JPEG NOR A PNG — plaintext sentinel');
-      const dst = join(workDir, 'out-garbage.mp3');
+      // AC4 verbatim: a progressive (SOF2) cover must end up as JPEG
+      // baseline in the output MP3. The unit test in `cover-image.test.ts`
+      // pins the SOF marker walker; here we pin the end-to-end contract.
+      //
+      // Why this matters: car radios / Walkmans reject progressive JPEG
+      // covers. If FFmpeg ever flipped the `mjpeg` encoder default to
+      // SOF2, the embedded cover would silently stop working on those
+      // targets. This test catches that flip the next time it ships.
+      const src = synthesizeAudioMp3(workDir, 'in-progressive.mp3');
+      const progressive = synthesizeProgressiveJpeg(workDir, 'progressive.jpg');
+
+      // Sanity: the patched input is SOF2 (progressive) before embed.
+      // Without this guard a future refactor of synthesizeProgressiveJpeg
+      // could silently make the test pass on a baseline input.
+      expect(findSofMarker(progressive)).toBe(0xc2);
+
+      const dst = join(workDir, 'out-progressive.mp3');
       const result = await createFFmpegConverter().convertStreamToMp3WithMeta(
         src,
         dst,
         '192k',
         {},
-        garbage,
+        progressive,
       );
-      // FFmpeg rejects non-image second-stream input — that's an honest
-      // error, not a regression. We only care that the failure isn't a
-      // silent success that bloat the file.
-      if (result.success) {
-        expect(statSync(dst).size).toBeLessThan(audioSizeBytes(src) * HEADROOM_RATIO);
-      } else {
-        expect(result.error).toBeDefined();
-      }
+      expect(result.success).toBe(true);
+
+      // Extract the embedded cover verbatim and verify the SOF marker is
+      // baseline (0xC0), not extended (0xC1), not progressive (0xC2).
+      // The wrapper chose `-c:v mjpeg` because the input was SOF2; the
+      // mjpeg encoder must emit SOF0.
+      const coverBytes = extractAttachedPic(dst);
+      expect(coverBytes.length).toBeGreaterThan(0);
+      const sof = findSofMarker(coverBytes);
+      expect(sof, 'embedded cover must be SOF0 (baseline) after re-encoding').toBe(0xc0);
+    },
+  );
+
+  it.runIf(canRun)(
+    'PNG cover: re-encode to baseline mjpeg, output stays reasonable (no PNG bloat)',
+    async () => {
+      const src = synthesizeAudioMp3(workDir, 'in-png.mp3');
+      const pngBytes = synthesizeNonJpegCover(workDir, 'cover.png');
+      const dst = join(workDir, 'out-png.mp3');
+      const result = await createFFmpegConverter().convertStreamToMp3WithMeta(
+        src,
+        dst,
+        '192k',
+        {},
+        pngBytes,
+      );
+      expect(result.success).toBe(true);
+      const outSize = statSync(dst).size;
+      // Pre-fix the same call embedded a PNG cover of ~50–150 KB; a
+      // baseline-mjpeg re-encode of a 100×100 cover must be smaller.
+      expect(outSize).toBeLessThan(audioSizeBytes(src) * HEADROOM_RATIO);
     },
   );
 });
