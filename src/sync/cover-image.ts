@@ -96,8 +96,11 @@ export function getJpegFrameType(bytes: Buffer): JpegFrameType {
  */
 export function buildCoverArtUrl(baseUrl: string, userId: string, itemId: string): string {
   const base = baseUrl.replace(/\/+$/, '');
+  // Path-segments come from an untrusted source (API responses, third-party
+  // URLs); encode them so a caller that later parses this URL won't inherit
+  // a path-injection bug if `userId`/`itemId` ever carries `#`, `?`, or `/`.
   return (
-    `${base}/Users/${userId}/Items/${itemId}/Images/Primary` +
+    `${base}/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}/Images/Primary` +
     `?maxWidth=${COVER_MAX_DIM}&maxHeight=${COVER_MAX_DIM}` +
     `&quality=${COVER_QUALITY}&format=${COVER_FORMAT}`
   );
