@@ -40,3 +40,24 @@ export function buildConvertTempPath(trackFormat: string | undefined, timestamp:
   const random = Math.random().toString(36).slice(2);
   return join(tmpdir(), `jellytunes_conv_${timestamp}-${random}${ext}`);
 }
+
+/**
+ * Build the temp file path used by `copyTrackFile` to buffer the
+ * downloaded audio before it is passed to `tagFile`. ORAIN-0737 AC2:
+ *
+ * - Path is under `os.tmpdir()` (same rationale as `buildConvertTempPath`
+ *   — never next to the destination USB).
+ * - Extension rule mirrors ORAIN-0732 AC4: appended only when
+ *   `trackFormat` names a recognised format from `ALL_AUDIO_EXTENSIONS`,
+ *   otherwise no extension so FFmpeg falls back to content sniffing.
+ *
+ * Suffix differs from `buildConvertTempPath` so debugging can tell the
+ * two paths apart in `os.tmpdir()` listings.
+ */
+export function buildCopyTrackTempPath(trackFormat: string | undefined, timestamp: number): string {
+  const allowed = new Set<string>(ALL_AUDIO_EXTENSIONS);
+  const first = trackFormat?.split(',')[0]?.trim().toLowerCase().replace(/^\./, '') ?? '';
+  const ext = first && /^[a-z0-9]+$/.test(first) && allowed.has(first) ? `.${first}` : '';
+  const random = Math.random().toString(36).slice(2);
+  return join(tmpdir(), `jt-copy_${timestamp}-${random}${ext}`);
+}

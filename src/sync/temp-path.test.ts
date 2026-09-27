@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildTempPaths, buildConvertTempPath } from './temp-path';
+import { buildTempPaths, buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -111,6 +111,45 @@ describe('buildConvertTempPath', () => {
   it('produces distinct paths across calls (timestamp + random suffix)', () => {
     const a = buildConvertTempPath('flac', 1700000000000);
     const b = buildConvertTempPath('flac', 1700000000001);
+    expect(a).not.toBe(b);
+  });
+});
+
+// ORAIN-0737 AC2: copy-track temp path must live under os.tmpdir() (never
+// next to the destination USB) and follow the same extension rule as
+// buildConvertTempPath. The filename prefix differs (`jt-copy_` vs
+// `jellytunes_conv_`) so debugging can tell the two paths apart in
+// `os.tmpdir()` listings.
+describe('buildCopyTrackTempPath', () => {
+  it('lives under os.tmpdir() and never next to the destination', () => {
+    const dest = '/Volumes/USB/Music/Artist/Album/01 - Track.mp3';
+    const p = buildCopyTrackTempPath('mp3', 1700000000000);
+    expect(p.startsWith(tmpdir())).toBe(true);
+    expect(p.startsWith(dest)).toBe(false);
+  });
+
+  it('appends .mp3 when track.format is a known audio extension', () => {
+    expect(buildCopyTrackTempPath('mp3', 1)).toMatch(/\.mp3$/);
+    expect(buildCopyTrackTempPath('FLAC', 1)).toMatch(/\.flac$/);
+    expect(buildCopyTrackTempPath('.ogg', 1)).toMatch(/\.ogg$/);
+  });
+
+  it('returns no extension for unknown / unsafe formats', () => {
+    expect(buildCopyTrackTempPath('xyz', 1)).not.toMatch(/\.xyz$/);
+    expect(buildCopyTrackTempPath('', 1)).not.toMatch(/\.[a-z0-9]+$/);
+    expect(buildCopyTrackTempPath('   ', 1)).not.toMatch(/\.[a-z0-9]+$/);
+    expect(buildCopyTrackTempPath('mp3,mp4', 1)).not.toMatch(/\.mp4$/);
+    expect(buildCopyTrackTempPath('../etc/passwd', 1)).not.toMatch(/\.\.\/etc\/passwd$/);
+  });
+
+  it('comma list keeps the first known extension', () => {
+    expect(buildCopyTrackTempPath('flac,mp3', 1)).toMatch(/\.flac$/);
+    expect(buildCopyTrackTempPath('unknown,flac', 1)).not.toMatch(/\.flac$/);
+  });
+
+  it('produces distinct paths across calls (timestamp + random suffix)', () => {
+    const a = buildCopyTrackTempPath('mp3', 1700000000000);
+    const b = buildCopyTrackTempPath('mp3', 1700000000001);
     expect(a).not.toBe(b);
   });
 });
