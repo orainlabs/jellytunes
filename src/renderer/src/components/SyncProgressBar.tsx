@@ -45,7 +45,9 @@ export function SyncProgressBar({ syncProgress }: SyncProgressBarProps): JSX.Ele
     <div className="p-4 bg-surface_container_low rounded-xl border border-outline_variant">
       {/* Fila 1: phase label ··· bytes */}
       <div className="flex justify-between items-center mb-2">
-        <span className="text-label-md uppercase">{phaseLabel}</span>
+        <span data-testid="sync-phase-label" className="text-label-md uppercase">
+          {phaseLabel}
+        </span>
         {bytesLabel && (
           <span
             className="text-body-sm text-on_surface_variant"
