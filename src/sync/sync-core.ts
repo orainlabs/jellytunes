@@ -1087,35 +1087,181 @@ class SyncCoreImpl {
 
     if (!metadataChanged && !bitrateChanged && !coverArtChanged) {
       if (pathChanged) {
-        this.saveSyncedRecord(
-          destinationPath,
-          itemId,
-          track.id,
-          outputPath,
-          track.size ?? null,
-          currentHash,
-          coverArtMode,
-          encodedBitrate,
-          track.path ?? null,
-          this.serverRootPath || null,
-          options.lyricsMode ?? 'off',
+        // ORAIN-0705: three sub-cases for a pathChanged record:
+        //   (a) audio already at outputPath → DB-only update (no rename, no download)
+        //   (b) audio at OLD destinationPath only → rename to outputPath + DB update
+        //   (c) audio at NEITHER old nor new path → re-download (device was wiped)
+        // The OLD path check is essential: previously the code blindly saved the
+        // new path to the DB without verifying anything on disk, so a wiped
+        // device left the DB pointing at a non-existent audio file.
+        const audioAtNewPath = await this.deps.fs.exists(outputPath);
+        if (audioAtNewPath) {
+          // Case (a): audio already where it should be — just refresh DB.
+          this.saveSyncedRecord(
+            destinationPath,
+            itemId,
+            track.id,
+            outputPath,
+            track.size ?? null,
+            currentHash,
+            coverArtMode,
+            encodedBitrate,
+            track.path ?? null,
+            this.serverRootPath || null,
+            options.lyricsMode ?? 'off',
+          );
+          const lyricsResult = await this.processLyrics(
+            track,
+            outputPath,
+            options.lyricsMode ?? 'off',
+          );
+          await this.processReplayGain(track, outputPath);
+          return {
+            retagged: false,
+            moved: true,
+            processed: true,
+            skipped: false,
+            lyricsAdded: lyricsResult,
+            // ORAIN-0740 cycle 2 (AC2): existing file was just renamed,
+            // FFmpeg was NOT invoked.
+            converted: false,
+          };
+        }
+
+        const audioAtOldPath = await this.deps.fs.exists(syncedRecord.destinationPath);
+        if (audioAtOldPath) {
+          // Case (b): audio on disk at the OLD path — rename in place.
+          // Best-effort: if rename fails (cross-device, permissions), fall back
+          // to re-download rather than leaving the DB inconsistent.
+          const outputDir = path.dirname(outputPath);
+          try {
+            await this.deps.fs.mkdir(outputDir);
+            await this.deps.fs.rename(syncedRecord.destinationPath, outputPath);
+            // Also try to move a sibling .lrc if one exists (lyrics live next
+            // to the audio). Best-effort: ignore failures — processLyrics
+            // below will re-fetch if missing.
+            const oldLrc = `${syncedRecord.destinationPath.slice(
+              0,
+              syncedRecord.destinationPath.lastIndexOf('.'),
+            )}.lrc`;
+            const newLrc = `${outputPath.slice(0, outputPath.lastIndexOf('.'))}.lrc`;
+            if (await this.deps.fs.exists(oldLrc)) {
+              try {
+                await this.deps.fs.rename(oldLrc, newLrc);
+              } catch {
+                // ignore — lyrics will be re-fetched by processLyrics
+              }
+            }
+          } catch (renameError) {
+            this.log.warn(
+              `Rename ${syncedRecord.destinationPath} → ${outputPath} failed, falling back to re-download: ${renameError}`,
+            );
+            const copyResult = await this.copyOrConvertTrack(
+              track,
+              this.getOutputDir(
+                track,
+                destinationPath,
+                options.preserveStructure ?? true,
+                options.filesystemType ?? 'unknown',
+              ),
+              outputPath,
+              this.resolveCanonicalFilename(track, options),
+              encodedBitrate !== null,
+              coverArtMode,
+              itemId,
+              currentHash,
+              encodedBitrate,
+              destinationPath,
+              trackMeta,
+              options,
+            );
+            return { ...copyResult };
+          }
+
+          this.saveSyncedRecord(
+            destinationPath,
+            itemId,
+            track.id,
+            outputPath,
+            track.size ?? null,
+            currentHash,
+            coverArtMode,
+            encodedBitrate,
+            track.path ?? null,
+            this.serverRootPath || null,
+            options.lyricsMode ?? 'off',
+          );
+          const lyricsResult = await this.processLyrics(
+            track,
+            outputPath,
+            options.lyricsMode ?? 'off',
+          );
+          await this.processReplayGain(track, outputPath);
+          return {
+            retagged: false,
+            moved: true,
+            processed: true,
+            skipped: false,
+            lyricsAdded: lyricsResult,
+            // ORAIN-0740 cycle 2 (AC2): existing file was just renamed,
+            // FFmpeg was NOT invoked.
+            converted: false,
+          };
+        }
+
+        // Case (c): audio at neither old nor new path — device was wiped.
+        // Fall through to copyOrConvertTrack (re-download).
+        this.log.warn(
+          `Synced record for ${track.name} points at ${syncedRecord.destinationPath} but file is missing; re-downloading`,
         );
-        const lyricsResult = await this.processLyrics(
+        const copyResult = await this.copyOrConvertTrack(
           track,
+          this.getOutputDir(
+            track,
+            destinationPath,
+            options.preserveStructure ?? true,
+            options.filesystemType ?? 'unknown',
+          ),
           outputPath,
-          options.lyricsMode ?? 'off',
+          this.resolveCanonicalFilename(track, options),
+          encodedBitrate !== null,
+          coverArtMode,
+          itemId,
+          currentHash,
+          encodedBitrate,
+          destinationPath,
+          trackMeta,
+          options,
         );
-        await this.processReplayGain(track, outputPath);
-        return {
-          retagged: false,
-          moved: true,
-          processed: true,
-          skipped: false,
-          lyricsAdded: lyricsResult,
-          // ORAIN-0740 cycle 2 (AC2): existing file was just renamed,
-          // FFmpeg was NOT invoked.
-          converted: false,
-        };
+        return { ...copyResult };
+      }
+
+      // Truly unchanged — but if the audio file is actually missing on disk
+      // (formatted device, device swap, partial wipe) the DB record is stale
+      // and we must re-download. Without this gate the code below would write
+      // .lrc / ReplayGain next to a non-existent audio file (ORAIN-0705).
+      const fileExists = await this.deps.fs.exists(syncedRecord.destinationPath);
+      if (!fileExists) {
+        const copyResult = await this.copyOrConvertTrack(
+          track,
+          this.getOutputDir(
+            track,
+            destinationPath,
+            options.preserveStructure ?? true,
+            options.filesystemType ?? 'unknown',
+          ),
+          outputPath,
+          this.resolveCanonicalFilename(track, options),
+          encodedBitrate !== null,
+          coverArtMode,
+          itemId,
+          currentHash,
+          encodedBitrate,
+          destinationPath,
+          trackMeta,
+          options,
+        );
+        return { ...copyResult };
       }
 
       // Truly unchanged — but still process lyrics if lyricsMode is not 'off'
@@ -2193,6 +2339,29 @@ class SyncCoreImpl {
       // Detect new / changed / unchanged server tracks
       for (const track of serverTracks) {
         const synced = syncedItemMap.get(track.id);
+
+        // ORAIN-0705: if a synced record exists but the audio file is
+        // missing on disk (formatted device, swap, partial wipe), the
+        // record is stale and the track must be re-downloaded. Mark it
+        // as 'new' so the preview correctly shows it as needing work.
+        if (synced && !(await this.deps.fs.exists(synced.destinationPath))) {
+          changes.push({ trackId: track.id, trackName: track.name, changeType: 'new' });
+          totalNew++;
+          if (track.parentItemId) {
+            const prev = albumChanges.get(track.parentItemId) ?? {
+              newTracks: 0,
+              metadataChanged: 0,
+              pathChanged: 0,
+            };
+            albumChanges.set(track.parentItemId, {
+              newTracks: prev.newTracks + 1,
+              metadataChanged: prev.metadataChanged,
+              pathChanged: prev.pathChanged,
+            });
+          }
+          continue;
+        }
+
         const trackMeta = this.buildMetadata(track);
         const currentHash = computeMetadataHash(trackMeta);
 
