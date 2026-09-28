@@ -142,3 +142,213 @@ export function pickRecentOtherErrors(logLines: string[], syncLines: string[], m
   }
   return candidates.slice(-max);
 }
+
+const NO_SYNC_NOTE = '(no sync in current log)';
+const SYNC_DID_NOT_FINISH_NOTE = '(sync did not finish)';
+const TRUNCATION_NOTE_PREFIX = '… and ';
+const TRUNCATION_NOTE_SUFFIX =
+  ' more failed tracks — please attach main.log (About > Open log folder)';
+
+/**
+ * The fixed boilerplate that wraps the log excerpt. Mirrors the
+ * existing `bug:report` handler body template in `src/main/index.ts`.
+ * We render the full body inside this module so the URL budget is
+ * enforced against the final markdown, and the handler only has to
+ * pass `logContent` and trust the result.
+ */
+const BOILERPLATE_LINES: ReadonlyArray<string> = [
+  '**Describe the bug**',
+  'A clear and concise description of what the bug is.',
+  '',
+  '**To Reproduce**',
+  'Steps to reproduce the behavior:',
+  "1. Go to '...'",
+  "2. Click on '...'",
+  '3. See error',
+  '',
+  '**Expected behavior**',
+  'A clear and concise description of what you expected to happen.',
+  '',
+  '**Screenshots**',
+  'If applicable, add screenshots to help explain your problem.',
+  '',
+  '**Desktop (please complete the following information):**',
+  ' - OS: <filled by handler>',
+  ' - JellyTunes version: <filled by handler>',
+  ' - Jellyfin server version: [e.g. 10.9.0]',
+  '',
+  '**Log output**',
+  '```',
+  '<EXCERPT>',
+  '```',
+  '',
+  '**Additional context**',
+  'Add any other context about the problem here.',
+];
+
+const BOILERPLATE = BOILERPLATE_LINES.join('\n');
+const HANDLER_RESERVE = 200; // chars reserved for OS/version lines the handler appends
+
+/**
+ * Compose the bug-report body. Steps:
+ *   1. Split the log into lines.
+ *   2. Extract the last sync block (start + track-failures + end).
+ *   3. Collect non-sync error/warn lines.
+ *   4. Render the two sections inside an excerpt string.
+ *   5. If the assembled excerpt exceeds the per-section budget, shrink
+ *      the [track-failed] tail first (preserving start + end + the
+ *      truncation note), then shrink the "Other recent errors" tail.
+ *
+ * URL_BUDGET is enforced on the assembled body, NOT on the encoded URL
+ * — encoding growth is uniform (each reserved char becomes %XX), so if
+ * the body fits, the URL fits too.
+ */
+export function buildBugReportBody(logContent: string): string {
+  const logLines = logContent.split('\n').filter((l) => l.length > 0);
+  const { lines: syncLines, hasEnd } = extractLastSyncBlock(logLines);
+  const otherLines = pickRecentOtherErrors(logLines, syncLines);
+
+  const excerptBudget = URL_BUDGET - BOILERPLATE.length - HANDLER_RESERVE;
+
+  const excerpt = renderExcerpt({
+    syncLines,
+    hasEnd,
+    otherLines,
+    budget: excerptBudget,
+  });
+
+  return BOILERPLATE.replace('<EXCERPT>', excerpt);
+}
+
+interface RenderArgs {
+  syncLines: string[];
+  hasEnd: boolean;
+  otherLines: string[];
+  budget: number;
+}
+
+function renderExcerpt({ syncLines, hasEnd, otherLines, budget }: RenderArgs): string {
+  const sections: string[] = [];
+
+  if (syncLines.length > 0) {
+    const header = '**Last sync**';
+    const tail = hasEnd ? '' : `\n${SYNC_DID_NOT_FINISH_NOTE}`;
+    // The excerpt budget is for the WHOLE excerpt (both sections). We
+    // reserve a minimum for the "Other recent errors" section so it is
+    // never silently dropped, then split the rest.
+    const otherReserve = otherLines.length > 0 ? Math.min(budget / 4, otherLines.length * 200) : 0;
+    const syncBudget = Math.max(50, budget - otherReserve - tail.length - header.length - 2);
+    const syncBody = trimSyncBlock(syncLines, syncBudget);
+    sections.push(`${header}\n${syncBody}${tail}`);
+  } else {
+    sections.push(NO_SYNC_NOTE);
+  }
+
+  if (otherLines.length > 0) {
+    const otherHeader = '**Other recent errors**';
+    const remaining = Math.max(0, budget - sections[0].length - otherHeader.length - 2);
+    const otherBody = trimOtherErrors(otherLines, remaining);
+    if (otherBody.length > 0) {
+      sections.push(`${otherHeader}\n${otherBody}`);
+    }
+  }
+
+  let joined = sections.join('\n\n');
+  // Belt-and-braces: if we still overshot (rare — only when otherLines
+  // is huge), drop the tail of the "Other recent errors" section
+  // line-by-line until the budget is met.
+  if (joined.length > budget) joined = trimToLength(joined, budget);
+  return joined;
+}
+
+/**
+ * Trim a sync block to fit a byte budget, preserving the start + end
+ * markers and as many [track-failed] lines as fit. When lines have to
+ * be dropped, append a single truncation note that names the exact
+ * number omitted (AC2).
+ */
+function trimSyncBlock(syncLines: string[], budget: number): string {
+  if (syncLines.length === 0) return '';
+  if (syncLines.length === 1) return syncLines[0];
+
+  const head = syncLines[0];
+  const tail = syncLines[syncLines.length - 1];
+  const isEndLine = tail.includes(SYNC_END_TAG);
+  const middle = syncLines.slice(1, -1);
+
+  // Cost = head + (newline+tail if end line) + newline+note.
+  const noteFor = (omitted: number): string =>
+    `${TRUNCATION_NOTE_PREFIX}${omitted}${TRUNCATION_NOTE_SUFFIX}`;
+  const headCost = head.length + 1; // newline after head
+  const tailCost = isEndLine ? tail.length + 1 : 0;
+
+  // Try to fit: head + (kept middle lines) + tail + note.
+  const kept: string[] = [];
+  for (const line of middle) {
+    const cost = line.length + 1;
+    if (
+      headCost +
+        tailCost +
+        kept.reduce((s, l) => s + l.length + 1, 0) +
+        cost +
+        noteFor(middle.length - kept.length - 1).length >
+      budget
+    ) {
+      break;
+    }
+    kept.push(line);
+  }
+  const omitted = middle.length - kept.length;
+  const parts = [head];
+  for (const line of kept) parts.push(line);
+  if (isEndLine) parts.push(tail);
+  if (omitted > 0) parts.push(noteFor(omitted));
+
+  const joined = parts.join('\n');
+  if (joined.length <= budget) return joined;
+
+  // Could not fit head + at least one middle + tail + note. Fallback
+  // to head + tail + note (drop ALL middle).
+  const minimal = isEndLine
+    ? [head, tail, noteFor(middle.length)].join('\n')
+    : [head, noteFor(middle.length)].join('\n');
+  if (minimal.length <= budget) return minimal;
+
+  // Even head + end + note does not fit. Drop end (AC2 says start is
+  // the only must-keep; end and note are sacrificed in the worst case).
+  const headOnlyWithNote = [head, noteFor(middle.length + (isEndLine ? 1 : 0))].join('\n');
+  if (headOnlyWithNote.length <= budget) return headOnlyWithNote;
+
+  // Absolute last resort: just the head.
+  return head.length <= budget ? head : head.slice(0, budget);
+}
+
+/**
+ * Trim the "Other recent errors" list to a byte budget by dropping
+ * lines from the head (oldest first). The tail is the most recent and
+ * most useful, so we keep it.
+ */
+function trimOtherErrors(otherLines: string[], budget: number): string {
+  if (budget <= 0 || otherLines.length === 0) return '';
+  let joined = otherLines.join('\n');
+  if (joined.length <= budget) return joined;
+  // Drop lines from the front until it fits.
+  let start = 0;
+  while (joined.length > budget && start < otherLines.length - 1) {
+    start++;
+    joined = otherLines.slice(start).join('\n');
+  }
+  if (joined.length > budget) joined = trimToLength(joined, budget);
+  return joined;
+}
+
+/**
+ * Right-trim a string to `max` chars. If the cut lands mid-line, drop
+ * the partial line so we never emit half a log entry.
+ */
+function trimToLength(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const lastNewline = cut.lastIndexOf('\n');
+  return lastNewline === -1 ? cut : cut.slice(0, lastNewline);
+}

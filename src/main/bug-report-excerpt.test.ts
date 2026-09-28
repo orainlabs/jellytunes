@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as os from 'node:os';
-import { URL_BUDGET, extractLastSyncBlock, pickRecentOtherErrors } from './bug-report-excerpt';
+import {
+  URL_BUDGET,
+  buildBugReportBody,
+  extractLastSyncBlock,
+  pickRecentOtherErrors,
+} from './bug-report-excerpt';
 
 vi.mock('node:os', async () => {
   const actual = await vi.importActual<typeof os>('node:os');
@@ -145,5 +150,95 @@ describe('pickRecentOtherErrors', () => {
     const picked = pickRecentOtherErrors(lines, []);
     expect(picked[0]).toContain('~/private/secret');
     expect(picked[0]).not.toContain('/Users/alice');
+  });
+});
+
+describe('buildBugReportBody', () => {
+  it('returns a body with only "no sync in current log" when the log has zero sync starts', () => {
+    const log = [
+      '[2026-09-28T10:00:00.000Z] [warn] volume detection: nothing yet',
+      '[2026-09-28T10:00:01.000Z] [error] /Users/alice/private/x leaked',
+    ].join('\n');
+    const body = buildBugReportBody(log);
+    expect(body).toContain('**Log output**');
+    expect(body).toContain('(no sync in current log)');
+    expect(body).not.toContain('**Last sync**');
+  });
+
+  it('returns a body with a "Last sync" section when a sync exists', () => {
+    const start =
+      '[2026-09-28T10:00:00.000Z] [info] [sync-start] syncId=abc appVersion=0.7.1 dest=/Volumes/USB';
+    const end =
+      '[2026-09-28T10:00:30.000Z] [info] [sync-end] syncId=abc copied=1 failed=0 durationMs=30000';
+    const log = [start, end].join('\n');
+    const body = buildBugReportBody(log);
+    expect(body).toContain('**Last sync**');
+    expect(body).toContain('[sync-start]');
+    expect(body).toContain('[sync-end]');
+    expect(body).not.toContain('(sync did not finish)');
+  });
+
+  it('appends "(sync did not finish)" when the sync lacks [sync-end]', () => {
+    const start = '[2026-09-28T10:00:00.000Z] [info] [sync-start] syncId=abc';
+    const f =
+      '[2026-09-28T10:00:05.000Z] [warn] [track-failed] syncId=abc trackName=Z phase=download cause=boom';
+    const log = [start, f].join('\n');
+    const body = buildBugReportBody(log);
+    expect(body).toContain('(sync did not finish)');
+  });
+
+  it('keeps start + end and adds the truncation marker when track-failures overflow the budget', () => {
+    // Build a sync with 50 track-failed lines; each line is ~400 chars
+    // so they overflow URL_BUDGET after start+end. We expect the
+    // marker `… and M more failed tracks` to appear with M > 0.
+    const start =
+      '[2026-09-28T10:00:00.000Z] [info] [sync-start] syncId=abc appVersion=0.7.1 platform=darwin arch=arm64 dest=/Volumes/USB destFs=msdos items=50 tracks=50 convert=false cover=embed lyrics=server retag=true';
+    const failed = (i: number): string =>
+      `[2026-09-28T10:00:${String(5 + (i % 50)).padStart(2, '0')}.000Z] [warn] [track-failed] syncId=abc trackId=t${i} trackName=Track ${i} phase=download cause=HTTP 500 from /Items/t${i}/Download — body said: {"code":"InternalServerError","message":"upstream jellyfin returned 500"} format=flac bitrate=0 declaredSize=12345678 hasImage=false`;
+    const end =
+      '[2026-09-28T10:00:30.000Z] [info] [sync-end] syncId=abc copied=0 converted=0 retagged=0 skipped=0 failed=50 removed=0 durationMs=30000 bytes=0 cancelled=false';
+    const lines = [start, ...Array.from({ length: 50 }, (_, i) => failed(i)), end];
+    const body = buildBugReportBody(lines.join('\n'));
+    expect(body).toContain('[sync-start]');
+    expect(body).toContain('[sync-end]');
+    expect(body).toMatch(
+      /… and (\d+) more failed tracks — please attach main\.log \(About > Open log folder\)/,
+    );
+    const m = body.match(/… and (\d+) more/);
+    expect(Number(m![1])).toBeGreaterThan(0);
+    // Body must fit within budget (we can't test URL length without
+    // the prefix; assert body length <= URL_BUDGET - 200 to leave room
+    // for the boilerplate + URL prefix).
+    expect(body.length).toBeLessThanOrEqual(URL_BUDGET - 200);
+  });
+
+  it('includes "Other recent errors" section after the sync block when non-sync warn lines exist', () => {
+    const start = '[2026-09-28T10:00:00.000Z] [info] [sync-start] syncId=abc';
+    const end = '[2026-09-28T10:00:30.000Z] [info] [sync-end] syncId=abc';
+    const noise = '[2026-09-28T10:01:00.000Z] [warn] volume detection: nothing';
+    const body = buildBugReportBody([start, end, noise].join('\n'));
+    expect(body).toContain('**Last sync**');
+    expect(body).toContain('**Other recent errors**');
+    expect(body).toContain('volume detection: nothing');
+  });
+
+  it('scrubs the home directory inside the Last sync block (legacy lines)', () => {
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const start = '[2026-09-28T10:00:00.000Z] [info] [sync-start] syncId=abc';
+    const f =
+      '[2026-09-28T10:00:05.000Z] [warn] [track-failed] syncId=abc trackName=Z phase=download cause=/Users/alice/Music/x.flac not found';
+    const body = buildBugReportBody([start, f].join('\n'));
+    expect(body).not.toContain('/Users/alice');
+    expect(body).toContain('~/Music/x.flac');
+  });
+
+  it('body never exceeds URL_BUDGET chars even when log is huge', () => {
+    const start = '[2026-09-28T10:00:00.000Z] [info] [sync-start] syncId=abc';
+    const failed = (i: number): string =>
+      `[warn] [track-failed] syncId=abc trackId=t${i} trackName=Track ${i} phase=download cause=HTTP 500 with a long error message ${'x'.repeat(200)}`;
+    const end = '[2026-09-28T10:00:30.000Z] [info] [sync-end] syncId=abc';
+    const lines = [start, ...Array.from({ length: 200 }, (_, i) => failed(i)), end];
+    const body = buildBugReportBody(lines.join('\n'));
+    expect(body.length).toBeLessThanOrEqual(URL_BUDGET - 200);
   });
 });
