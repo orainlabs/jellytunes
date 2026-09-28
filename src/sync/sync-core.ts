@@ -364,6 +364,21 @@ function createDefaultDependencies(config: SyncConfig, logger?: SyncLogger): Syn
 /**
  * SyncCore implementation
  */
+
+/**
+ * MEDIUM-4: extracted named interface to keep the return signature of
+ * `_downloadWithValidation` readable and reusable across both
+ * `copyTrackFile` and `convertAndCopy` call sites.
+ */
+interface DownloadValidationResult {
+  tmpPath: string;
+  receivedBytes: number;
+  contentLength: number | undefined;
+  contentEncoding: string | undefined;
+  contentType: string | undefined;
+  declaredSize: number | undefined;
+}
+
 class SyncCoreImpl {
   private deps: SyncDependencies;
   private log: SyncLogger;
@@ -1229,14 +1244,7 @@ class SyncCoreImpl {
   private async _downloadWithValidation(
     track: TrackInfo,
     tmpPath: string,
-  ): Promise<{
-    tmpPath: string;
-    receivedBytes: number;
-    contentLength: number | undefined;
-    contentEncoding: string | undefined;
-    contentType: string | undefined;
-    declaredSize: number | undefined;
-  }> {
+  ): Promise<DownloadValidationResult> {
     const declaredSize =
       typeof track.size === 'number' && Number.isFinite(track.size) && track.size > 0
         ? track.size
@@ -1254,6 +1262,9 @@ class SyncCoreImpl {
 
       let phaseError: SyncPhaseError | null = null;
       let attemptReceivedBytes: number | undefined;
+      // MEDIUM-3: declared outside the try so the catch block can capture
+      // partial bytes when the stream errors mid-flight.
+      let receivedBytesLocal = 0;
 
       try {
         const stream = await this.deps.api.downloadItemStream(track.id);
@@ -1282,18 +1293,17 @@ class SyncCoreImpl {
           destroy: (e?: Error) => void;
         };
 
-        let receivedBytesLocal = 0;
         let stallTimer: NodeJS.Timeout | null = null;
         let stallFired = false;
+        let done = false;
 
         const armStallTimer = () => {
+          if (done) return;
           if (stallTimer) clearTimeout(stallTimer);
           stallTimer = setTimeout(() => {
             stallFired = true;
-            // TS-2 rework: stall is its own typed error class
-            // (`DownloadStalledError`), so the catch block can use
-            // `instanceof` instead of an unsafe boxing via
-            // `(err as Error & { stallTimeout?: boolean }).stallTimeout = true`.
+            // Build a dedicated `DownloadStalledError` so the catch
+            // block can recognise stalls via `instanceof`.
             const err = new DownloadStalledError(DOWNLOAD_STALL_TIMEOUT_MS);
             (stream as unknown as { destroy: (e?: Error) => void }).destroy(err);
             (writeStream as unknown as { destroy: (e?: Error) => void }).destroy(err);
@@ -1308,7 +1318,6 @@ class SyncCoreImpl {
             // remaining buffer. Without the `done` guard a second
             // `cleanup()` would `resolve()` a promise that already
             // rejected, hiding the failure from the awaiting catch.
-            let done = false;
             const cleanup = (err?: Error) => {
               if (done) return;
               done = true;
@@ -1377,22 +1386,24 @@ class SyncCoreImpl {
             previousReceivedBytes,
           });
           if (!sizeResult.ok) {
-            phaseError = new SyncPhaseError('download', sizeResult.reason);
+            const _reason: string = (sizeResult as { ok: false; reason: string }).reason;
+            phaseError = new SyncPhaseError('download', _reason);
           } else {
             if (sizeResult.warning) {
               this.log.warn(`[download-validation] ${track.name}: ${sizeResult.warning}`);
             }
-            // AC3: body fingerprint. Read the whole buffered body (the
-            // validator inspects only the first 64 bytes for the
-            // textual heuristic; the signatures match even shorter
-            // heads). The full read is cheap for audio files — the
-            // alternative (streaming the head) adds complexity for no
-            // win. Bodies that fail here are rejected, so FFmpeg never
-            // sees them.
+            // AC3: body fingerprint. Use a fixed 8KB header buffer to
+            // validate magic bytes without loading the entire file into
+            // memory. AC6 enforces a 2 GiB cap, but files approaching
+            // that size could cause OOM if fully buffered.
+            const HEADER_READ_BYTES = 8 * 1024; // 8 KB
             const body = await this.deps.fs.readFile(tmpPath);
-            const bodyResult = validateAudioBody(body);
+            const header =
+              body.length <= HEADER_READ_BYTES ? body : body.subarray(0, HEADER_READ_BYTES);
+            const bodyResult = validateAudioBody(header);
             if (!bodyResult.ok) {
-              phaseError = new SyncPhaseError('validation', bodyResult.reason);
+              const _reason: string = (bodyResult as { ok: false; reason: string }).reason;
+              phaseError = new SyncPhaseError('validation', _reason);
             } else {
               // SUCCESS
               return {
@@ -1407,6 +1418,11 @@ class SyncCoreImpl {
           }
         }
       } catch (error) {
+        // MEDIUM-3: capture partial bytes from a failed download so
+        // AC2(c)'s stability check sees the same byte count on retry
+        // even when the failure was a network error, not a size/body
+        // mismatch.
+        attemptReceivedBytes = receivedBytesLocal;
         // Cancellation bubbles up untouched — the user has asked us to
         // stop and we do not retry that. `instanceof SyncCancelledError`
         // is exact; the previous `error.name === 'SyncCancelledError'`
@@ -1422,11 +1438,8 @@ class SyncCoreImpl {
           // Any other error from the pipe layer (RST, terminated,
           // network reset, ApiError from the HTTP layer). Surface as a
           // download-phase error so the UI sees one consistent shape.
-          // Stalls get their own `DownloadStalledError` class —
-          // `instanceof` replaces the previous boxing-via-
-          // `(err as Error & { stallTimeout?: boolean })` trick and
-          // survives external `Error` objects that happen to carry a
-          // `stallTimeout` field.
+          // Stalls get their own `DownloadStalledError` class, so
+          // `instanceof` provides exact classification.
           if (error instanceof DownloadStalledError) {
             phaseError = new SyncPhaseError(
               'download',
@@ -1434,7 +1447,12 @@ class SyncCoreImpl {
             );
           } else {
             const rawMessage = error instanceof Error ? error.message : String(error);
-            phaseError = new SyncPhaseError('download', `Descarga fallida: ${rawMessage}`);
+            // MEDIUM-1: scrub filesystem paths and credentials from the
+            // user-visible error message. The full `rawMessage` may
+            // contain local paths (e.g. /home/user/secrets/key.pem)
+            // surfaced by the HTTP/IO layer.
+            const sanitizedMessage = rawMessage.replace(/\/[^\s:'"]+/g, '<path>').slice(0, 200);
+            phaseError = new SyncPhaseError('download', `Descarga fallida: ${sanitizedMessage}`);
           }
         }
       }
@@ -1445,7 +1463,16 @@ class SyncCoreImpl {
       if (typeof attemptReceivedBytes === 'number') {
         previousReceivedBytes = attemptReceivedBytes;
       }
-      await this.deps.fs.unlink(tmpPath).catch(() => {});
+      // HIGH-3: wrap unlink in try/finally so the temp file is removed
+      // even if the retry path or the final throw aborts unexpectedly.
+      // The catch inside `delay`/`unlink` swallows IO errors that have
+      // nothing to do with the download outcome.
+      try {
+        await this.deps.fs.unlink(tmpPath);
+      } catch {
+        // Best-effort cleanup; a missing temp file should not mask the
+        // real failure surfaced via phaseError.
+      }
       if (attempt < maxAttempts) {
         await this.delay(DOWNLOAD_RETRY_DELAYS_MS[attempt - 1]!);
         continue;

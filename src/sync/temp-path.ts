@@ -1,5 +1,6 @@
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { randomUUID } from 'crypto';
 import { ALL_AUDIO_EXTENSIONS } from './audio-formats';
 
 /**
@@ -37,7 +38,7 @@ export function buildConvertTempPath(trackFormat: string | undefined, timestamp:
   const allowed = new Set<string>(ALL_AUDIO_EXTENSIONS);
   const first = trackFormat?.split(',')[0]?.trim().toLowerCase().replace(/^\./, '') ?? '';
   const ext = first && /^[a-z0-9]+$/.test(first) && allowed.has(first) ? `.${first}` : '';
-  const random = Math.random().toString(36).slice(2);
+  const random = randomUUID().slice(0, 8);
   return join(tmpdir(), `jellytunes_conv_${timestamp}-${random}${ext}`);
 }
 
@@ -58,6 +59,6 @@ export function buildCopyTrackTempPath(trackFormat: string | undefined, timestam
   const allowed = new Set<string>(ALL_AUDIO_EXTENSIONS);
   const first = trackFormat?.split(',')[0]?.trim().toLowerCase().replace(/^\./, '') ?? '';
   const ext = first && /^[a-z0-9]+$/.test(first) && allowed.has(first) ? `.${first}` : '';
-  const random = Math.random().toString(36).slice(2);
+  const random = randomUUID().slice(0, 8);
   return join(tmpdir(), `jt-copy_${timestamp}-${random}${ext}`);
 }
