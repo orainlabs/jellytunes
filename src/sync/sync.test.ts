@@ -6793,10 +6793,22 @@ describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
   }
 
   it('AC1: re-downloads and updates DB when the synced DB record exists but the audio file is missing', async () => {
+    // ORAIN-0739: copyTrackFile downloads via downloadItemStream. Serve an
+    // audio-shaped body whose size matches track.size so the validator
+    // accepts it on the first attempt, not via the retry-stability fallback.
+    const { Readable } = require('stream') as typeof import('stream');
+    const audioBody = Buffer.concat([
+      Buffer.from('ID3'),
+      Buffer.from([0x03, 0x00]),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+      Buffer.alloc(5_000_000 - 13, 0x00),
+    ]);
+    const downloadItemStreamSpy = vi.fn(async () => Readable.from(audioBody));
     const deps = createMockDeps({
       api: createMockApiClient({
         getTracksForItems: async () => ({ tracks: [makeTrack()], errors: [] }),
-        downloadItem: async () => Buffer.from('fresh-bytes'),
+        downloadItemStream: downloadItemStreamSpy,
       }),
     });
 
@@ -6837,6 +6849,8 @@ describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
 
     // File missing on disk → copyOrConvertTrack must have been invoked
     expect(copySpy).toHaveBeenCalledTimes(1);
+    // One download, no retries: the body was accepted on the first attempt
+    expect(downloadItemStreamSpy).toHaveBeenCalledTimes(1);
     // copyOrConvertTrack calls upsertSyncedTrack as part of its write path
     expect(vi.mocked(upsertSyncedTrack)).toHaveBeenCalled();
   });
