@@ -263,3 +263,89 @@ describe('ORAIN-0740 AC6 — sync info-level verbosity budget', () => {
     expect(msg).not.toMatch(/\[track-failed\].*\[track-failed\]/);
   });
 });
+
+// =============================================================================
+// ORAIN-0752 — SyncError.message contract
+// =============================================================================
+//
+// The user-facing modal shows the track name as the list-item header and
+// the message text below it. Repeating the track name in the message body
+// (the old `Failed to sync "<track>": …` prefix) was redundant and
+// cluttered the modal. The track name still reaches the [track-failed] log
+// line via the `trackName=…` field, so support-side search is unaffected.
+//
+// Additionally, the user-facing message must never carry an absolute path
+// (FFmpeg stderr tails, e.g. `/var/folders/…/jt-copy_….mp3`). The scrub
+// regex that removes paths from the download-error path is reused for
+// FFmpeg errors (see sync-files.ts: ffmpegErrorMessage). These tests pin
+// the *contract* end-to-end through `core.sync()`.
+
+describe('ORAIN-0752 — SyncError.message contract', () => {
+  it('AC3: SyncError.message does NOT start with "Failed to sync " — the track name is the header, not the message body', async () => {
+    const tracks = makeTracks(1);
+    const { logger } = makeCapturingLogger();
+    const deps = makeDeps(tracks, [0]);
+    const core = createTestSyncCore(
+      {
+        serverUrl: validConfig.serverUrl,
+        apiKey: validConfig.apiKey,
+        userId: validConfig.userId,
+      },
+      deps,
+    );
+    (core as unknown as { log: SyncLogger }).log = logger;
+
+    const result = await core.sync(
+      {
+        itemIds: ['album-1'],
+        itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+        destinationPath: '/tmp/dest',
+        syncId: 't0752prefix',
+      },
+      () => {},
+    );
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].trackName).toBe('Track 1');
+    const msg = result.errors[0].message;
+    // The user-facing message must be the bare inner reason, NOT wrapped
+    // by `Failed to sync "Track 1": …`.
+    expect(msg.startsWith('Failed to sync "')).toBe(false);
+    expect(msg).not.toMatch(/^Failed to sync "/);
+    // The underlying cause is still surfaced verbatim.
+    expect(msg).toMatch(/fetch failed/);
+  }, 30_000);
+
+  it('AC4: SyncError.message carries no absolute path (POSIX /, Windows drive letter, or UNC prefix)', async () => {
+    const tracks = makeTracks(1);
+    const { logger } = makeCapturingLogger();
+    const deps = makeDeps(tracks, [0]);
+    const core = createTestSyncCore(
+      {
+        serverUrl: validConfig.serverUrl,
+        apiKey: validConfig.apiKey,
+        userId: validConfig.userId,
+      },
+      deps,
+    );
+    (core as unknown as { log: SyncLogger }).log = logger;
+
+    const result = await core.sync(
+      {
+        itemIds: ['album-1'],
+        itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+        destinationPath: '/tmp/dest',
+        syncId: 't0752path',
+      },
+      () => {},
+    );
+
+    expect(result.errors).toHaveLength(1);
+    const msg = result.errors[0].message;
+    // Platform-agnostic path-shape guards: any of these in the user-facing
+    // message would indicate the scrub missed a path.
+    expect(msg).not.toMatch(/\/var\/folders\//);
+    expect(msg).not.toMatch(/[A-Z]:[\\/]/);
+    expect(msg).not.toMatch(/\\\\[a-zA-Z0-9_.-]+\\[a-zA-Z0-9_.-]+/); // UNC prefix
+  }, 30_000);
+});

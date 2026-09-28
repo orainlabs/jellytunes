@@ -1539,7 +1539,12 @@ class SyncCoreImpl {
       } else {
         errorPhase = 'write';
       }
-      const errorMsg = `Failed to sync "${track.name}": ${error instanceof Error ? error.message : 'Unknown error'}`;
+      // ORAIN-0752 AC3: the user-facing SyncError.message must NOT repeat
+      // the track name — the modal already shows it as the list-item
+      // header. The track name still reaches the [track-failed] log line
+      // via `formatTrackFailed(..., trackName: track.name)`, so support
+      // searches by track name are unaffected.
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       return {
         retagged: false,
         moved: false,
