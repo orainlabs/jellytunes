@@ -71,8 +71,28 @@ export function SyncSuccessModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 mb-4">
-          <span className="text-2xl">{success ? '✓' : '✗'}</span>
-          <h2 className="text-headline-md">{success ? 'Sync complete' : 'Sync failed'}</h2>
+          {success ? (
+            <span className="text-2xl">✓</span>
+          ) : (
+            // ORAIN-0752 AC1: ⚠ instead of ✗ so the icon next to the title
+            // does not look like a window-close control. The data-testid
+            // pins the assertion against future glyph changes.
+            <span data-testid="sync-failed-icon" className="text-2xl">
+              ⚠
+            </span>
+          )}
+          <h2
+            className={
+              success
+                ? 'text-headline-md'
+                : // ORAIN-0752 AC1: red title so the failure state is
+                  // unambiguous at a glance (contrast ≈ 4.8:1 on
+                  // surface_container_low #1a1a27).
+                  'text-headline-md text-error'
+            }
+          >
+            {success ? 'Sync complete' : 'Sync failed'}
+          </h2>
         </div>
 
         {success ? (
@@ -131,9 +151,14 @@ export function SyncSuccessModal({
                 className="border-b border-outline_variant/40 last:border-b-0 py-2"
               >
                 {err.trackName && (
+                  // ORAIN-0752 AC2: failed-state track names use
+                  // text-error + font-medium for contrast against
+                  // surface_container_low (#cf6679 on #1a1a27 ≈ 4.8:1).
+                  // The message below stays on_surface_variant by design
+                  // (user decision: avoid "too much red" across the list).
                   <div
                     data-testid="sync-error-header"
-                    className="text-on_surface font-medium break-words"
+                    className="text-error font-medium break-words"
                   >
                     {err.trackName}
                   </div>

@@ -155,4 +155,54 @@ describe('SyncSuccessModal', () => {
     await user.click(closeButton);
     expect(defaultProps.onClose).toHaveBeenCalled();
   });
+
+  // ORAIN-0752 AC1: failed title uses the text-error token and the ⚠
+  // icon (NOT the ✗ glyph — that looked like a window-close control next
+  // to the title).
+  it('AC1 — "Sync failed" title uses text-error class and shows the ⚠ icon', () => {
+    render(
+      <SyncSuccessModal
+        {...defaultProps}
+        tracksCopied={0}
+        errors={[{ trackName: 'T', message: 'oops' }]}
+      />,
+    );
+    const title = screen.getByRole('heading', { name: /sync failed/i });
+    expect(title.className).toMatch(/text-error/);
+    const icon = screen.getByTestId('sync-failed-icon');
+    expect(icon.textContent).toBe('⚠');
+    // Regression guard: the old glyph must not appear next to the title
+    // in the failed state — it is what made the modal look like a
+    // window-close control.
+    expect(screen.queryByText('✗')).not.toBeInTheDocument();
+  });
+
+  // ORAIN-0752 AC2: failed-state track names use text-error + font-medium
+  // for contrast against surface_container_low (#cf6679 on #1a1a27 ≈ 4.8:1).
+  // The message text below stays on_surface_variant by design — the user
+  // explicitly chose not to color the message text to avoid "too much red".
+  it('AC2 — failed-state track name uses text-error + font-medium; message stays on_surface_variant', () => {
+    render(
+      <SyncSuccessModal
+        {...defaultProps}
+        tracksCopied={0}
+        errors={[
+          { trackName: 'Track A', message: 'disk full' },
+          { trackName: 'Track B', message: 'permission denied' },
+        ]}
+      />,
+    );
+    const headers = screen.getAllByTestId('sync-error-header');
+    expect(headers).toHaveLength(2);
+    for (const h of headers) {
+      expect(h.className).toMatch(/text-error/);
+      expect(h.className).toMatch(/font-medium/);
+    }
+    const messages = screen.getAllByTestId('sync-error-message');
+    expect(messages).toHaveLength(2);
+    for (const m of messages) {
+      expect(m.className).toMatch(/text-on_surface_variant/);
+      expect(m.className).not.toMatch(/text-error/);
+    }
+  });
 });
