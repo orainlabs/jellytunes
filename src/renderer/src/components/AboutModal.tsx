@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GradientMusicIcon } from './GradientMusicIcon';
 import { SnapPermissionsSection } from './SnapPermissionsSection';
 import {
@@ -27,27 +27,10 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   const [snapPermissions, setSnapPermissions] = useState<SnapPermissionsReport>(
     EMPTY_SNAP_PERMISSIONS_REPORT,
   );
-  // ORAIN-0735: the absolute log file path is no longer shown as a block,
-  // just surfaced via tooltip + clipboard. The state still loads so we can
-  // expose it on the link's `title` and on the copy button.
+  // ORAIN-0735: the absolute log file path is exposed via tooltip + sr-only
+  // span so assistive tech and QA can read it. ORAIN-0750 AC7 removed the
+  // copy button, so the path no longer needs clipboard wiring.
   const [logPath, setLogPath] = useState<string>('');
-  // ORAIN-0735: visual confirmation that the path was copied — toggled for
-  // 2s after a successful clipboard write, then reverts to the copy icon.
-  const [logPathCopied, setLogPathCopied] = useState(false);
-  // studio-qa finding [HIGH]: keep the timer handle so we can cancel it
-  // when the modal unmounts (or the user clicks copy again) and avoid the
-  // "setState on unmounted component" warning + the race where two quick
-  // clicks wipe each other's confirmation.
-  const copyTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current !== null) {
-        window.clearTimeout(copyTimerRef.current);
-        copyTimerRef.current = null;
-      }
-    };
-  }, []);
 
   useEffect(() => {
     window.api
@@ -130,33 +113,6 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     await window.api.openLogFolder();
   };
 
-  // ORAIN-0735: copy the path to the clipboard via the standard browser API
-  // (Electron grants the renderer access to navigator.clipboard). The
-  // confirmation chip reverts after ~2s so the user can copy again later.
-  const handleCopyLogPath = async (): Promise<void> => {
-    if (!logPath) return;
-    try {
-      await navigator.clipboard.writeText(logPath);
-      setLogPathCopied(true);
-      // studio-qa finding [HIGH]: cancel any pending revert before
-      // scheduling a new one so a second click during the 2s window does
-      // not get its confirmation wiped by the earlier timer.
-      if (copyTimerRef.current !== null) {
-        window.clearTimeout(copyTimerRef.current);
-      }
-      copyTimerRef.current = window.setTimeout(() => {
-        setLogPathCopied(false);
-        copyTimerRef.current = null;
-      }, 2000);
-    } catch (err) {
-      // Clipboard denied (e.g. focus / permission). Surface to the
-      // console so it's discoverable in DevTools — the visual
-      // confirmation stays silent to avoid flashing an error in a modal
-      // the user can already close.
-      console.warn('AboutModal: failed to copy log path to clipboard', err);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
@@ -179,34 +135,31 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           Take your Jellyfin music offline on MP3 players and storage devices
         </p>
 
-        {/* ── Row 1: Primary actions ── */}
-        <div className="flex flex-row gap-4 mb-4 items-stretch">
+        {/* ── Group 1: Primary actions (Report a Bug + updates) ── */}
+        <div
+          data-testid="about-group-primary"
+          role="group"
+          aria-labelledby="about-group-primary-heading"
+          className="flex flex-row gap-4 mb-4 items-stretch"
+        >
+          <h3 id="about-group-primary-heading" className="sr-only">
+            Primary actions
+          </h3>
           <button
             data-testid="report-bug-button"
             onClick={handleReportBug}
             disabled={reporting}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md bg-gradient-primary hover:bg-secondary_container disabled:opacity-50 rounded-lg transition-colors font-medium"
+            className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md bg-gradient-primary hover:bg-secondary_container disabled:opacity-50 rounded-lg transition-colors font-medium whitespace-nowrap"
           >
             {reporting ? '…' : 'Report a Bug'}
           </button>
-
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              window.open('mailto:hi@orainlabs.dev');
-            }}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 transition-colors font-medium"
-          >
-            Contact Us
-          </a>
 
           {isSnap ? (
             // ORAIN-0573 AC2: under snap, show a static indicator so the user
             // knows updates are automatic (snapd refreshes the snap).
             <div
               data-testid="snap-managed-indicator"
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-surface_container_highest text-on_surface_variant"
+              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-surface_container_highest text-on_surface_variant whitespace-nowrap"
               title="Updates are managed automatically by snapd via the Snap Store."
             >
               ✓ Managed via Snap Store
@@ -218,129 +171,134 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
                 e.preventDefault();
                 window.open(updateInfo.releaseUrl);
               }}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 transition-colors font-medium"
+              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 transition-colors font-medium whitespace-nowrap"
             >
               v{updateInfo.latestVersion}
             </a>
           ) : upToDate ? (
-            <div className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-surface_container_highest text-on_surface_variant">
+            <div className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-surface_container_highest text-on_surface_variant whitespace-nowrap">
               ✓ Up to date
             </div>
           ) : (
             <button
               onClick={handleCheckUpdate}
               disabled={checkingUpdate}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 disabled:opacity-50 transition-colors font-medium"
+              className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 disabled:opacity-50 transition-colors font-medium whitespace-nowrap"
             >
               {checkingUpdate ? '…' : 'Check Updates'}
             </button>
           )}
         </div>
 
-        {/* ── Row 2: Tertiary links (View on GitHub, Support on Ko-fi, and
-             the ORAIN-0735 Open-log-folder link) — AC1 places the log
-             entry on the same row so the three actions sit visually
-             together as the modal's "more" links. ── */}
-        <div className="flex flex-row gap-4 mb-4 items-stretch">
+        {/* ── Group 2: Accessory / external links ── */}
+        <nav
+          data-testid="about-group-accessory"
+          role="group"
+          aria-label="External links"
+          className="flex flex-row flex-wrap gap-x-4 gap-y-1 mb-4 items-baseline justify-center text-body-sm text-on_surface_variant"
+        >
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              window.open('mailto:hi@orainlabs.dev');
+            }}
+            className="hover:text-on_surface hover:underline transition-colors whitespace-nowrap"
+          >
+            Contact Us
+          </a>
           <a
             href="#"
             onClick={(e) => {
               e.preventDefault();
               window.open('https://github.com/orainlabs/jellytunes');
             }}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
+            className="hover:text-on_surface hover:underline transition-colors whitespace-nowrap"
           >
             View on GitHub ↗
           </a>
-
           <a
             href="#"
             onClick={(e) => {
               e.preventDefault();
               window.open('https://ko-fi.com/orainlabs');
             }}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
+            className="hover:text-on_surface hover:underline transition-colors whitespace-nowrap"
           >
             Support on Ko-fi ☕
           </a>
+        </nav>
 
-          {/* ORAIN-0735: compact "Open log folder" link sits in this row
-              alongside the other tertiary actions. The copy button lives
-              next to it so users can grab the path as well as open the
-              folder in the OS file manager. */}
-          <div className="flex-1 flex items-center justify-center gap-2 min-w-0">
-            {/* data-testid="log-path" is preserved (sr-only) so QA can read the
-                resolved path and the copy button picks it up. */}
-            <span data-testid="log-path" className="sr-only">
-              {logPath}
-            </span>
-            <a
-              href="#"
-              data-testid="open-log-folder-button"
-              onClick={(e) => {
-                e.preventDefault();
-                void handleOpenLogFolder();
-              }}
-              title={logPath || undefined}
-              className="flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors min-w-0"
-            >
-              <span className="truncate">Open log folder 📂</span>
-            </a>
-            <button
-              type="button"
-              data-testid="copy-log-path-button"
-              onClick={() => void handleCopyLogPath()}
-              disabled={!logPath}
-              title="Copy log path"
-              aria-label={logPath ? `Copy log path: ${logPath}` : 'Copy log path'}
-              className="flex items-center justify-center w-9 h-9 rounded-md border border-transparent text-on_surface_variant hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high transition-colors disabled:opacity-40"
-            >
-              {logPathCopied ? '✓' : '⧉'}
-            </button>
-          </div>
-        </div>
+        {/* ── Group 3: App-level controls ── */}
+        <div
+          data-testid="about-group-app"
+          role="group"
+          aria-labelledby="about-group-app-heading"
+          className="border-t border-outline_variant/40 pt-4 mb-4"
+        >
+          <h3 id="about-group-app-heading" className="text-title-sm text-on_surface mb-3">
+            App
+          </h3>
 
-        {/* ── Analytics toggle ── */}
-        <div className="flex items-center justify-between px-1 py-2 text-body-sm text-on_surface_variant">
-          <span>Anonymous usage statistics</span>
-          <button
-            onClick={handleAnalyticsToggle}
-            aria-label="Anonymous usage statistics"
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              analyticsEnabled ? 'bg-primary_container' : 'bg-surface_container_highest'
-            }`}
-            aria-checked={analyticsEnabled}
-            role="switch"
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                analyticsEnabled ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </div>
-        <p className="text-caption text-on_surface_variant/60 text-center mb-4">
-          No personal data collected.{' '}
           <a
             href="#"
+            data-testid="open-log-folder-button"
             onClick={(e) => {
               e.preventDefault();
-              window.open('https://github.com/orainlabs/jellytunes/blob/main/PRIVACY.md');
+              void handleOpenLogFolder();
             }}
-            className="underline"
+            title={logPath || undefined}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 h-10 text-body-sm text-on_surface_variant border border-outline_variant/40 hover:border-outline_variant/60 hover:text-on_surface rounded-lg transition-colors w-full mb-3 whitespace-nowrap"
           >
-            Privacy Policy
+            Open log folder 📂
           </a>
-        </p>
+          {/* data-testid="log-path" is preserved (sr-only) so QA can read
+              the resolved path without exposing it visually. */}
+          <span data-testid="log-path" className="sr-only">
+            {logPath}
+          </span>
 
-        {/* ── ORAIN-0578 T2: missing snap permissions, if any ── */}
-        <SnapPermissionsSection report={snapPermissions} />
+          <div className="flex items-center justify-between px-1 py-2 text-body-sm text-on_surface_variant">
+            <span>Anonymous usage statistics</span>
+            <button
+              onClick={handleAnalyticsToggle}
+              aria-label="Anonymous usage statistics"
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                analyticsEnabled ? 'bg-primary_container' : 'bg-surface_container_highest'
+              }`}
+              aria-checked={analyticsEnabled}
+              role="switch"
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  analyticsEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+          <p className="text-caption text-on_surface_variant/60 text-center mt-2">
+            No personal data collected.{' '}
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                window.open('https://github.com/orainlabs/jellytunes/blob/main/PRIVACY.md');
+              }}
+              className="underline"
+            >
+              Privacy Policy
+            </a>
+          </p>
+
+          {/* ── ORAIN-0578 T2: missing snap permissions, if any ── */}
+          <SnapPermissionsSection report={snapPermissions} />
+        </div>
 
         {/* ── Close ── */}
         <button
           data-testid="about-close-button"
           onClick={onClose}
-          className="w-full px-4 py-2 text-body-md text-on_surface_variant hover:text-on_surface transition-colors border border-outline_variant/40 rounded-lg hover:border-outline_variant/60 mt-4"
+          className="w-full px-4 py-2 text-body-md text-on_surface_variant hover:text-on_surface transition-colors border border-outline_variant/40 rounded-lg hover:border-outline_variant/60"
         >
           Close
         </button>
