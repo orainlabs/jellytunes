@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 // Import new sync module
 import { createSyncCore, type CoverArtMode, type TrackInfo } from '../sync';
+import { createNodeFileSystem } from '../sync/sync-files';
 // ORAIN-0562: main-side wrapper that injects the auth identity (client/version/
 // device/deviceId) so call sites in `main/index.ts` don't repeat themselves.
 import { createMainApiClient } from './api-client';
@@ -1213,12 +1214,18 @@ ipcMain.handle(
         },
       );
       const itemTypesMap = new Map(Object.entries(itemTypes));
+      // ORAIN-0705 AC3: pass the real fs so the Sync Preview gates on actual
+      // on-disk presence. Without this, a formatted / wiped / swapped device
+      // would report 0 new tracks even though the sync itself would correctly
+      // re-download them.
+      const fsForPreview = createNodeFileSystem();
       const result = await syncCore.analyzeDiff(
         itemIds,
         itemTypesMap,
         destinationPath,
         diffOptions,
         preloadedTracks,
+        fsForPreview,
       );
       return { success: true, ...result };
     } catch (error) {

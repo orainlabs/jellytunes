@@ -7174,17 +7174,217 @@ describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // AC3 (de-scoped) — analyzeDiff counts missing-audio records as new
+  // AC3 — analyzeDiff gates the preview on on-disk presence when an fs is passed
   // ---------------------------------------------------------------------------
   //
-  // The original AC3 spec asked analyzeDiff to upgrade missing-audio records
-  // to 'new' so the preview reflects the wipe. Implementing that upgrade
-  // required touching deps.fs.exists from inside the preview path, which
-  // breaks the existing analyzeDiff contract (4 pre-existing tests under
-  // "Server Root Path - Original Path Usage" rely on hash-based diffing
-  // without filesystem side effects). The real defensive-sync behaviour
-  // lives in handleSyncedRecord's `pathChanged` and `unchanged` branches,
-  // so the sync itself still re-downloads wiped tracks correctly — just
-  // without the preview hint. Documented limitation, not a regression in
-  // the bug fix itself.
+  // Spec (~/workspace/orainlabs/specs/orain-0705-spec.md AC3): the Sync Preview
+  // counts as `new` (not `unchanged` / `pathChanged`) every track with a
+  // synced_tracks record whose destinationPath is missing on disk — so a
+  // formatted / wiped / swapped device surfaces real work instead of "0 new
+  // tracks". The upgrade is opt-in via the optional `fs` parameter; omitting
+  // it preserves the legacy hash-only diff that 4 pre-existing analyzeDiff
+  // tests depend on.
+  describe('analyzeDiff missing-audio gate', () => {
+    it('counts missing-audio records as new when an fs is provided', async () => {
+      const configWithServerRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      const getTracksForItemsSpy = vi.fn(() =>
+        Promise.resolve({
+          tracks: [
+            {
+              id: 'track-1',
+              name: 'Track 1',
+              album: 'Album',
+              artists: ['Artist'],
+              path: '/music/lib/lib/Artist/Album/track1.mp3',
+              format: 'mp3',
+              parentItemId: 'album-1',
+            },
+            {
+              id: 'track-2',
+              name: 'Track 2',
+              album: 'Album',
+              artists: ['Artist'],
+              path: '/music/lib/lib/Artist/Album/track2.mp3',
+              format: 'mp3',
+              parentItemId: 'album-1',
+            },
+            {
+              id: 'track-3',
+              name: 'Track 3',
+              album: 'Album',
+              artists: ['Artist'],
+              path: '/music/lib/lib/Artist/Album/track3.mp3',
+              format: 'mp3',
+              parentItemId: 'album-1',
+            },
+          ],
+          errors: [],
+        }),
+      );
+
+      // 3 tracks with synced records whose metadataHash matches the server,
+      // so the legacy hash-only path would mark all 3 as unchanged.
+      // Computed via computeMetadataHash(buildMetadata(track)) — see node check
+      // in repo root or the equivalent inline in the "artist with new album"
+      // describe block above.
+      const metadataHash1 = '1d68c7ded0780462';
+      const metadataHash2 = 'cea9f581fa108bca';
+      const metadataHash3 = 'cc07710fb753f1fb';
+
+      mockGetSyncedTracksForItem.mockReturnValue([
+        {
+          trackId: 'track-1',
+          itemId: 'album-1',
+          destinationPath: '/mnt/usb/Artist/Album/track1.mp3',
+          fileSize: 5000000,
+          metadataHash: metadataHash1,
+          coverArtMode: 'embed',
+          encodedBitrate: '192k',
+          serverPath: '/music/lib/lib/Artist/Album/track1.mp3',
+          serverRootPath: '/music/lib/lib/',
+        },
+        {
+          trackId: 'track-2',
+          itemId: 'album-1',
+          destinationPath: '/mnt/usb/Artist/Album/track2.mp3',
+          fileSize: 5000000,
+          metadataHash: metadataHash2,
+          coverArtMode: 'embed',
+          encodedBitrate: '192k',
+          serverPath: '/music/lib/lib/Artist/Album/track2.mp3',
+          serverRootPath: '/music/lib/lib/',
+        },
+        {
+          trackId: 'track-3',
+          itemId: 'album-1',
+          destinationPath: '/mnt/usb/Artist/Album/track3.mp3',
+          fileSize: 5000000,
+          metadataHash: metadataHash3,
+          coverArtMode: 'embed',
+          encodedBitrate: '192k',
+          serverPath: '/music/lib/lib/Artist/Album/track3.mp3',
+          serverRootPath: '/music/lib/lib/',
+        },
+      ] as any);
+
+      const fsMock = createMockFileSystem();
+      // Track 1 and 2 exist on the device; track 3 was wiped. The default
+      // mock fs returns false for any path not explicitly populated, so we
+      // only need to mark the survivors.
+      await fsMock.writeFile('/mnt/usb/Artist/Album/track1.mp3', Buffer.from(''));
+      await fsMock.writeFile('/mnt/usb/Artist/Album/track2.mp3', Buffer.from(''));
+
+      const deps = createMockDeps({
+        api: createMockApiClient({ getTracksForItems: getTracksForItemsSpy }),
+      });
+
+      const core = createTestSyncCore(configWithServerRoot, deps);
+
+      const result = await core.analyzeDiff(
+        ['album-1'],
+        new Map([['album-1', 'album' as ItemType]]),
+        '/mnt/usb',
+        { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+        undefined,
+        fsMock,
+      );
+
+      // AC3 literal assertion: 1 missing-audio record → new, 2 survivors → unchanged.
+      expect(result.totals.newTracks).toBe(1);
+      expect(result.totals.unchanged).toBe(2);
+
+      const albumDiff = result.items.find((i) => i.itemId === 'album-1');
+      expect(albumDiff).toBeDefined();
+      const missingTrack = albumDiff!.changes.find((c) => c.trackId === 'track-3');
+      const survivor1 = albumDiff!.changes.find((c) => c.trackId === 'track-1');
+      const survivor2 = albumDiff!.changes.find((c) => c.trackId === 'track-2');
+      expect(missingTrack?.changeType).toBe('new');
+      expect(survivor1?.changeType).toBe('unchanged');
+      expect(survivor2?.changeType).toBe('unchanged');
+    });
+
+    it('falls back to hash-only diffing when fs is omitted', async () => {
+      // Sanity check that omitting the optional `fs` keeps the legacy contract:
+      // all 3 records with matching metadataHash are reported as unchanged.
+      // This protects the 4 pre-existing analyzeDiff tests under "Server Root
+      // Path - Original Path Usage" that assert hash-based diffing without
+      // filesystem side effects.
+      const configWithServerRoot: SyncConfig = {
+        ...validConfig,
+        serverRootPath: '/music/',
+      };
+
+      const getTracksForItemsSpy = vi.fn(() =>
+        Promise.resolve({
+          tracks: [
+            {
+              id: 'track-1',
+              name: 'Track 1',
+              album: 'Album',
+              artists: ['Artist'],
+              path: '/music/lib/lib/Artist/Album/track1.mp3',
+              format: 'mp3',
+              parentItemId: 'album-1',
+            },
+            {
+              id: 'track-2',
+              name: 'Track 2',
+              album: 'Album',
+              artists: ['Artist'],
+              path: '/music/lib/lib/Artist/Album/track2.mp3',
+              format: 'mp3',
+              parentItemId: 'album-1',
+            },
+          ],
+          errors: [],
+        }),
+      );
+
+      mockGetSyncedTracksForItem.mockReturnValue([
+        {
+          trackId: 'track-1',
+          itemId: 'album-1',
+          destinationPath: '/mnt/usb/Artist/Album/track1.mp3',
+          fileSize: 5000000,
+          metadataHash: '1d68c7ded0780462',
+          coverArtMode: 'embed',
+          encodedBitrate: '192k',
+          serverPath: '/music/lib/lib/Artist/Album/track1.mp3',
+          serverRootPath: '/music/lib/lib/',
+        },
+        {
+          trackId: 'track-2',
+          itemId: 'album-1',
+          destinationPath: '/mnt/usb/Artist/Album/track2.mp3',
+          fileSize: 5000000,
+          metadataHash: 'cea9f581fa108bca',
+          coverArtMode: 'embed',
+          encodedBitrate: '192k',
+          serverPath: '/music/lib/lib/Artist/Album/track2.mp3',
+          serverRootPath: '/music/lib/lib/',
+        },
+      ] as any);
+
+      const deps = createMockDeps({
+        api: createMockApiClient({ getTracksForItems: getTracksForItemsSpy }),
+      });
+
+      const core = createTestSyncCore(configWithServerRoot, deps);
+
+      // No fs arg → legacy hash-only behaviour.
+      const result = await core.analyzeDiff(
+        ['album-1'],
+        new Map([['album-1', 'album' as ItemType]]),
+        '/mnt/usb',
+        { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      );
+
+      expect(result.totals.unchanged).toBe(2);
+      expect(result.totals.newTracks).toBe(0);
+    });
+  });
 });

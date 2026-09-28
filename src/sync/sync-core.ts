@@ -2184,6 +2184,12 @@ class SyncCoreImpl {
    *   When provided, the method skips the internal api.getTracksForItems call,
    *   using the pre-loaded tracks instead. Eliminates redundant fetches when
    *   the caller (main process) has already populated the cache.
+   * @param fs - Optional FileSystem used to gate the preview on actual on-disk
+   *   presence. When provided, every track with a synced_tracks record whose
+   *   `destinationPath` does not exist on disk is reclassified as `new` so the
+   *   Sync Preview correctly surfaces work for a formatted / wiped / swapped
+   *   device. When omitted, the method falls back to the original hash-only
+   *   diff, which is what the 4 pre-existing analyzeDiff tests rely on.
    */
   async analyzeDiff(
     itemIds: string[],
@@ -2195,6 +2201,7 @@ class SyncCoreImpl {
       convertToMp3: boolean;
     },
     preloadedTracks?: Map<string, TrackInfo[]>,
+    fs?: FileSystem,
   ): Promise<SyncDiffResult> {
     // Resolve options to get filesystemType for path sanitization
     const resolvedOptions = resolveSyncOptions({
@@ -2341,17 +2348,32 @@ class SyncCoreImpl {
       for (const track of serverTracks) {
         const synced = syncedItemMap.get(track.id);
 
-        // ORAIN-0705: removed the previous "missing audio → 'new'" upgrade.
-        // analyzeDiff is a preview path that intentionally does NOT touch
-        // the filesystem — it works purely from the synced_tracks records
-        // and the server metadata. The real re-download logic lives in
-        // handleSyncedRecord (the `pathChanged` and `unchanged` branches)
-        // where fs.exists() gates the copy/convert step. Trying to mirror
-        // the upgrade here broke 4 pre-existing analyzeDiff tests that
-        // rely on hash-based diffing without filesystem side effects
-        // (Server Root Path - Original Path Usage). The preview may
-        // temporarily under-report work for a wiped device, but the sync
-        // itself still re-downloads correctly via handleSyncedRecord.
+        // ORAIN-0705 AC3: when an `fs` is provided, gate the preview on actual
+        // on-disk presence. A synced_tracks record whose destinationPath no
+        // longer exists (formatted device, swap to a different volume mounted
+        // at the same letter, partial wipe, manual deletion) is stale and must
+        // be surfaced as `new` so the Sync Preview does not under-report work.
+        // The real re-download logic lives in handleSyncedRecord; this branch
+        // only reclassifies the change type. When `fs` is omitted we fall back
+        // to hash-only diffing, which keeps the 4 pre-existing analyzeDiff
+        // tests that do not touch the filesystem green.
+        if (fs && synced && !(await fs.exists(synced.destinationPath))) {
+          changes.push({ trackId: track.id, trackName: track.name, changeType: 'new' });
+          totalNew++;
+          if (track.parentItemId) {
+            const prev = albumChanges.get(track.parentItemId) ?? {
+              newTracks: 0,
+              metadataChanged: 0,
+              pathChanged: 0,
+            };
+            albumChanges.set(track.parentItemId, {
+              newTracks: prev.newTracks + 1,
+              metadataChanged: prev.metadataChanged,
+              pathChanged: prev.pathChanged,
+            });
+          }
+          continue;
+        }
 
         const trackMeta = this.buildMetadata(track);
         const currentHash = computeMetadataHash(trackMeta);
@@ -3292,8 +3314,8 @@ export function createSyncCore(config: SyncConfig, deps?: Partial<SyncDependenci
     removeItems: (itemIds, itemTypes, destinationPath) =>
       core.removeItems(itemIds, itemTypes, destinationPath),
     testConnection: () => core.testConnection(),
-    analyzeDiff: (itemIds, itemTypes, destinationPath, options, preloadedTracks) =>
-      core.analyzeDiff(itemIds, itemTypes, destinationPath, options, preloadedTracks),
+    analyzeDiff: (itemIds, itemTypes, destinationPath, options, preloadedTracks, fs) =>
+      core.analyzeDiff(itemIds, itemTypes, destinationPath, options, preloadedTracks, fs),
   };
 }
 
@@ -3330,6 +3352,7 @@ export interface SyncCore {
       convertToMp3: boolean;
     },
     preloadedTracks?: Map<string, TrackInfo[]>,
+    fs?: FileSystem,
   ): Promise<SyncDiffResult>;
 }
 
