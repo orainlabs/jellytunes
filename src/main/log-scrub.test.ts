@@ -229,6 +229,81 @@ describe('formatTrackFailed', () => {
   });
 });
 
+describe('ORAIN-0740 AC5 — song names retained, sensitive fields scrubbed', () => {
+  // AC5 explicit: support needs song/track names to identify what failed;
+  // tokens, request bodies, and home directories must NOT appear in any
+  // emitted line. These tests cover the integration: a single [track-failed]
+  // emission where the surrounding metadata would normally tempt callers
+  // to log the raw error object, the request body, or the file path.
+
+  it('retains the song/track name when the underlying error carries it', () => {
+    const out = formatTrackFailed({
+      syncId: 's',
+      trackId: 't1',
+      trackName: 'Bohemian Rhapsody (Remastered 2011)',
+      phase: 'conversion',
+      cause: 'ffmpeg exit 1',
+      format: 'flac',
+    });
+    expect(out).toContain('Bohemian Rhapsody (Remastered 2011)');
+  });
+
+  it('emitted [track-failed] line never contains a JWT-style token', () => {
+    const apiErr = new Error('HTTP 401') as Error & { body: string };
+    apiErr.body = '{"token":"eyJhbGciOiJIUzI1NiJ9.payload.signature","refresh":"rt-deadbeef"}';
+    const { logger, info } = makeCapturingLogger();
+    logTrackFailed(logger, {
+      syncId: 's',
+      trackId: 't1',
+      trackName: 'Song',
+      phase: 'download',
+      // @ts-expect-error — defensive: wrapper must scrub even non-string cause
+      cause: apiErr,
+    });
+    expect(info[0]).not.toMatch(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./);
+    expect(info[0]).not.toContain('deadbeef');
+    expect(info[0]).not.toContain('refresh');
+    expect(info[0]).not.toContain('body');
+  });
+
+  it('emitted [sync-start] line never contains a home directory', () => {
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const out = formatSyncStart({
+      appVersion: '1.0.0',
+      platform: 'linux',
+      arch: 'x64',
+      destinationPath: '/Users/alice/Music/USB',
+      destinationFilesystem: 'ext4',
+      itemCount: 1,
+      trackCount: 1,
+      options: { convertToMp3: false, coverArtMode: 'off', lyricsMode: 'off', embedMetadata: true },
+      syncId: 's',
+    });
+    expect(out).not.toContain('/Users/alice');
+    expect(out).toContain('dest=~/Music/USB');
+  });
+
+  it('emitted [sync-end] line is unaffected by home-directory scrubbing (no paths involved)', () => {
+    // [sync-end] carries counters, not paths — verify it stays clean
+    // regardless of os.homedir() so the line is stable across hosts.
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const out = formatSyncEnd({
+      syncId: 's',
+      tracksCopied: 0,
+      tracksConverted: 0,
+      tracksRetagged: 0,
+      tracksSkipped: 0,
+      tracksFailed: 0,
+      tracksRemoved: 0,
+      durationMs: 0,
+      totalSizeBytes: 0,
+      cancelled: false,
+    });
+    expect(out).not.toContain('/Users/alice');
+    expect(out).toContain('[sync-end]');
+  });
+});
+
 function makeCapturingLogger(): { logger: LoggerLike; info: string[]; error: string[] } {
   const info: string[] = [];
   const error: string[] = [];
