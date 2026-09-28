@@ -50,7 +50,32 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libudev-dev
           sudo snap wait system seed.loaded
-          sudo snap install snapcraft --classic
+          # Pin snapcraft to a known-good version. Without this, `snap install
+          # snapcraft --classic` always pulls latest/stable and a fresh release
+          # of snapcraft can break the build. ORAIN-0741: snapcraft 9.x breaks
+          # electron-builder 26.16.1 in two distinct ways:
+          #   - 9.1.x changed mediated GUI asset resolution, so
+          #     `desktop: meta/gui/jellytunes.desktop` fails with
+          #     `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE: file does not exist`.
+          #   - 9.0.x (rev 18514, the version that shipped before the bump)
+          #     fails the same way on Ubuntu 26 / GitHub Actions runners:
+          #     `Failed to pull source: 'app' not found` because the LXD
+          #     bind-mount idmap inside the managed instance can't see the
+          #     bind-mounted project tree. Reproduced in the Ubuntu 26 dev VM
+          #     on 2026-09-28 with `snapcraft found version=snapcraft 9.0.1`
+          #     then `Failed to pull source: 'app' not found.` /
+          #     `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`.
+          #
+          # Strategy: prefer the upstream-pinned revision; if the store no
+          # longer serves that revision on any channel, fall back to the
+          # closest stable channel. At 2026-09-28 the Snap Store no longer
+          # exposes snapcraft 9.0.1 (rev 18514) on any channel — `snap install
+          # --revision=18514` is rejected with `ERR_REVISION_NOT_FOUND`. So
+          # we install from `8.x/stable` (serves 8.14.5, rev 17614 on amd64),
+          # which is the last known working version. The pin is reviewed out
+          # in a follow-up task once electron-builder / snapcraft ship a
+          # compatible pair again.
+          sudo snap install snapcraft --classic --channel=8.x/stable
           sudo snap install lxd
           sudo lxd init --auto
           sudo usermod -a -G lxd "$USER"
@@ -63,6 +88,11 @@ jobs:
           # through: https://github.com/canonical/craft-providers/issues/172
           sudo iptables -I DOCKER-USER -i lxdbr0 -j ACCEPT
           sudo iptables -I DOCKER-USER -o lxdbr0 -j ACCEPT
+          # ORAIN-0741 AC2: surface the pinned snapcraft version in the job
+          # log so a future regression can be diagnosed without re-running
+          # the build. `snap list snapcraft` prints the installed channel
+          # and revision; `snapcraft --version` only prints the version.
+          echo "snapcraft version: $(snapcraft --version) (channel=$(snap list snapcraft | awk 'NR==2 {print $4}'), revision=$(snap list snapcraft | awk 'NR==2 {print $3}'))"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
