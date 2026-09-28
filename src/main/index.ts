@@ -991,7 +991,7 @@ ipcMain.handle('sync:start2', async (_event, options) => {
           // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
           // Required so any future block that forgets to wire it fails at
           // type-check (compile error), not at runtime silent-drop.
-          trackFailed: (msg) => log.warn('[track-failed]', msg),
+          trackFailed: (msg) => log.warn(msg),
         },
       },
     );
@@ -1170,7 +1170,7 @@ ipcMain.handle(
             error: (msg) => log.error('[batch]', msg),
             debug: (msg) => log.debug('[batch]', msg),
             // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
-            trackFailed: (msg) => log.warn('[track-failed]', msg),
+            trackFailed: (msg) => log.warn(msg),
           },
         });
         const cacheMissTypesMap = new Map(
@@ -1209,7 +1209,7 @@ ipcMain.handle(
             error: (msg) => log.error('[batch]', msg),
             debug: (msg) => log.debug('[batch]', msg),
             // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
-            trackFailed: (msg) => log.warn('[track-failed]', msg),
+            trackFailed: (msg) => log.warn(msg),
           },
         },
       );
@@ -1321,7 +1321,7 @@ ipcMain.handle(
           error: (msg) => log.error('[batch]', msg),
           debug: (msg) => log.debug('[batch]', msg),
           // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
-          trackFailed: (msg) => log.warn('[track-failed]', msg),
+          trackFailed: (msg) => log.warn(msg),
         },
       });
       const itemTypesMap = new Map([[itemId, itemType]]);
@@ -1388,7 +1388,7 @@ ipcMain.handle(
             error: (msg) => log.error('[batch]', msg),
             debug: (msg) => log.debug('[batch]', msg),
             // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
-            trackFailed: (msg) => log.warn('[track-failed]', msg),
+            trackFailed: (msg) => log.warn(msg),
           },
         });
 
@@ -1496,7 +1496,7 @@ ipcMain.handle(
             error: (m) => log.error('[sync]', m),
             debug: (m) => log.debug('[sync]', m),
             // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
-            trackFailed: (m) => log.warn('[track-failed]', m),
+            trackFailed: (m) => log.warn(m),
           },
         },
       );
@@ -1543,7 +1543,7 @@ ipcMain.handle(
             error: (m) => log.error('[sync]', m),
             debug: (m) => log.debug('[sync]', m),
             // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
-            trackFailed: (m) => log.warn('[track-failed]', m),
+            trackFailed: (m) => log.warn(m),
           },
         },
       );

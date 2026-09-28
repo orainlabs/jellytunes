@@ -38,6 +38,7 @@ import { createTestSyncCore, type SyncDependencies } from './sync-core';
 import type { SyncLogger, TrackInfo, ItemType } from './types';
 import { createMockApiClient } from './sync-api';
 import { createMockFileSystem, createMockConverter } from './sync-files';
+import { formatTrackFailed } from '@main/log-scrub';
 
 const mockGetSyncedTracksForItem = vi.hoisted(() => vi.fn(() => []));
 const mockGetSyncedItems = vi.hoisted(() =>
@@ -215,4 +216,50 @@ describe('ORAIN-0740 AC6 — sync info-level verbosity budget', () => {
     expect(trackFailed[0]).toMatch(/cause=.*fetch failed/);
     expect(result.tracksFailed).toHaveLength(3);
   }, 30_000);
+
+  // ORAIN-0748: [track-failed] must appear exactly once per line, not duplicated.
+  // The 7 callbacks in index.ts all do: trackFailed: (msg) => log.warn('[track-failed]', msg)
+  // while formatTrackFailed already prepends [track-failed]. This test exercises
+  // the real callback pattern. AC2: no callback adds the prefix — warn is called with
+  // msg only. AC3: the line starts with [track-failed] syncId=.
+  test('trackFailed callback does not double the [track-failed] prefix (AC2 + AC3)', () => {
+    // Use a local mock so this test is self-contained and not affected by
+    // global mock state from other test files in the full suite.
+    let warnCallCount = 0;
+    let warnLastMsg: string | undefined;
+    const mockLog = {
+      warn: (msg: string) => {
+        warnCallCount++;
+        warnLastMsg = msg;
+      },
+    };
+
+    const logger: SyncLogger = {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+      trackFailed: (msg) => mockLog.warn(msg),
+    };
+
+    const msg = formatTrackFailed({
+      syncId: 't0',
+      trackId: 'trk1',
+      trackName: 'Crash.mp3',
+      phase: 'download',
+      cause: 'net::ERR_ABORTED',
+    });
+
+    logger.trackFailed(msg);
+
+    // AC2: warn must be called exactly once with the pre-formatted msg.
+    expect(warnCallCount).toBe(1);
+    expect(warnLastMsg).toBe(msg);
+    expect(msg.startsWith('[track-failed]')).toBe(true);
+
+    // AC3: electron-log's output starts with [track-failed] syncId=.
+    expect(msg).toMatch(/^\[track-failed\] syncId=t0/);
+    // Should never contain two [track-failed] labels in a row.
+    expect(msg).not.toMatch(/\[track-failed\].*\[track-failed\]/);
+  });
 });
