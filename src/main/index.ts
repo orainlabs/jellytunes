@@ -884,7 +884,7 @@ ipcMain.handle('usb:list', async () => {
 });
 ipcMain.handle('usb:getDeviceInfo', async (_event, devicePath: string) => {
   if (!isValidPath(devicePath)) {
-    log.warn('usb:getDeviceInfo: invalid path', devicePath);
+    log.warn(`usb:getDeviceInfo: invalid path ${scrubPath(devicePath)}`);
     return { total: 0, free: 0, used: 0 };
   }
   try {
@@ -900,7 +900,7 @@ ipcMain.handle('usb:getTrackFormat', async (_event, trackPath: string) =>
 );
 ipcMain.handle('device:getFilesystem', async (_event, devicePath: string) => {
   if (!isValidPath(devicePath)) {
-    log.warn('device:getFilesystem: invalid path', devicePath);
+    log.warn(`device:getFilesystem: invalid path ${scrubPath(devicePath)}`);
     return 'unknown';
   }
   try {
@@ -911,7 +911,13 @@ ipcMain.handle('device:getFilesystem', async (_event, devicePath: string) => {
 });
 ipcMain.handle('sync:start', async (_event, options) => {
   try {
-    log.info(`Starting sync to ${options.targetPath} with ${options.tracks.length} tracks`);
+    // ORAIN-0740 cycle 2 (HIGH): scrub the renderer's destination path before
+    // it reaches the log. The v2 handler (`sync:start2`) emits only the
+    // filesystem type without a path; this v1 handler was missed in cycle 1
+    // and still wrote the user's absolute destination verbatim to main.log.
+    log.info(
+      `Starting sync to ${scrubPath(options.targetPath)} with ${options.tracks.length} tracks`,
+    );
     const result = await syncTracks({
       tracks: options.tracks,
       targetPath: options.targetPath,

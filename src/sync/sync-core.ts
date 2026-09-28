@@ -31,7 +31,7 @@ import { randomUUID } from 'node:crypto';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
-import { formatTrackFailed, logSyncStart, logSyncEnd } from '../main/log-scrub';
+import { formatTrackFailed, logSyncStart, logSyncEnd, scrubPath } from '../main/log-scrub';
 import { COVER_MAX_BYTES } from './cover-image';
 import { validateAudioBody, validateDownloadSize, MAX_DOWNLOAD_BYTES } from './download-validation';
 
@@ -2645,7 +2645,7 @@ class SyncCoreImpl {
     for (const lrcPath of toRemove) {
       try {
         await this.deps.fs.unlink(lrcPath);
-        this.log.debug(`Removed stale LRC: ${lrcPath}`);
+        this.log.debug(`Removed stale LRC: ${scrubPath(lrcPath)}`);
       } catch {
         /* non-fatal */
       }
@@ -2710,7 +2710,7 @@ class SyncCoreImpl {
         if (!hasAudio) {
           try {
             await this.deps.fs.unlink(`${dir}/${lrcFile}`);
-            this.log.debug(`Removed orphaned LRC: ${dir}/${lrcFile}`);
+            this.log.debug(`Removed orphaned LRC: ${scrubPath(`${dir}/${lrcFile}`)}`);
           } catch {
             /* non-fatal */
           }
@@ -2736,7 +2736,7 @@ class SyncCoreImpl {
       const coverPath = `${dir}/cover.jpg`;
       if (await this.deps.fs.exists(coverPath)) {
         await this.deps.fs.unlink(coverPath);
-        this.log.debug(`Removed cover.jpg from empty directory: ${dir}`);
+        this.log.debug(`Removed cover.jpg from empty directory: ${scrubPath(dir)}`);
       }
     } catch {
       /* non-fatal */
@@ -2758,7 +2758,7 @@ class SyncCoreImpl {
         const exists = await this.deps.fs.exists(coverPath);
         if (exists) {
           await this.deps.fs.unlink(coverPath);
-          this.log.debug(`Removed stale cover.jpg: ${coverPath}`);
+          this.log.debug(`Removed stale cover.jpg: ${scrubPath(coverPath)}`);
         }
       } catch {
         /* non-fatal */
@@ -2775,12 +2775,12 @@ class SyncCoreImpl {
     try {
       const result = await this.deps.converter.stripCoverArt(inputPath, outputPath);
       if (result.success) {
-        this.log.debug(`Cover strip operation completed for: ${inputPath}`);
+        this.log.debug(`Cover strip operation completed for: ${scrubPath(inputPath)}`);
       } else {
-        this.log.warn(`Failed to strip cover from ${inputPath}: ${result.error}`);
+        this.log.warn(`Failed to strip cover from ${scrubPath(inputPath)}: ${result.error}`);
       }
     } catch (err) {
-      this.log.warn(`Cover strip error for ${inputPath}: ${err}`);
+      this.log.warn(`Cover strip error for ${scrubPath(inputPath)}: ${err}`);
     }
   }
 
@@ -2870,10 +2870,10 @@ class SyncCoreImpl {
     try {
       await this.deps.fs.writeFile(`${dir}/cover.jpg`, coverBuffer);
       this.processedCoverDirs.add(dir);
-      this.log.debug(`Companion cover written: ${dir}/cover.jpg`);
+      this.log.debug(`Companion cover written: ${scrubPath(dir)}/cover.jpg`);
     } catch (err) {
       this.log.warn(
-        `Failed to write companion cover in ${dir}: ${err instanceof Error ? err.message : err}`,
+        `Failed to write companion cover in ${scrubPath(dir)}: ${err instanceof Error ? err.message : err}`,
       );
     }
   }
@@ -2897,7 +2897,7 @@ class SyncCoreImpl {
         // Write LRC sidecar file alongside the audio
         const lrcPath = outputPath.replace(/\.[^.]+$/, '.lrc');
         await this.deps.fs.writeFile(lrcPath, Buffer.from(lyrics, 'utf8'));
-        this.log.debug(`LRC file written: ${lrcPath}`);
+        this.log.debug(`LRC file written: ${scrubPath(lrcPath)}`);
         return 1;
       }
 
@@ -2913,11 +2913,11 @@ class SyncCoreImpl {
           format,
         );
         if (result?.success) {
-          this.log.debug(`Lyrics embedded in: ${outputPath}`);
+          this.log.debug(`Lyrics embedded in: ${scrubPath(outputPath)}`);
           return 1;
         }
         if (result?.error) {
-          this.log.warn(`Failed to embed lyrics in ${outputPath}: ${result.error}`);
+          this.log.warn(`Failed to embed lyrics in ${scrubPath(outputPath)}: ${result.error}`);
         }
         return 0;
       }
@@ -2953,9 +2953,9 @@ class SyncCoreImpl {
         format,
       );
       if (result?.success) {
-        this.log.debug(`ReplayGain embedded in: ${outputPath}`);
+        this.log.debug(`ReplayGain embedded in: ${scrubPath(outputPath)}`);
       } else if (result?.error) {
-        this.log.warn(`Failed to embed ReplayGain in ${outputPath}: ${result.error}`);
+        this.log.warn(`Failed to embed ReplayGain in ${scrubPath(outputPath)}: ${result.error}`);
       }
     } catch (error) {
       // Non-fatal: skip ReplayGain for this track
