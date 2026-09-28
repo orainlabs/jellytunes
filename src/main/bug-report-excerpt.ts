@@ -121,3 +121,24 @@ function parseSyncId(line: string): string | null {
   const value = end === -1 ? tail : tail.slice(0, end);
   return value.length > 0 ? value : null;
 }
+
+/**
+ * Pick the last `max` log lines that carry `[error]` or `[warn]` and
+ * are not part of the sync block we're already reporting under "Last
+ * sync". This is the "Other recent errors" tail.
+ *
+ * We compare raw-line identity (not normalised equality) so a
+ * [track-failed] line that lives in the sync block stays there and is
+ * not echoed here — duplicating it under both sections would inflate
+ * the body and confuse the reader.
+ */
+export function pickRecentOtherErrors(logLines: string[], syncLines: string[], max = 10): string[] {
+  const syncSet = new Set(syncLines);
+  const candidates: string[] = [];
+  for (const line of logLines) {
+    if (!line.includes('[error]') && !line.includes('[warn]')) continue;
+    if (syncSet.has(line)) continue;
+    candidates.push(scrubLine(line));
+  }
+  return candidates.slice(-max);
+}

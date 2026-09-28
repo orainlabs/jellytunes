@@ -112,3 +112,38 @@ describe('extractLastSyncBlock', () => {
     expect(block.lines[1]).toContain('syncId=abc');
   });
 });
+
+describe('pickRecentOtherErrors', () => {
+  it('returns last 10 [error]/[warn] lines when no sync lines exist', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 20; i++) lines.push(`[warn] noise ${i}`);
+    const picked = pickRecentOtherErrors(lines, []);
+    expect(picked).toHaveLength(10);
+    // Must be the LAST 10, in order.
+    expect(picked[picked.length - 1]).toBe('[warn] noise 19');
+    expect(picked[0]).toBe('[warn] noise 10');
+  });
+
+  it('excludes lines that appear inside the sync block', () => {
+    const sharedLine = '[warn] [track-failed] syncId=abc trackName=Z';
+    const lines = ['[error] earlier failure', sharedLine, '[error] later failure'];
+    const syncLines = [sharedLine];
+    const picked = pickRecentOtherErrors(lines, syncLines);
+    expect(picked).toHaveLength(2);
+    expect(picked).toEqual(['[error] earlier failure', '[error] later failure']);
+  });
+
+  it('returns at most `max` lines and accepts a custom max', () => {
+    const lines = ['[error] a', '[warn] b', '[error] c'];
+    expect(pickRecentOtherErrors(lines, [], 2)).toHaveLength(2);
+    expect(pickRecentOtherErrors(lines, [], 2)).toEqual(['[warn] b', '[error] c']);
+  });
+
+  it('scrubs the home directory from picked lines', () => {
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const lines = ['[error] /Users/alice/private/secret leaked somewhere'];
+    const picked = pickRecentOtherErrors(lines, []);
+    expect(picked[0]).toContain('~/private/secret');
+    expect(picked[0]).not.toContain('/Users/alice');
+  });
+});
