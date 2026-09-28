@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Sync no longer silently skips tracks when the synced DB record points at an audio file that no longer exists on the device. A formatted, swapped, or partially wiped device used to mark every missing track as "already synced" from the database alone, so the sync completed in seconds with the UI still claiming success while the device stayed empty; `.lrc` and ReplayGain sidecars were even written next to non-existent audio files. The truly-unchanged branch now verifies the file is on disk before short-circuiting, the path-changed branch now renames in place when the file is at the old path and falls back to a real re-download when neither path has the audio, and the Sync Preview treats a synced record whose audio is missing as a new track that needs work. (#ORAIN-0705)
+
 ## [0.7.1] — 2026-09-13
 
 ### Changed
