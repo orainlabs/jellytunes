@@ -108,7 +108,7 @@ describe('validateAudioBody', () => {
 
   it('rejects empty buffer as zero-byte (AC2 zero-edge case)', () => {
     const r = validateAudioBody(Buffer.alloc(0));
-    expect(r).toEqual({ ok: false, reason: expect.stringMatching(/0 B|vacío/i) });
+    expect(r).toEqual({ ok: false, reason: expect.stringMatching(/0 B|empty/i) });
   });
 
   it('rejects when first byte is `{` followed by printable text', () => {
@@ -165,7 +165,7 @@ describe('validateDownloadSize — AC2(a) Content-Length + identity', () => {
       receivedBytes: 800,
     });
     expect(r.ok).toBe(false);
-    expect((r as { reason: string }).reason).toBe('Descarga incompleta (800 de 1024 bytes)');
+    expect((r as { reason: string }).reason).toBe('Incomplete download (800 of 1024 bytes)');
   });
   it('fails when contentLength is 0 (zero-length is not audio)', () => {
     const r = validateDownloadSize({
@@ -174,7 +174,7 @@ describe('validateDownloadSize — AC2(a) Content-Length + identity', () => {
       receivedBytes: 0,
     });
     expect(r.ok).toBe(false);
-    expect((r as { reason: string }).reason).toMatch(/incompleta|0 de 0/i);
+    expect((r as { reason: string }).reason).toMatch(/incomplete|0 of 0/i);
   });
   it('treats missing contentEncoding as identity (proxy default)', () => {
     expect(validateDownloadSize({ contentLength: 1024, receivedBytes: 1024 })).toEqual({
@@ -207,7 +207,7 @@ describe('validateDownloadSize — AC2(c) declaredSize (track.size) stability', 
       previousReceivedBytes: 800,
     });
     expect(r.ok).toBe(true);
-    expect((r as { warning?: string }).warning).toMatch(/tamaño distinto al declarado/i);
+    expect((r as { warning?: string }).warning).toMatch(/size differs from the Jellyfin-declared/i);
   });
   it('fails when receivedBytes differs from both declaredSize and previousReceivedBytes', () => {
     const r = validateDownloadSize({
@@ -229,6 +229,6 @@ describe('validateDownloadSize — AC2(d) no info, AC6 cap', () => {
   it('fails when receivedBytes > 2 GiB and there is no upper bound', () => {
     const r = validateDownloadSize({ receivedBytes: Number(MAX_DOWNLOAD_BYTES) + 1 });
     expect(r.ok).toBe(false);
-    expect((r as { reason: string }).reason).toBe('Archivo demasiado grande (>2 GiB)');
+    expect((r as { reason: string }).reason).toBe('File too large (>2 GiB)');
   });
 });

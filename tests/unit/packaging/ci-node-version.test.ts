@@ -3,15 +3,15 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Electron 44 empotra Node 24 (ABI de Electron 149). Si CI instala
- * Node 20, los módulos nativos (better-sqlite3, usb-detection) se compilan
- * contra el ABI equivocado. El fallo es silencioso: device-watcher.ts cae a
- * polling sin romper el build.
+ * Electron 44 embeds Node 24 (Electron 149 ABI). If CI installs Node 20,
+ * native modules (better-sqlite3, usb-detection) get compiled against the
+ * wrong ABI. The failure is silent: device-watcher.ts falls back to polling
+ * without breaking the build.
  */
 const EXPECTED_MAJOR = '24';
 const STALE_MAJOR = '20';
 
-// Acepta las tres formas válidas en YAML: '24', "24" y 24 (sin comillas).
+// Accepts all three valid YAML forms: '24', "24" and 24 (without quotes).
 const expectedPattern = new RegExp(`node-version:\\s*['"]?${EXPECTED_MAJOR}['"]?\\s*$`, 'm');
 const stalePattern = new RegExp(`node-version:\\s*['"]?${STALE_MAJOR}['"]?\\s*$`, 'm');
 
@@ -21,12 +21,12 @@ const workflowsUsingSetupNode = readdirSync(workflowsDir)
   .map((file) => join(workflowsDir, file))
   .filter((filePath) => readFileSync(filePath, 'utf8').includes('actions/setup-node'));
 
-describe('Versión de Node en CI', () => {
-  it('encuentra al menos un workflow que use actions/setup-node', () => {
+describe('CI Node version', () => {
+  it('finds at least one workflow that uses actions/setup-node', () => {
     expect(workflowsUsingSetupNode.length).toBeGreaterThan(0);
   });
 
-  it.each(workflowsUsingSetupNode)('%s instala el Node del runtime de Electron', (workflowPath) => {
+  it.each(workflowsUsingSetupNode)('%s installs the Node runtime of Electron', (workflowPath) => {
     const workflow = readFileSync(workflowPath, 'utf8');
 
     expect(workflow).toMatch(expectedPattern);

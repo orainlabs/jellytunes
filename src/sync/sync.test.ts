@@ -7092,8 +7092,8 @@ describe('ORAIN-0739 HIGH-2: body validation streams the header, never reads the
 // =============================================================================
 // ORAIN-0739 HIGH-S1 (AC6 pre-stream 2 GiB cap)
 //
-// AC6 says "Límite de 2 GiB por pista; descargas mayores se rechazan antes de
-// empezar el stream." Pre-cycle 4 only enforced the cap *after* the pipe
+// AC6 says "2 GiB limit per track; larger downloads are rejected before the
+// stream starts." Pre-cycle 4 only enforced the cap *after* the pipe
 // completed — by then a hostile or buggy server had already pushed the bytes
 // into `os.tmpdir()`. With COPY_CONCURRENCY=6 × maxAttempts=3 the failure
 // scenario was 24 GiB on disk before the first rejection, with ENOSPC risk
@@ -7169,7 +7169,7 @@ describe('ORAIN-0739 HIGH-S1: 2 GiB cap enforced pre-pipe and in-pipe (AC6)', ()
 
     expect(result.success).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
-    expect(result.errors[0].message).toMatch(/demasiado grande|2 ?GiB/i);
+    expect(result.errors[0].message).toMatch(/too large|2 ?GiB/i);
     expect(result.errors[0].phase).toBe('download');
   });
 
@@ -7243,7 +7243,7 @@ describe('ORAIN-0739 HIGH-S1: 2 GiB cap enforced pre-pipe and in-pipe (AC6)', ()
 
     expect(result.success).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
-    expect(result.errors[0].message).toMatch(/demasiado grande|2 ?GiB/i);
+    expect(result.errors[0].message).toMatch(/too large|2 ?GiB/i);
     expect(result.errors[0].phase).toBe('download');
   });
 
@@ -7286,7 +7286,7 @@ describe('ORAIN-0739 HIGH-S1: 2 GiB cap enforced pre-pipe and in-pipe (AC6)', ()
 
     expect(result.success).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
-    expect(result.errors[0].message).toMatch(/demasiado grande|2 ?GiB/i);
+    expect(result.errors[0].message).toMatch(/too large|2 ?GiB/i);
     expect(result.errors[0].phase).toBe('download');
     // AC4: cleanup runs even on in-pipe abort. With 3 attempts × 1 temp
     // each, the catch path runs unlink once per attempt that errored.
@@ -7315,7 +7315,7 @@ describe('ORAIN-0739 M-S2: path scrubber redacts Windows and UNC paths', () => {
     // We exercise the scrubber through the catch block by raising a
     // non-SyncPhaseError from the download layer with a Windows path
     // embedded in its message. The catch block constructs
-    // `Descarga fallida: <sanitized>` so the assertion targets that
+    // `Download failed: <sanitized>` so the assertion targets that
     // final string.
     const track: TrackInfo = {
       id: 'track-m-s2',
@@ -7333,7 +7333,7 @@ describe('ORAIN-0739 M-S2: path scrubber redacts Windows and UNC paths', () => {
     // inject a download-time error by having downloadItemStream throw
     // an Error whose message contains a Windows path AND a UNC path.
     // The catch block (non-SyncPhaseError branch) runs the scrubber on
-    // that message and emits `Descarga fallida: <sanitized>`.
+    // that message and emits `Download failed: <sanitized>`.
     //
     // To force the catch path reliably we make downloadItemStream throw.
     const winPath = 'C:\\Users\\victim\\secrets\\key.pem';
@@ -7377,7 +7377,7 @@ describe('ORAIN-0739 M-S2: path scrubber redacts Windows and UNC paths', () => {
     expect(combinedMessage).not.toContain(uncPath);
     // Sanity — the catch path emitted its structured prefix.
     expect(result.errors[0].phase).toBe('download');
-    expect(result.errors[0].message).toMatch(/Descarga fallida|demasiado grande/i);
+    expect(result.errors[0].message).toMatch(/Download failed|too large/i);
   });
 });
 
@@ -7387,8 +7387,8 @@ describe('ORAIN-0739 M-S2: path scrubber redacts Windows and UNC paths', () => {
 // If `'close'` fires before `'end'` (a rare Node Readable ordering when
 // a producer destroys without flushing), `readHeaderBytes` resolves with
 // whatever was accumulated — which can be `Buffer.alloc(0)`. The
-// downstream validator then reports "El servidor devolvió 0 B (cuerpo
-// vacío)" with phase 'validation', an incorrect phase attribution for
+// downstream validator then reports "Server returned 0 B (empty body)"
+// with phase 'validation', an incorrect phase attribution for
 // what is really a streaming fault.
 //
 // This cycle makes `readHeaderBytes` reject in that case so the catch

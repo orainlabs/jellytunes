@@ -82,8 +82,8 @@ describe('ORAIN-0738 — estimateOutputBytes (single per-track estimator)', () =
   });
 
   it('MP3 with unknown bitrate estimates to track.size (no conversion, copy as-is) — AC4', () => {
-    // AC4: "un MP3 sin track.bitrate se estima a tamaño original, igual que
-    // el sync lo copia". needsConversion() returns false for MP3 with no
+    // AC4: "an MP3 without track.bitrate is estimated at original size, same
+    // as the sync copies it". needsConversion() returns false for MP3 with no
     // bitrate, so the estimator must NOT divide by targetBitrateKbps.
     const result = estimateOutputBytes(
       { format: 'mp3', size: 5_000_000 /* no bitrate */ },

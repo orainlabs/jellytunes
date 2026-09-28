@@ -210,8 +210,8 @@ describe('ORAIN-0740 AC6 — sync info-level verbosity budget', () => {
     expect(trackFailed[0]).toContain('declaredSize=45000000');
     expect(trackFailed[0]).toContain('hasImage=true');
     expect(trackFailed[0]).toContain('phase=download');
-    // The cause is wrapped by processTrack (e.g. `Failed to sync "...": Descarga
-    // fallida: fetch failed`); what matters is that the underlying reason
+    // The cause is wrapped by processTrack (e.g. `Failed to sync "...": Download
+    // failed: fetch failed`); what matters is that the underlying reason
     // reaches the log unscrubbed, not the exact prefix.
     expect(trackFailed[0]).toMatch(/cause=.*fetch failed/);
     expect(result.tracksFailed).toHaveLength(3);

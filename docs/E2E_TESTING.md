@@ -182,7 +182,7 @@ E1 drives; the password form is what E10 drives (ORAIN-0564 SO-3).
 <div data-testid="library-screen">
   <div data-testid="library-content">
     <button data-testid="tab-artists">Artistas</button>
-    <button data-testid="tab-albums">Álbumes</button>
+    <button data-testid="tab-albums">Albums</button>
     <button data-testid="tab-playlists">Playlists</button>
 
     <div data-testid="artists-list">
@@ -243,8 +243,8 @@ E1 drives; the password form is what E10 drives (ORAIN-0564 SO-3).
   </div>
 )}
 
-{syncComplete && <div data-testid="sync-complete">Sincronización completada</div>}
-{syncCancelled && <div data-testid="sync-cancelled">Sincronización cancelada</div>}
+{syncComplete && <div data-testid="sync-complete">Sync complete</div>}
+{syncCancelled && <div data-testid="sync-cancelled">Sync cancelled</div>}
 ```
 
 ### Search & Filters
@@ -292,7 +292,7 @@ E1 drives; the password form is what E10 drives (ORAIN-0564 SO-3).
   error && (
     <div data-testid="generic-error-message">
       {userFriendlyMessage}
-      <button onClick={showTechnicalDetails}>Ver detalles técnicos</button>
+      <button onClick={showTechnicalDetails}>Show technical details</button>
     </div>
   );
 }

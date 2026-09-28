@@ -8,23 +8,23 @@ interface PackageManifest {
 const projectManifest = JSON.parse(readFileSync('package.json', 'utf8')) as PackageManifest;
 
 /**
- * Ventana de soporte de Electron a 2026-09-11: majors 42, 43 y 44 (Electron
- * mantiene solo las 3 más recientes). Este dato no se puede comprobar de
- * forma estática — ningún test sabe si la 44 sigue soportada más adelante —
- * así que hay que revisarlo a mano cuando la ventana se desplace.
+ * Electron support window as of 2026-09-11: majors 42, 43 and 44 (Electron
+ * keeps only the 3 most recent). This fact cannot be checked statically — no
+ * test can know whether 44 is still supported further on — so it has to be
+ * reviewed by hand when the window slides.
  */
 const CHOSEN_MAJOR = 44;
 
 const parseMajor = (range: string): number => {
   const match = /(\d+)\./.exec(range);
   if (match === null) {
-    throw new Error(`No se pudo extraer la major del rango "${range}"`);
+    throw new Error(`Could not extract the major from range "${range}"`);
   }
   return Number(match[1]);
 };
 
-describe('Ventana de soporte de Electron', () => {
-  it('fija el pin de electron en package.json en la línea 44', () => {
+describe('Electron support window', () => {
+  it('pins the electron major in package.json at line 44', () => {
     const major = parseMajor(projectManifest.devDependencies.electron);
 
     expect(major).toBe(CHOSEN_MAJOR);

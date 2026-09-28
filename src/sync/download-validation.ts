@@ -125,7 +125,7 @@ export function isProbablyTextual(buf: Buffer, n = 64): boolean {
  */
 export function validateAudioBody(buf: Buffer): ValidationResult {
   if (buf.length === 0) {
-    return { ok: false, reason: 'El servidor devolvió 0 B (cuerpo vacío)' };
+    return { ok: false, reason: 'Server returned 0 B (empty body)' };
   }
   for (const sig of TABLE) {
     if (sig.match(buf)) return { ok: true };
@@ -135,7 +135,7 @@ export function validateAudioBody(buf: Buffer): ValidationResult {
       .subarray(0, Math.min(40, buf.length))
       .toString('utf8')
       .replace(/[^\x20-\x7e]/g, '.');
-    return { ok: false, reason: `El cuerpo parece texto, no audio (preview: "${preview}")` };
+    return { ok: false, reason: `Body looks like text, not audio (preview: "${preview}")` };
   }
   return { ok: true };
 }
@@ -181,7 +181,7 @@ export function validateDownloadSize(input: DownloadSizeInput): DownloadSizeResu
   const encoding = (contentEncoding ?? 'identity').toLowerCase();
   if (encoding !== 'identity') {
     if (exceedsCap(receivedBytes)) {
-      return { ok: false, reason: 'Archivo demasiado grande (>2 GiB)' };
+      return { ok: false, reason: 'File too large (>2 GiB)' };
     }
     return { ok: true };
   }
@@ -189,16 +189,16 @@ export function validateDownloadSize(input: DownloadSizeInput): DownloadSizeResu
   // AC2(a): Content-Length + identity encoding → strict equality.
   if (typeof contentLength === 'number' && Number.isFinite(contentLength)) {
     if (contentLength === 0) {
-      return { ok: false, reason: 'Descarga incompleta (0 de 0 bytes)' };
+      return { ok: false, reason: 'Incomplete download (0 of 0 bytes)' };
     }
     if (receivedBytes !== contentLength) {
       return {
         ok: false,
-        reason: `Descarga incompleta (${receivedBytes} de ${contentLength} bytes)`,
+        reason: `Incomplete download (${receivedBytes} of ${contentLength} bytes)`,
       };
     }
     if (exceedsCap(receivedBytes)) {
-      return { ok: false, reason: 'Archivo demasiado grande (>2 GiB)' };
+      return { ok: false, reason: 'File too large (>2 GiB)' };
     }
     return { ok: true };
   }
@@ -213,21 +213,21 @@ export function validateDownloadSize(input: DownloadSizeInput): DownloadSizeResu
     ) {
       return {
         ok: true,
-        warning: `tamaño distinto al declarado por Jellyfin (${receivedBytes} frente a ${declaredSize}); ¿biblioteca sin reescanear?`,
+        warning: `size differs from the Jellyfin-declared (${receivedBytes} vs ${declaredSize}); library may need a rescan`,
       };
     }
     if (exceedsCap(receivedBytes)) {
-      return { ok: false, reason: 'Archivo demasiado grande (>2 GiB)' };
+      return { ok: false, reason: 'File too large (>2 GiB)' };
     }
     return {
       ok: false,
-      reason: `Descarga incompleta (${receivedBytes} de ${declaredSize} bytes)`,
+      reason: `Incomplete download (${receivedBytes} of ${declaredSize} bytes)`,
     };
   }
 
   // AC2(d): no size signal at all. Only the AC6 cap still applies.
   if (exceedsCap(receivedBytes)) {
-    return { ok: false, reason: 'Archivo demasiado grande (>2 GiB)' };
+    return { ok: false, reason: 'File too large (>2 GiB)' };
   }
   return { ok: true };
 }

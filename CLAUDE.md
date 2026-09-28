@@ -2,6 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## English Only
+
+Everything committed to this repo is in English: user-facing strings (UI text, error
+messages, modal copy, validation messages), code comments, test descriptions and
+`it()` names, and documentation under `docs/`. Music metadata (track names, album
+names, artist names) is the user's own data and is exempt — proper nouns in
+fixtures stay as-is regardless of accented characters.
+
+Spanish in this repo is a bug. Before opening a PR, scan with two regexes:
+
+- **Accented characters**: any line matching the Spanish-accent character class
+  (defined in `scripts/check-spanish.sh`) is suspect. Acronyms and proper nouns
+  are the only legitimate hit; everything else is Spanish.
+- **Spanish vocabulary without accents**: words like "Acepta las tres formas",
+  "ventana de soporte", "el sandbox del SO" pass the accent filter but are still
+  Spanish. Agents must self-review what they wrote.
+
+A canonical grep combining both patterns lives in `scripts/check-spanish.sh` —
+run it before opening a PR. The script's own patterns are an exception (they
+define the rule); everything else in `src tests docs scripts *.md` must return
+zero matches.
+
+Out of scope: task specs and bodies under `orainlabs/tasks/` (they live outside
+the repo and may be written in the author's language).
+
 ## What This Project Does
 
 JellyTunes is an Electron + React desktop app that syncs music libraries from a Jellyfin media server to portable devices (USB drives, SD cards). It handles selective sync, format conversion (FLAC→MP3 via FFmpeg), and preserves the server's folder structure on the destination device.

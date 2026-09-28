@@ -2,24 +2,24 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Guardián de configuración, no de comportamiento: la prueba real de que el
- * sandbox funciona es la suite E2E, que arranca el binario con
- * `_electron.launch`. Este test evita que alguien revierta el endurecimiento
- * sin darse cuenta.
+ * Configuration guardian, not behaviour guardian: the real proof that the
+ * sandbox works is the E2E suite, which launches the binary with
+ * `_electron.launch`. This test keeps anyone from silently reverting the
+ * hardening.
  */
 const mainSource = readFileSync('src/main/index.ts', 'utf8');
 const viteConfig = readFileSync('electron.vite.config.ts', 'utf8');
 
 /**
- * Extrae el cuerpo de un bloque `<clave>: { ... }` de primer nivel dentro del
- * objeto de configuración, contando llaves para no cortar en el primer `}`
- * anidado. Lanza si la clave no aparece.
+ * Extracts the body of a top-level `<key>: { ... }` block in the
+ * configuration object, counting braces so it does not stop at the first
+ * nested `}`. Throws if the key does not appear.
  */
 const extractBlock = (source: string, key: string): string => {
   const keyPattern = new RegExp(`\\b${key}\\s*:\\s*{`);
   const match = keyPattern.exec(source);
   if (match === null) {
-    throw new Error(`No se encontró el bloque "${key}" en electron.vite.config.ts`);
+    throw new Error(`Block "${key}" not found in electron.vite.config.ts`);
   }
 
   let depth = 0;
@@ -34,29 +34,29 @@ const extractBlock = (source: string, key: string): string => {
       }
     }
   }
-  throw new Error(`Bloque "${key}" sin cerrar en electron.vite.config.ts`);
+  throw new Error(`Block "${key}" not closed in electron.vite.config.ts`);
 };
 
 const preloadBlock = extractBlock(viteConfig, 'preload');
 const mainBlock = extractBlock(viteConfig, 'main');
 
-describe('Endurecimiento del renderer', () => {
-  it('activa el sandbox del sistema operativo', () => {
+describe('Renderer hardening', () => {
+  it('enables the OS sandbox', () => {
     expect(mainSource).toContain('sandbox: true');
     expect(mainSource).not.toContain('sandbox: false');
   });
 
-  it('mantiene contextIsolation y nodeIntegration endurecidos', () => {
+  it('keeps contextIsolation and nodeIntegration hardened', () => {
     expect(mainSource).toContain('contextIsolation: true');
     expect(mainSource).toContain('nodeIntegration: false');
   });
 
-  // Cubre: que la exclusión de externalización de @electron-toolkit/preload
-  // vive en el bloque `preload:` (no en `main:`, donde no tendría efecto
-  // sobre el bundle del preload). No cubre: un bump de electron-vite que
-  // renombre o reestructure la opción sin mover texto — eso solo lo detecta
-  // el E2E, que arranca el binario real y comprueba `window.api`.
-  it('bundlea el toolkit del preload para que un preload sandboxeado lo resuelva', () => {
+  // Covers: that the externalisation exclusion of @electron-toolkit/preload
+  // lives in the `preload:` block (not in `main:`, where it would have no
+  // effect on the preload bundle). Does NOT cover: an electron-vite bump that
+  // renames or restructures the option without moving text — only the E2E
+  // detects that, since it launches the real binary and checks `window.api`.
+  it('bundles the preload toolkit so a sandboxed preload can resolve it', () => {
     expect(preloadBlock).toContain("exclude: ['@electron-toolkit/preload']");
     expect(mainBlock).not.toContain("exclude: ['@electron-toolkit/preload']");
   });

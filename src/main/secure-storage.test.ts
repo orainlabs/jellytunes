@@ -197,8 +197,8 @@ describe('createSecureStorageProvider (ORAIN-0590 selector)', () => {
 
   describe('stale-blob safety (encrypted with previous safeStorage backend)', () => {
     it('a lookup failure from secret-tool is treated as null, not thrown', async () => {
-      // ORAIN-0590 AC: "Sesión previa cifrada con safeStorage no rompe la
-      // app. Un fallo al descifrar se trata como 'no hay sesión'."
+      // ORAIN-0590 AC: "A previous session encrypted with safeStorage does not
+      // break the app. A decryption failure is treated as 'no session'."
       // When secret-tool is the active provider and a previously stored
       // safeStorage blob exists on disk, the load path will see null from
       // lookup() (exit 1 / corrupted) and must not throw.

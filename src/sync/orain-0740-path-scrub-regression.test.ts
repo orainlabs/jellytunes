@@ -2,8 +2,8 @@
  * ORAIN-0740 — cycle 2 (MEDIUM) regression: paths in debug/warn log lines
  * emitted by sync-core.ts MUST NOT contain the user's home directory.
  *
- * AC5 in the spec is explicit: "Ninguna línea contiene el directorio del
- * usuario: toda ruta bajo el home se escribe como `~/…`". The cycle-2
+ * AC5 in the spec is explicit: "No line contains the user's home directory;
+ * every path under the home is written as `~/…`". The cycle-2
  * remediation missed 16 sites in sync-core.ts that interpolate file
  * paths into log messages without scrubbing. Two of those sites use
  * `log.warn` and are emitted at the default info level; the rest are

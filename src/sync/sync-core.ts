@@ -1609,7 +1609,7 @@ class SyncCoreImpl {
         // before issuing it. Saves the IO of a download we will never
         // accept.
         if (declaredSize !== undefined && BigInt(declaredSize) > MAX_DOWNLOAD_BYTES) {
-          throw new SyncPhaseError('download', 'Archivo demasiado grande (>2 GiB)');
+          throw new SyncPhaseError('download', 'File too large (>2 GiB)');
         }
 
         const stream = await this.deps.api.downloadItemStream(track.id);
@@ -1632,7 +1632,7 @@ class SyncCoreImpl {
           Number.isFinite(contentLength) &&
           BigInt(contentLength) > MAX_DOWNLOAD_BYTES
         ) {
-          throw new SyncPhaseError('download', 'Archivo demasiado grande (>2 GiB)');
+          throw new SyncPhaseError('download', 'File too large (>2 GiB)');
         }
 
         // AC4/AC5: open with 'wx' (refuse stale temp from prior crash)
@@ -1705,7 +1705,7 @@ class SyncCoreImpl {
               // fill `os.tmpdir()`. AC4: `cleanup` runs `unlink(tmpPath)`
               // through the retry-loop teardown.
               if (BigInt(receivedBytesLocal) > MAX_DOWNLOAD_BYTES) {
-                const err = new SyncPhaseError('download', 'Archivo demasiado grande (>2 GiB)');
+                const err = new SyncPhaseError('download', 'File too large (>2 GiB)');
                 // Destroy both ends; the write side may flush whatever is
                 // already in its internal buffer before it sees the error.
                 (stream as unknown as { destroy: (e?: Error) => void }).destroy(err);
@@ -1836,7 +1836,7 @@ class SyncCoreImpl {
             const sanitizedMessage = rawMessage
               .replace(/(?:[a-zA-Z]:)?[\\/][^\s:'"]+/g, '<path>')
               .slice(0, 200);
-            phaseError = new SyncPhaseError('download', `Descarga fallida: ${sanitizedMessage}`);
+            phaseError = new SyncPhaseError('download', `Download failed: ${sanitizedMessage}`);
           }
         }
       }
@@ -1864,12 +1864,12 @@ class SyncCoreImpl {
       // Exhausted retries — throw the last phase error. The fallback
       // covers the (currently impossible) case where phaseError was
       // never assigned, so we never throw `null`.
-      throw phaseError ?? new SyncPhaseError('download', 'Descarga fallida');
+      throw phaseError ?? new SyncPhaseError('download', 'Download failed');
     }
     // Unreachable: the loop either returns or throws above. TS needs a
     // fall-through; if the for-loop body ever returns without throwing
     // (impossible today) we surface a generic failure.
-    throw new SyncPhaseError('download', 'Descarga fallida tras varios intentos');
+    throw new SyncPhaseError('download', 'Download failed after multiple attempts');
   }
 
   /**

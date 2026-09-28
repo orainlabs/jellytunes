@@ -28,30 +28,31 @@ describe('InsecureConnectionModal — ORAIN-0706', () => {
   it('shows warning text mentioning unencrypted/insecure', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
     // Must mention the connection is not encrypted
-    expect(screen.getByText(/unencrypted|no está cifrada/i)).toBeInTheDocument();
+    const text = document.body.textContent ?? '';
+    expect(text).toMatch(/unencrypted|not encrypted/i);
   });
 
   it('mentions at least one shared-network example (wifi, hotel, office)', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
     // Must name at least one concrete shared-network context
-    expect(screen.getByText(/wifi|hotel|oficina|network|red/gi)).toBeInTheDocument();
+    expect(screen.getByText(/wifi|hotel|office|network/gi)).toBeInTheDocument();
   });
 
   it('has a checkbox labelled "I understand the risk"', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
-    expect(screen.getByRole('checkbox', { name: /understand|risk|riesgo/i })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /understand|risk/i })).toBeInTheDocument();
   });
 
   it('Continue button is disabled when checkbox is unchecked', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
-    const continueBtn = screen.getByRole('button', { name: /continue|continuar/i });
+    const continueBtn = screen.getByRole('button', { name: /continue/i });
     expect(continueBtn).toBeDisabled();
   });
 
   it('Continue button is enabled after checking the checkbox', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
-    const checkbox = screen.getByRole('checkbox', { name: /understand|risk|riesgo/i });
-    const continueBtn = screen.getByRole('button', { name: /continue|continuar/i });
+    const checkbox = screen.getByRole('checkbox', { name: /understand|risk/i });
+    const continueBtn = screen.getByRole('button', { name: /continue/i });
 
     act(() => {
       fireEvent.click(checkbox);
@@ -62,8 +63,8 @@ describe('InsecureConnectionModal — ORAIN-0706', () => {
 
   it('calls onConfirm when Continue is clicked with checkbox checked', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
-    const checkbox = screen.getByRole('checkbox', { name: /understand|risk|riesgo/i });
-    const continueBtn = screen.getByRole('button', { name: /continue|continuar/i });
+    const checkbox = screen.getByRole('checkbox', { name: /understand|risk/i });
+    const continueBtn = screen.getByRole('button', { name: /continue/i });
 
     act(() => {
       fireEvent.click(checkbox);
@@ -78,7 +79,7 @@ describe('InsecureConnectionModal — ORAIN-0706', () => {
 
   it('calls onCancel when Cancel is clicked', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
-    const cancelBtn = screen.getByRole('button', { name: /cancel|cancelar/i });
+    const cancelBtn = screen.getByRole('button', { name: /cancel/i });
 
     act(() => {
       cancelBtn.click();
@@ -90,7 +91,7 @@ describe('InsecureConnectionModal — ORAIN-0706', () => {
 
   it('Cancel button does not require checkbox to be checked', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
-    const cancelBtn = screen.getByRole('button', { name: /cancel|cancelar/i });
+    const cancelBtn = screen.getByRole('button', { name: /cancel/i });
     expect(cancelBtn).not.toBeDisabled();
   });
 
@@ -110,7 +111,7 @@ describe('InsecureConnectionModal — ORAIN-0706', () => {
     render(<InsecureConnectionModal {...DEFAULT_PROPS} />);
     // The warning must say what is exposed — at minimum "username", "password" or "credentials"
     const text = document.body.textContent ?? '';
-    const mentionsCredential = /username|password|credentials|usuario|contraseña|credenciales/i;
+    const mentionsCredential = /username|password|credentials/i;
     expect(text).toMatch(mentionsCredential);
   });
 
