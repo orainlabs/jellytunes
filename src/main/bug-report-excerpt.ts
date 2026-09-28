@@ -34,12 +34,20 @@ const TRACK_FAILED_TAG = '[track-failed]';
  * callers — it scrubs a standalone path before formatting a log line. Here
  * the home directory is embedded mid-line (e.g. `cause=/Users/alice/Music/x
  * .flac not found`), so we need a global, non-anchored replace instead.
+ *
+ * The trailing-context lookahead matches anything that cannot be part of
+ * the path token: path separators, end-of-string, whitespace, or the
+ * start of another key=value pair. This is a slightly looser contract
+ * than `scrubPath` (which only requires a separator or EOL) — same
+ * family of behaviour, but covers legacy unformatted lines such as
+ * `Copying from /Users/alice to /dest`, where the home is followed by
+ * a space (cycle 2 MEDIUM).
  */
 function scrubLine(line: string): string {
   const home = os.homedir();
   if (!home) return line;
   const escaped = home.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
-  return line.replace(new RegExp(`${escaped}(?=[/\\\\]|$)`, 'g'), '~');
+  return line.replace(new RegExp(`${escaped}(?=[/\\\\=\\s]|$)`, 'g'), '~');
 }
 
 /**
@@ -83,10 +91,18 @@ export function extractLastSyncBlock(logLines: string[]): { lines: string[]; has
       collected.push(scrubLine(line));
       continue;
     }
+    // Compare on the EXACT extracted syncId, not a substring of the
+    // raw line. With short ids like `abc` a literal
+    // `line.includes('syncId=abc')` check would also match a longer
+    // id `abcdef` (cycle 2 MEDIUM). The entropy of UUID-derived ids
+    // makes the production collision astronomically unlikely, but
+    // correctness shouldn't depend on it.
+    const lineSyncId = parseSyncId(line);
+    const isOurSyncId = lineSyncId !== null && lineSyncId === startSyncId;
     // Stop scanning as soon as we see a [sync-end] for our syncId —
     // any later line belongs to a different sync (or background noise)
     // and would only dilute the body.
-    if (line.includes(SYNC_END_TAG) && line.includes(`syncId=${startSyncId}`)) {
+    if (isOurSyncId && line.includes(SYNC_END_TAG)) {
       collected.push(scrubLine(line));
       hasEnd = true;
       break;
@@ -96,7 +112,7 @@ export function extractLastSyncBlock(logLines: string[]): { lines: string[]; has
     // sync window are deliberately excluded: they are volume-detection
     // noise, ffmpeg chatter, etc., and AC1 says only sync-* lines go
     // into the Last sync block.
-    if (line.includes(TRACK_FAILED_TAG) && line.includes(`syncId=${startSyncId}`)) {
+    if (isOurSyncId && line.includes(TRACK_FAILED_TAG)) {
       collected.push(scrubLine(line));
     }
   }
@@ -127,17 +143,20 @@ function parseSyncId(line: string): string | null {
  * are not part of the sync block we're already reporting under "Last
  * sync". This is the "Other recent errors" tail.
  *
- * We compare raw-line identity (not normalised equality) so a
- * [track-failed] line that lives in the sync block stays there and is
- * not echoed here — duplicating it under both sections would inflate
- * the body and confuse the reader.
+ * Dedup is performed against the SCRUBBED form of every log line, not
+ * the raw one, because `extractLastSyncBlock` scrubs each sync line
+ * before pushing it. Comparing raw identity would let a legacy log
+ * line carrying `/Users/alice` slip through: it lives in the sync
+ * block as `~/...` but in `logLines` as `/Users/alice`, so a Set
+ * check on the raw form never matches and the same physical entry
+ * ends up under both sections (violating AC3).
  */
 export function pickRecentOtherErrors(logLines: string[], syncLines: string[], max = 10): string[] {
   const syncSet = new Set(syncLines);
   const candidates: string[] = [];
   for (const line of logLines) {
     if (!line.includes('[error]') && !line.includes('[warn]')) continue;
-    if (syncSet.has(line)) continue;
+    if (syncSet.has(scrubLine(line))) continue;
     candidates.push(scrubLine(line));
   }
   return candidates.slice(-max);
@@ -203,7 +222,10 @@ const HANDLER_RESERVE = 200; // chars reserved for OS/version lines the handler 
  * — encoding growth is uniform (each reserved char becomes %XX), so if
  * the body fits, the URL fits too.
  */
-export function buildBugReportBody(logContent: string): string {
+export function buildBugReportBody(
+  logContent: string,
+  options: { logMissing?: boolean } = {},
+): string {
   const logLines = logContent.split('\n').filter((l) => l.length > 0);
   const { lines: syncLines, hasEnd } = extractLastSyncBlock(logLines);
   const otherLines = pickRecentOtherErrors(logLines, syncLines);
@@ -214,6 +236,7 @@ export function buildBugReportBody(logContent: string): string {
     syncLines,
     hasEnd,
     otherLines,
+    logMissing: options.logMissing === true,
     budget: excerptBudget,
   });
 
@@ -224,11 +247,23 @@ interface RenderArgs {
   syncLines: string[];
   hasEnd: boolean;
   otherLines: string[];
+  logMissing: boolean;
   budget: number;
 }
 
-function renderExcerpt({ syncLines, hasEnd, otherLines, budget }: RenderArgs): string {
+const LOG_MISSING_NOTE =
+  '(log file not found — please attach main.log from About > Open log folder)';
+
+function renderExcerpt({ syncLines, hasEnd, otherLines, logMissing, budget }: RenderArgs): string {
   const sections: string[] = [];
+
+  // ORAIN-0747 cycle 2 (HIGH): surface the missing-log condition INSIDE
+  // the excerpt (not as a body prefix in the handler) so it consumes
+  // budget the same way every other section does, instead of silently
+  // pushing the final URL past GitHub's ceiling.
+  if (logMissing) {
+    sections.push(LOG_MISSING_NOTE);
+  }
 
   if (syncLines.length > 0) {
     const header = '**Last sync**';
@@ -262,21 +297,44 @@ function renderExcerpt({ syncLines, hasEnd, otherLines, budget }: RenderArgs): s
 }
 
 /**
- * Trim a sync block to fit a byte budget, preserving the start + end
- * markers and as many [track-failed] lines as fit. When lines have to
- * be dropped, append a single truncation note that names the exact
- * number omitted (AC2).
+ * Trim a sync block to fit a byte budget, preserving the start marker
+ * always, the end marker when present, and as many [track-failed]
+ * lines as fit. When middle lines have to be dropped, append a single
+ * truncation note that names the exact number omitted (AC2).
+ *
+ * Sync block shapes we have to support:
+ *   - [start, ...failures, end]            — finished sync
+ *   - [start, ...failures]                 — sync did not finish (no end)
+ *   - [start, end]                         — clean sync, zero failures
+ *   - [start]                              — empty block (shouldn't happen
+ *                                             because the handler always
+ *                                             pairs start with at least an
+ *                                             end, but defend anyway)
+ *
+ * `tail` here means the LAST element of `syncLines`, which is either
+ * the [sync-end] marker (when the sync finished) or the last
+ * [track-failed] (when it didn't). Both are part of the block we want
+ * to surface; only the literal "[sync-end]" tag earns the special
+ * `isEndLine` cost — non-end tails are middle-line-equivalent for
+ * budget purposes.
  */
 function trimSyncBlock(syncLines: string[], budget: number): string {
   if (syncLines.length === 0) return '';
-  if (syncLines.length === 1) return syncLines[0];
+
+  // Always pass through the budget check, even for a single line: an
+  // unusually long [sync-start] (legacy + a giant `dest=` path) could
+  // otherwise overshoot the URL ceiling (MEDIUM #5).
+  if (syncLines.length === 1) return trimToLength(syncLines[0], budget);
 
   const head = syncLines[0];
   const tail = syncLines[syncLines.length - 1];
   const isEndLine = tail.includes(SYNC_END_TAG);
-  const middle = syncLines.slice(1, -1);
+  // When there is an end marker, the middle is everything between
+  // start and end (failures only). When there is no end marker, the
+  // tail itself is a [track-failed] line and belongs with the middle.
+  const middle = isEndLine ? syncLines.slice(1, -1) : syncLines.slice(1);
 
-  // Cost = head + (newline+tail if end line) + newline+note.
+  // Cost = head + (newline+end if end line) + newline+note.
   const noteFor = (omitted: number): string =>
     `${TRUNCATION_NOTE_PREFIX}${omitted}${TRUNCATION_NOTE_SUFFIX}`;
   const headCost = head.length + 1; // newline after head

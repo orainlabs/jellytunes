@@ -814,17 +814,20 @@ ipcMain.handle('bug:report', async () => {
   try {
     const logPath = log.transports.file.getFile().path;
     let logContent = '';
+    let logMissing = false;
     if (fs.existsSync(logPath)) {
       logContent = fs.readFileSync(logPath, 'utf-8');
+    } else {
+      logMissing = true;
     }
 
-    // ORAIN-0747: feed the FULL log content (not the last 25 lines) to
-    // the excerpt builder. It picks the last sync block (start +
-    // track-failures + end) and the recent non-sync errors, fits them
-    // inside the GitHub URL budget, and returns the markdown body
-    // ready to be encoded into the `body=` query parameter. Returns
-    // `(log file not found)` if main.log is missing.
-    const rawBody = logContent.length > 0 ? buildBugReportBody(logContent) : '(log file not found)';
+    // ORAIN-0747 cycle 2 (HIGH): always go through buildBugReportBody so
+    // the boilerplate ("Describe the bug", "To Reproduce", OS/version
+    // lines, etc.) is present even when the log file has not been
+    // written yet (first run, early crash, electron-log not yet
+    // initialised). The builder embeds the log-missing notice INSIDE
+    // the excerpt so the URL budget is enforced consistently.
+    const rawBody = buildBugReportBody(logContent, { logMissing });
 
     // The builder's boilerplate leaves OS/version as placeholders.
     // Substitute the live values here — the budget reserves 200 chars

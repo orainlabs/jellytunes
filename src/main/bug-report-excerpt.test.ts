@@ -116,6 +116,21 @@ describe('extractLastSyncBlock', () => {
     expect(block.lines[1]).toContain('[track-failed]');
     expect(block.lines[1]).toContain('syncId=abc');
   });
+
+  it('does NOT match a longer syncId that has our id as prefix (substring collision)', () => {
+    // ORAIN-0747 cycle 2 MEDIUM: with syncIds like `abc` and `abcdef`,
+    // a substring `includes('syncId=abc')` check matches BOTH and pulls
+    // the abcdef block into the abc sync — corrupting the body. The
+    // matcher must compare the extracted syncId for equality.
+    const start = wrap('[sync-start] syncId=abc');
+    const foreign = wrap('[track-failed] syncId=abcdef trackName=F');
+    const end = wrap('[sync-end] syncId=abc');
+    const block = extractLastSyncBlock([start, foreign, end]);
+    expect(block.lines).toHaveLength(2);
+    expect(block.lines[0]).toContain('[sync-start]');
+    expect(block.lines[1]).toContain('[sync-end]');
+    expect(block.lines.some((l) => l.includes('abcdef'))).toBe(false);
+  });
 });
 
 describe('pickRecentOtherErrors', () => {
@@ -138,6 +153,27 @@ describe('pickRecentOtherErrors', () => {
     expect(picked).toEqual(['[error] earlier failure', '[error] later failure']);
   });
 
+  it('excludes a legacy sync line that contains the home directory (scrubbed in sync block, raw in log)', () => {
+    // A [track-failed] emitted by an older build may still carry an
+    // unscrubbed /Users/alice path. After extractLastSyncBlock the
+    // syncLines array holds the SCRUBBED version (with ~). The raw
+    // logLine in logLines still contains /Users/alice. The dedup Set
+    // built from syncLines must not match the raw line, so the same
+    // physical log entry would appear under both sections.
+    // The fix must dedup against the SCRUBBED form of logLines too,
+    // so the legacy entry is excluded from "Other recent errors".
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const rawLegacyLine =
+      '[warn] [track-failed] syncId=abc trackName=Z phase=download cause=/Users/alice/Music/x.flac not found';
+    const scrubbedLegacyLine = rawLegacyLine.replace('/Users/alice', '~');
+    const lines = ['[error] earlier failure', rawLegacyLine, '[error] later failure'];
+    const syncLines = [scrubbedLegacyLine];
+    const picked = pickRecentOtherErrors(lines, syncLines);
+    expect(picked).toHaveLength(2);
+    expect(picked).toEqual(['[error] earlier failure', '[error] later failure']);
+    expect(picked.every((l) => !l.includes('/Users/alice'))).toBe(true);
+  });
+
   it('returns at most `max` lines and accepts a custom max', () => {
     const lines = ['[error] a', '[warn] b', '[error] c'];
     expect(pickRecentOtherErrors(lines, [], 2)).toHaveLength(2);
@@ -150,6 +186,22 @@ describe('pickRecentOtherErrors', () => {
     const picked = pickRecentOtherErrors(lines, []);
     expect(picked[0]).toContain('~/private/secret');
     expect(picked[0]).not.toContain('/Users/alice');
+  });
+
+  it('scrubs the home directory even when followed by whitespace (defense in depth)', () => {
+    // ORAIN-0747 cycle 2 MEDIUM: a legacy unformatted line such as
+    // `Copying from /Users/alice to /dest` carries the home as a bare
+    // token followed by a space. The original lookahead (?=[/\\\\]|$)
+    // only matches a path continuation or end-of-string, so the home
+    // leaks through. Defending here costs ~10 lines and the risk in
+    // practice (an unformatted line with an embedded home) is
+    // already low — but the privacy surface is a public issue, so the
+    // defense-in-depth is worth it.
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const lines = ['[error] Copying from /Users/alice to /dest'];
+    const picked = pickRecentOtherErrors(lines, []);
+    expect(picked[0]).not.toContain('/Users/alice');
+    expect(picked[0]).toContain('~');
   });
 });
 
@@ -240,5 +292,28 @@ describe('buildBugReportBody', () => {
     const lines = [start, ...Array.from({ length: 200 }, (_, i) => failed(i)), end];
     const body = buildBugReportBody(lines.join('\n'));
     expect(body.length).toBeLessThanOrEqual(URL_BUDGET - 200);
+  });
+
+  it('renders the full boilerplate when log content is empty (handler called with missing log file)', () => {
+    // ORAIN-0747 cycle 2 HIGH: when electron-log has not written
+    // main.log yet (first run, early crash, etc.) the handler used to
+    // return '(log file not found)' as the literal body, stripping
+    // the boilerplate. The builder must still emit the boilerplate so
+    // the issue template is usable, plus an explicit notice inside
+    // the excerpt.
+    const body = buildBugReportBody('', { logMissing: true });
+    expect(body).toContain('**Describe the bug**');
+    expect(body).toContain('**To Reproduce**');
+    expect(body).toContain('**Desktop (please complete the following information):**');
+    expect(body).toContain('(log file not found');
+    expect(body).toContain('(no sync in current log)');
+    // Empty log is a tiny body — it must still fit the budget.
+    expect(body.length).toBeLessThanOrEqual(URL_BUDGET - 200);
+  });
+
+  it('omits the log-missing notice when the log content is present', () => {
+    const log = '[2026-09-28T10:00:00.000Z] [warn] something\n';
+    const body = buildBugReportBody(log, { logMissing: false });
+    expect(body).not.toContain('(log file not found');
   });
 });
