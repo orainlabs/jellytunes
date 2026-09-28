@@ -37,6 +37,7 @@ import {
   oncePerSession,
   realFsutil,
 } from './windows-fsutil';
+import { detectDarwinFilesystem, realDarwinFs } from './darwin-diskutil';
 import { getOrCreateDeviceId } from './device-id';
 import { showLogFileInFolder } from './log-folder';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
@@ -329,22 +330,14 @@ async function detectFilesystem(devicePath: string): Promise<string> {
   try {
     const platform = process.platform;
     if (platform === 'darwin') {
-      // spawnSync with arg array — no shell injection risk
-      const result = spawnSync('diskutil', ['info', devicePath], {
-        encoding: 'utf8',
-        timeout: 5000,
-      });
-      const output = result.stdout ?? '';
-      const match = output.match(/File System Personality\s*:\s*(.+)/i);
-      if (match) {
-        const t = match[1].trim().toLowerCase();
-        if (t.includes('fat32') || t === 'ms-dos fat32' || t === 'msdos') return 'fat32';
-        if (t.includes('exfat')) return 'exfat';
-        if (t.includes('ntfs')) return 'ntfs';
-        if (t.includes('apfs')) return 'apfs';
-        if (t.includes('hfs')) return 'hfs+';
-      }
-    } else if (platform === 'linux') {
+      // ORAIN-0746: `diskutil info <path>` only accepts a mount point or a
+      // disk identifier — any subdirectory returns "Could not find disk"
+      // and the label falls back to `unknown`, which leaves
+      // `sanitizePathComponent` a no-op on darwin. Resolve the mount
+      // point via `df -P` first, then ask `diskutil` about the mount.
+      return detectDarwinFilesystem(realDarwinFs, devicePath);
+    }
+    if (platform === 'linux') {
       // statfs the path directly instead of exec'ing `df -T` or matching the
       // longest mountpoint prefix in /proc/mounts — the syscall is in snapd's
       // default seccomp template, so it needs no interface at all, where

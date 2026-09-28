@@ -184,6 +184,30 @@ describe('sanitizePathComponent — win32 platform semantics (ORAIN-0725)', () =
     );
   });
 
+  // ORAIN-0746 regression: before the fix, macOS detection of a subfolder on
+  // a FAT32 stick returned `unknown`, which made sanitizePathComponent a
+  // no-op on darwin — so `Artist: Name.` reached the destination verbatim
+  // and FAT32 silently stripped the dot. With the label resolved correctly
+  // (now `fat32` instead of `unknown`) the colon is replaced and the
+  // trailing dot is stripped.
+  it('sanitizes forbidden chars on darwin with filesystem=fat32 (ORAIN-0746 regression)', () => {
+    expect(
+      sanitizePathComponent('Artist: Name.', { platform: 'darwin', filesystem: 'fat32' }),
+    ).toBe('Artist_ Name');
+  });
+
+  it('sanitizes forbidden chars on darwin with filesystem=exfat (ORAIN-0746 regression)', () => {
+    expect(
+      sanitizePathComponent('Artist: Name.', { platform: 'darwin', filesystem: 'exfat' }),
+    ).toBe('Artist_ Name');
+  });
+
+  it('sanitizes forbidden chars on darwin with filesystem=ntfs (ORAIN-0746 regression)', () => {
+    expect(sanitizePathComponent('Artist: Name.', { platform: 'darwin', filesystem: 'ntfs' })).toBe(
+      'Artist_ Name',
+    );
+  });
+
   it('strips trailing dots and spaces on win32 even with unknown filesystem', () => {
     expect(sanitizePathComponent('foo...', { platform: 'win32', filesystem: 'unknown' })).toBe(
       'foo',
