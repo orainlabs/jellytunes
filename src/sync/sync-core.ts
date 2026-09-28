@@ -31,7 +31,7 @@ import path from 'path';
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
 import { COVER_MAX_BYTES } from './cover-image';
-import { validateAudioBody, validateDownloadSize } from './download-validation';
+import { validateAudioBody, validateDownloadSize, MAX_DOWNLOAD_BYTES } from './download-validation';
 
 import {
   validateSyncConfig,
@@ -1267,6 +1267,14 @@ class SyncCoreImpl {
       let receivedBytesLocal = 0;
 
       try {
+        // HIGH-S1 / AC6 pre-pipe guard (declaredSize): if Jellyfin's
+        // `track.size` already exceeds the 2 GiB cap, refuse the request
+        // before issuing it. Saves the IO of a download we will never
+        // accept.
+        if (declaredSize !== undefined && BigInt(declaredSize) > MAX_DOWNLOAD_BYTES) {
+          throw new SyncPhaseError('download', 'Archivo demasiado grande (>2 GiB)');
+        }
+
         const stream = await this.deps.api.downloadItemStream(track.id);
         const streamMeta = stream as NodeJS.ReadableStream & {
           contentType?: string;
@@ -1276,6 +1284,19 @@ class SyncCoreImpl {
         const contentType = streamMeta.contentType;
         const contentLength = streamMeta.contentLength;
         const contentEncoding = streamMeta.contentEncoding;
+
+        // HIGH-S1 / AC6 pre-pipe guard (Content-Length): same shape, but
+        // triggered by the proxy's own Content-Length header. Runs after
+        // `downloadItemStream` returns the stream object so we have access
+        // to the parsed header, but BEFORE `createWriteStream` /
+        // `stream.pipe(writeStream)` so we never write past the cap.
+        if (
+          typeof contentLength === 'number' &&
+          Number.isFinite(contentLength) &&
+          BigInt(contentLength) > MAX_DOWNLOAD_BYTES
+        ) {
+          throw new SyncPhaseError('download', 'Archivo demasiado grande (>2 GiB)');
+        }
 
         // AC4/AC5: open with 'wx' (refuse stale temp from prior crash)
         // and pipe, watching for stalls. The timer resets on every
@@ -1341,6 +1362,20 @@ class SyncCoreImpl {
               receivedBytesLocal += Buffer.isBuffer(chunk)
                 ? chunk.length
                 : Buffer.byteLength(chunk);
+              // HIGH-S1 / AC6 in-pipe guard: servers without Content-Length
+              // (or lying about it) bypassed the pre-pipe checks. Cap the
+              // stream at 2 GiB so a hostile / misconfigured proxy cannot
+              // fill `os.tmpdir()`. AC4: `cleanup` runs `unlink(tmpPath)`
+              // through the retry-loop teardown.
+              if (BigInt(receivedBytesLocal) > MAX_DOWNLOAD_BYTES) {
+                const err = new SyncPhaseError('download', 'Archivo demasiado grande (>2 GiB)');
+                // Destroy both ends; the write side may flush whatever is
+                // already in its internal buffer before it sees the error.
+                (stream as unknown as { destroy: (e?: Error) => void }).destroy(err);
+                (writeStream as unknown as { destroy: (e?: Error) => void }).destroy(err);
+                cleanup(err);
+                return;
+              }
               armStallTimer();
             });
             stream.on('error', (err: Error) => cleanup(err));
@@ -1454,11 +1489,16 @@ class SyncCoreImpl {
             );
           } else {
             const rawMessage = error instanceof Error ? error.message : String(error);
-            // MEDIUM-1: scrub filesystem paths and credentials from the
-            // user-visible error message. The full `rawMessage` may
-            // contain local paths (e.g. /home/user/secrets/key.pem)
-            // surfaced by the HTTP/IO layer.
-            const sanitizedMessage = rawMessage.replace(/\/[^\s:'"]+/g, '<path>').slice(0, 200);
+            // MEDIUM-1 + M-S2: scrub filesystem paths and credentials from
+            // the user-visible error message. The full `rawMessage` may
+            // contain local paths surfaced by the HTTP/IO layer; AC8
+            // forbids exposing them. Match POSIX (`/…`), Windows
+            // (`C:\…`, `C:/…`), and UNC (`\\server\share`) styles. The
+            // `\\` case is the POSIX-escape interpretation; in the regex
+            // it must be unescaped to `\\` to match a literal backslash.
+            const sanitizedMessage = rawMessage
+              .replace(/(?:[a-zA-Z]:)?[\\/][^\s:'"]+/g, '<path>')
+              .slice(0, 200);
             phaseError = new SyncPhaseError('download', `Descarga fallida: ${sanitizedMessage}`);
           }
         }
@@ -2987,6 +3027,13 @@ export function createTestSyncCore(config: SyncConfig, deps: SyncDependencies): 
  *
  * Stream errors bubble up so the caller's existing error path
  * (catch → SyncPhaseError) handles them uniformly.
+ *
+ * ORAIN-0739 MEDIUM: when `'close'` fires before `'end'` or `'error'`
+ * (rare Node Readable ordering when a producer destroys without
+ * flushing), we reject instead of resolving an empty buffer. An empty
+ * buffer would otherwise be misclassified as `phase: 'validation'` by
+ * the downstream `validateAudioBody`, when the real fault was the
+ * download stream itself (`phase: 'download'`).
  */
 async function readHeaderBytes(fs: FileSystem, path: string, maxBytes: number): Promise<Buffer> {
   const stream = await fs.createReadStream(path);
@@ -3043,24 +3090,40 @@ async function readHeaderBytes(fs: FileSystem, path: string, maxBytes: number): 
       total += buf.length;
     });
 
+    // ORAIN-0739 MEDIUM: track whether the stream emitted 'end' or
+    // 'error' before 'close'. The normal order is end/close or
+    // error/close. If 'close' fires first with neither of those having
+    // happened (rare producer-destroy-without-flush case), the stream
+    // did not deliver its content cleanly — reject so the caller
+    // classifies it as a download fault rather than a validation
+    // "empty body" error.
+    let endedOrErrored = false;
     readable.on('end', () => {
+      endedOrErrored = true;
       settle(() => resolve(Buffer.concat(chunks, total)));
     });
 
     readable.on('error', (err: Error) => {
+      endedOrErrored = true;
       settle(() => reject(err));
     });
 
-    // `'close'` fires after `'end'`/`'error'` on a normal stream.
-    // We don't need to settle here — 'end'/'error' already did — but
-    // if neither fires (e.g. consumer destroy without end), the
-    // explicit `destroy()` above closes the FD and this is the last
-    // observable signal.
+    // `'close'` fires after `'end'`/`'error'` on a normal stream, and is
+    // also the last observable signal when the producer destroys
+    // without flushing. If we never saw end/error first, the stream did
+    // not deliver content cleanly — surface it as a download error.
     readable.on('close', () => {
-      // If the stream ended without emitting 'end' (rare, but
-      // happens when the producer errors before any chunk), and we
-      // never settled, settle now with whatever we have.
-      settle(() => resolve(Buffer.concat(chunks, total)));
+      if (!endedOrErrored) {
+        settle(() => reject(new Error('Stream closed before content was delivered')));
+        return;
+      }
+      // Normal path: end/error already settled the promise. Nothing to
+      // do here (settle is no-op when `settled` is true).
     });
   });
 }
+
+// ORAIN-0739 MEDIUM: a thin re-export so tests can exercise the
+// `'close'`-without-`'end'` path with hand-crafted Readables. Production
+// callers continue to call the module-private `readHeaderBytes`.
+export const readHeaderBytesForTest = readHeaderBytes;

@@ -6393,3 +6393,343 @@ describe('ORAIN-0739 HIGH-2: body validation streams the header, never reads the
     expect(createReadStreamCalls.some((p) => /jt-(copy|conv)_/.test(p))).toBe(true);
   });
 });
+
+// =============================================================================
+// ORAIN-0739 HIGH-S1 (AC6 pre-stream 2 GiB cap)
+//
+// AC6 says "Límite de 2 GiB por pista; descargas mayores se rechazan antes de
+// empezar el stream." Pre-cycle 4 only enforced the cap *after* the pipe
+// completed — by then a hostile or buggy server had already pushed the bytes
+// into `os.tmpdir()`. With COPY_CONCURRENCY=6 × maxAttempts=3 the failure
+// scenario was 24 GiB on disk before the first rejection, with ENOSPC risk
+// mid-write on Windows.
+//
+// These tests pin the pre-pipe + in-pipe guards added in this cycle:
+//   1. declaredSize > MAX_DOWNLOAD_BYTES → reject before downloadItemStream.
+//   2. Content-Length > MAX_DOWNLOAD_BYTES → reject before pipe.
+//   3. In-pipe guard: receivedBytes > MAX_DOWNLOAD_BYTES → abort + cleanup.
+// =============================================================================
+
+describe('ORAIN-0739 HIGH-S1: 2 GiB cap enforced pre-pipe and in-pipe (AC6)', () => {
+  // 2 GiB + 1 byte — declaredSize / Content-Length values that MUST trip the
+  // pre-pipe guard. MAX_DOWNLOAD_BYTES is 2^31 = 2 147 483 648, so 2^31 + 1
+  // is just past the threshold.
+  const OVER_CAP = 2 ** 31 + 1;
+
+  function buildBaseTrack(overrides: Partial<TrackInfo> = {}): TrackInfo {
+    return {
+      id: 'track-ac6',
+      name: 'Track AC6',
+      album: 'Album',
+      artists: ['Artist'],
+      path: '/music/Artist/Album/track.flac',
+      format: 'flac',
+      size: 1024,
+      trackNumber: 1,
+      ...overrides,
+    };
+  }
+
+  function buildBaseConverter(): AudioConverter {
+    return {
+      isAvailable: async () => true,
+      convertToMp3: async () => ({ success: true }),
+      convertStreamToMp3: async () => ({ success: true }),
+      convertStreamToMp3WithMeta: async () => ({ success: true }),
+      tagFile: async () => ({ success: true }),
+      readFileMetadata: async () => ({}),
+      embedLyrics: async () => ({ success: true }),
+      stripCoverArt: async () => ({ success: true, hadCover: false }),
+      embedReplayGain: async () => ({ success: true }),
+    };
+  }
+
+  it('rejects declaredSize > MAX_DOWNLOAD_BYTES BEFORE calling downloadItemStream', async () => {
+    const { Readable } = require('stream');
+    let downloadCalled = false;
+    const track = buildBaseTrack({ size: OVER_CAP });
+
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+      downloadItemStream: async () => {
+        downloadCalled = true;
+        return Readable.from(Buffer.from('not-audio'));
+      },
+    });
+
+    const fs = createMockFileSystem();
+    const deps: SyncDependencies = { api, fs, converter: buildBaseConverter() };
+    const core = createTestSyncCore(validConfig, deps);
+
+    const result = await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    // The whole point of pre-pipe: downloadItemStream must NOT run when the
+    // cap is exceeded. If it does, AC6 is violated.
+    expect(downloadCalled).toBe(false);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0].message).toMatch(/demasiado grande|2 ?GiB/i);
+    expect(result.errors[0].phase).toBe('download');
+  });
+
+  it('rejects Content-Length > MAX_DOWNLOAD_BYTES BEFORE piping bytes', async () => {
+    const { Readable } = require('stream');
+    let bytesEmitted = 0;
+    let pipeStarted = false;
+
+    // The mock fs.createWriteStream returns a Writable that records when
+    // .pipe() attaches. We assert that pipeStarted stays false when the
+    // pre-pipe Content-Length guard fires.
+    const fs = createMockFileSystem();
+    const originalCreateWriteStream = fs.createWriteStream;
+    const wrappedFs: typeof fs = {
+      ...fs,
+      createWriteStream: async (path: string, opts?: { flags?: string }) => {
+        const ws = await originalCreateWriteStream(path, opts);
+        const origWrite = ws.write.bind(ws);
+        // After pipe starts, the first .write call would land here. We only
+        // count bytes (do NOT fail) — the assertion is that we never get
+        // there at all.
+        (ws as { write: (chunk: Buffer | string) => boolean }).write = (chunk) => {
+          pipeStarted = true;
+          bytesEmitted += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+          return origWrite(chunk);
+        };
+        return ws;
+      },
+    };
+
+    const track = buildBaseTrack({ size: 1024 }); // declaredSize under cap
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+      downloadItemStream: async () => {
+        // Pretend the stream IS opened so we get past the declaredSize
+        // guard and onto the Content-Length guard — but the guard MUST
+        // reject before the pipe attaches. We attach a non-enumerable
+        // contentLength via defineProperty so the cast `as …contentLength`
+        // in _downloadWithValidation sees it.
+        const stream = Readable.from(Buffer.from('not-audio'));
+        Object.defineProperty(stream, 'contentLength', {
+          value: OVER_CAP,
+          writable: false,
+          enumerable: false,
+          configurable: false,
+        });
+        Object.defineProperty(stream, 'contentEncoding', {
+          value: 'identity',
+          writable: false,
+          enumerable: false,
+          configurable: false,
+        });
+        return stream;
+      },
+    });
+
+    const deps: SyncDependencies = { api, fs: wrappedFs, converter: buildBaseConverter() };
+    const core = createTestSyncCore(validConfig, deps);
+
+    const result = await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    // The guard rejected BEFORE the pipe attached: no write to the temp file
+    // happened.
+    expect(pipeStarted).toBe(false);
+    expect(bytesEmitted).toBe(0);
+
+    expect(result.success).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0].message).toMatch(/demasiado grande|2 ?GiB/i);
+    expect(result.errors[0].phase).toBe('download');
+  });
+
+  it('in-pipe: aborts the stream when receivedBytes exceeds MAX_DOWNLOAD_BYTES and cleans up', async () => {
+    const { Readable } = require('stream');
+    let unlinkCalls = 0;
+
+    const track = buildBaseTrack({ size: 1024 });
+    // Stream emits three 1 GiB chunks. No Content-Length so the pre-pipe
+    // guards are bypassed; the in-pipe guard catches it after we cross the
+    // cap. The third chunk is too much: cap = 2 GiB exactly, so 3 GiB
+    // must trip it.
+    const oneGiB = Buffer.alloc(2 ** 30, 0x20); // 1 GiB of spaces
+    const fullBody = Buffer.concat([oneGiB, oneGiB, oneGiB.subarray(0, 8)]);
+
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+      downloadItemStream: async () => Readable.from(fullBody),
+    });
+
+    const fs = createMockFileSystem();
+    const originalUnlink = fs.unlink;
+    const wrappedFs: typeof fs = {
+      ...fs,
+      unlink: async (path: string) => {
+        if (/jt-(copy|conv)_/.test(path)) unlinkCalls++;
+        return originalUnlink(path);
+      },
+    };
+
+    const deps: SyncDependencies = { api, fs: wrappedFs, converter: buildBaseConverter() };
+    const core = createTestSyncCore(validConfig, deps);
+
+    const result = await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0].message).toMatch(/demasiado grande|2 ?GiB/i);
+    expect(result.errors[0].phase).toBe('download');
+    // AC4: cleanup runs even on in-pipe abort. With 3 attempts × 1 temp
+    // each, the catch path runs unlink once per attempt that errored.
+    expect(unlinkCalls).toBeGreaterThan(0);
+  });
+});
+
+// =============================================================================
+// ORAIN-0739 M-S2 (Windows path scrubber)
+//
+// The catch-block sanitizer in `_downloadWithValidation` replaces POSIX
+// paths with `<path>` via `rawMessage.replace(/\/[^\s:'"]+/g, '<path>')`.
+// That regex is POSIX-only: Windows paths (`C:\Users\…`) and UNC paths
+// (`\\server\share`) survive it and end up in user-visible errors —
+// leaking local filesystem layout to whoever runs JellyTunes. AC8
+// requires not exposing internal paths.
+//
+// This cycle extends the scrubber so it also matches Windows-style
+// paths. The test below pins the regex against concrete Win32/UNC
+// strings; if the regex regresses to `/[^\s:'"]+/g`, both inputs
+// remain unredacted and the assertion fails.
+// =============================================================================
+
+describe('ORAIN-0739 M-S2: path scrubber redacts Windows and UNC paths', () => {
+  it('redacts C:\\Users\\… and \\\\server\\share in the user-visible message', async () => {
+    // We exercise the scrubber through the catch block by raising a
+    // non-SyncPhaseError from the download layer with a Windows path
+    // embedded in its message. The catch block constructs
+    // `Descarga fallida: <sanitized>` so the assertion targets that
+    // final string.
+    const track: TrackInfo = {
+      id: 'track-m-s2',
+      name: 'Track M-S2',
+      album: 'Album',
+      artists: ['Artist'],
+      path: '/music/Artist/Album/track.flac',
+      format: 'flac',
+      size: 1024,
+      trackNumber: 1,
+    };
+
+    // An ID3+MPEG-shaped synthetic body so the validator passes (so the
+    // success path runs and the file lands at the destination). Then we
+    // inject a download-time error by having downloadItemStream throw
+    // an Error whose message contains a Windows path AND a UNC path.
+    // The catch block (non-SyncPhaseError branch) runs the scrubber on
+    // that message and emits `Descarga fallida: <sanitized>`.
+    //
+    // To force the catch path reliably we make downloadItemStream throw.
+    const winPath = 'C:\\Users\\victim\\secrets\\key.pem';
+    const uncPath = '\\\\fileserver\\share\\Music\\track.mp3';
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+      downloadItemStream: async () => {
+        throw new Error(`connect failed at ${winPath} via ${uncPath}`);
+      },
+    });
+
+    const fs = createMockFileSystem();
+    const converter: AudioConverter = {
+      isAvailable: async () => true,
+      convertToMp3: async () => ({ success: true }),
+      convertStreamToMp3: async () => ({ success: true }),
+      convertStreamToMp3WithMeta: async () => ({ success: true }),
+      tagFile: async () => ({ success: true }),
+      readFileMetadata: async () => ({}),
+      embedLyrics: async () => ({ success: true }),
+      stripCoverArt: async () => ({ success: true, hadCover: false }),
+      embedReplayGain: async () => ({ success: true }),
+    };
+
+    const core = createTestSyncCore(validConfig, { api, fs, converter });
+
+    const result = await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+
+    // The first error is the download failure for our track. The
+    // scrubbed message MUST NOT contain either of the original paths.
+    const combinedMessage = result.errors.map((e) => e.message).join('\n');
+    expect(combinedMessage).not.toContain(winPath);
+    expect(combinedMessage).not.toContain(uncPath);
+    // Sanity — the catch path emitted its structured prefix.
+    expect(result.errors[0].phase).toBe('download');
+    expect(result.errors[0].message).toMatch(/Descarga fallida|demasiado grande/i);
+  });
+});
+
+// =============================================================================
+// ORAIN-0739 MEDIUM (readHeaderBytes 'close' without 'end')
+//
+// If `'close'` fires before `'end'` (a rare Node Readable ordering when
+// a producer destroys without flushing), `readHeaderBytes` resolves with
+// whatever was accumulated — which can be `Buffer.alloc(0)`. The
+// downstream validator then reports "El servidor devolvió 0 B (cuerpo
+// vacío)" with phase 'validation', an incorrect phase attribution for
+// what is really a streaming fault.
+//
+// This cycle makes `readHeaderBytes` reject in that case so the catch
+// surfaces the error as `phase: 'download'` (the actual fault site).
+// The exported helper is `readHeaderBytesForTest`; production callers
+// keep importing the original module-private `readHeaderBytes`.
+// =============================================================================
+
+describe('ORAIN-0739 MEDIUM: readHeaderBytes rejects when close fires without end or error', () => {
+  it('rejects when the stream emits close before end without an error', async () => {
+    // Import the production helper. Cycle 4 exports it under the test
+    // name so we can exercise it directly; production callers continue
+    // to import the original.
+    const { readHeaderBytesForTest } = await import('./sync-core');
+    expect(typeof readHeaderBytesForTest).toBe('function');
+
+    // Build a Readable that destroys itself before emitting 'end'. We
+    // emit one chunk (so we would resolve with non-empty buffer under
+    // the old 'close' handler) then call destroy() synchronously — the
+    // stream fires 'close' but no 'end'/'error'.
+    const { Readable } = require('stream');
+    const stream = new Readable({
+      read() {
+        this.push(Buffer.from('hello'));
+        // Destroy synchronously so 'close' fires before 'end'.
+        this.destroy();
+      },
+    });
+
+    const fs = createMockFileSystem();
+    // Override createReadStream to return our hand-crafted stream.
+    const wrappedFs: typeof fs = {
+      ...fs,
+      createReadStream: async () => stream,
+    };
+
+    await expect(readHeaderBytesForTest(wrappedFs, '/anything', 8 * 1024)).rejects.toBeDefined();
+  });
+});
