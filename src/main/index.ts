@@ -42,7 +42,7 @@ import { showLogFileInFolder } from './log-folder';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
 // ORAIN-0740: [sync-start]/[sync-end]/[track-failed] log lines + error scrubbing.
 // The wrappers in log-scrub make sure the error object never reaches log.error.
-import { logSyncStart, logSyncEnd, logSyncError } from './log-scrub';
+import { logSyncEnd, logSyncError } from './log-scrub';
 
 // ─── Snap detection (ORAIN-0573) ─────────────────────────────────────────
 // snapd sets SNAP (mount path) and SNAP_NAME (registered name) on every
@@ -924,28 +924,12 @@ ipcMain.handle('sync:start2', async (_event, options) => {
       destinationPath,
       options: syncOptions = {},
     } = options;
-    // ORAIN-0740 AC1: emit [sync-start] via the scrubbed formatter.
-    // `trackCount` is the post-fetch count; SyncCore re-emits the line with
-    // the real count (Task 5). Until then, this placeholder tracks the item
-    // count so support has a value to read.
+    // ORAIN-0740 AC1: [sync-start] is now emitted inside SyncCore AFTER the
+    // fetch phase, so the line carries the real `tracks=<post-fetch total>`
+    // rather than the placeholder `tracks=itemIds.length`. index.ts still
+    // mints the correlation id so the renderer-progress and main.log share
+    // the same id (passed via SyncInput.syncId).
     const v2SyncId = randomUUID().slice(0, 8);
-    logSyncStart(log, {
-      appVersion: app.getVersion(),
-      platform: process.platform,
-      arch: process.arch,
-      destinationPath,
-      destinationFilesystem: 'pending',
-      itemCount: itemIds.length,
-      trackCount: itemIds.length,
-      options: {
-        convertToMp3: syncOptions.convertToMp3 ?? false,
-        bitrate: syncOptions.bitrate,
-        coverArtMode: syncOptions.coverArtMode ?? 'embed',
-        lyricsMode: syncOptions.lyricsMode ?? 'off',
-        embedMetadata: syncOptions.embedMetadata ?? true,
-      },
-      syncId: v2SyncId,
-    });
 
     // Validate inputs
     if (!serverUrl || !apiKey || !userId) {
@@ -989,6 +973,11 @@ ipcMain.handle('sync:start2', async (_event, options) => {
         itemIds,
         itemTypes: itemTypesMap,
         destinationPath,
+        // ORAIN-0740: thread correlation id, app version, and detected
+        // filesystem into SyncCore so [sync-start] can be emitted there.
+        syncId: v2SyncId,
+        appVersion: app.getVersion(),
+        destinationFilesystem: filesystemType,
         options: {
           preserveStructure: true,
           skipExisting: true,

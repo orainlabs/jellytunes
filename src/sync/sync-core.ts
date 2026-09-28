@@ -31,7 +31,7 @@ import { randomUUID } from 'node:crypto';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
-import { formatTrackFailed } from '../main/log-scrub';
+import { formatTrackFailed, logSyncStart } from '../main/log-scrub';
 import { COVER_MAX_BYTES } from './cover-image';
 import { validateAudioBody, validateDownloadSize, MAX_DOWNLOAD_BYTES } from './download-validation';
 
@@ -551,6 +551,29 @@ class SyncCoreImpl {
       errors.push(...fetchResult.errors.map((message) => ({ trackName: '', message })));
       totalTracks = fetchResult.tracks.length;
 
+      // ORAIN-0740 AC1: emit [sync-start] AFTER fetch so `tracks` carries
+      // the real post-fetch total (the previous index.ts placeholder used
+      // `itemIds.length` which reports albums, not tracks). This is the
+      // only [sync-start] emission in the codebase — index.ts delegates.
+      const options = resolveSyncOptions(input.options);
+      logSyncStart(this.log, {
+        appVersion: input.appVersion ?? 'unknown',
+        platform: this.platform,
+        arch: process.arch,
+        destinationPath: input.destinationPath,
+        destinationFilesystem: input.destinationFilesystem ?? 'unknown',
+        itemCount: input.itemIds.length,
+        trackCount: totalTracks,
+        options: {
+          convertToMp3: options.convertToMp3 === true,
+          bitrate: options.bitrate,
+          coverArtMode: options.coverArtMode ?? 'embed',
+          lyricsMode: options.lyricsMode ?? 'off',
+          embedMetadata: options.embedMetadata ?? true,
+        },
+        syncId,
+      });
+
       if (totalTracks === 0) {
         return this.buildFailureResult(
           startTime,
@@ -560,7 +583,6 @@ class SyncCoreImpl {
       }
 
       // Phase 3: Copy
-      const options = resolveSyncOptions(input.options);
       await ensureDirectory(input.destinationPath, this.deps.fs);
 
       const copyResult = await this.runCopyPhase(

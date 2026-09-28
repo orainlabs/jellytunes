@@ -61,6 +61,20 @@ export interface SyncInput {
    * through so the same id appears in both places.
    */
   syncId?: string;
+  /**
+   * ORAIN-0740 AC1: app version stamped into the `[sync-start]` line so support
+   * can match a log entry against the binary that produced it. Defaults to
+   * `'unknown'` when omitted (e.g. in tests).
+   */
+  appVersion?: string;
+  /**
+   * ORAIN-0740 AC1: detected destination filesystem (`exfat`, `apfs`, etc.).
+   * Defaults to `'unknown'` when omitted. SyncCore does NOT re-detect; the
+   * caller (index.ts) is the layer that knows about the OS volume API.
+   * Wide `string` because `detectFilesystem` returns `Promise<string>`;
+   * values are constrained to FilesystemType union members at runtime.
+   */
+  destinationFilesystem?: string;
 }
 
 /**
