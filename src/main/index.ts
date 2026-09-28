@@ -45,6 +45,7 @@ import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../sh
 // ORAIN-0740: [sync-start]/[sync-end]/[track-failed] log lines + error scrubbing.
 // The wrappers in log-scrub make sure the error object never reaches log.error.
 import { logSyncError, diffAndLogVolumes, scrubPath, type VolumeLogState } from './log-scrub';
+import { buildBugReportBody } from './bug-report-excerpt';
 
 // ─── Snap detection (ORAIN-0573) ─────────────────────────────────────────
 // snapd sets SNAP (mount path) and SNAP_NAME (registered name) on every
@@ -812,46 +813,25 @@ ipcMain.handle('log:openFolder', () => {
 ipcMain.handle('bug:report', async () => {
   try {
     const logPath = log.transports.file.getFile().path;
-    let logExcerpt = '(log file not found)';
+    let logContent = '';
     if (fs.existsSync(logPath)) {
-      const content = fs.readFileSync(logPath, 'utf-8');
-      const lines = content.split('\n').filter(Boolean);
-      const errorLines = lines
-        .filter((l) => l.includes('[error]') || l.includes('[warn]'))
-        .slice(-15);
-      const recentLines = lines.slice(-10);
-      logExcerpt = [...new Set([...errorLines, ...recentLines])].slice(-25).join('\n');
+      logContent = fs.readFileSync(logPath, 'utf-8');
     }
 
-    const body = [
-      `**Describe the bug**`,
-      `A clear and concise description of what the bug is.`,
-      ``,
-      `**To Reproduce**`,
-      `Steps to reproduce the behavior:`,
-      `1. Go to '...'`,
-      `2. Click on '...'`,
-      `3. See error`,
-      ``,
-      `**Expected behavior**`,
-      `A clear and concise description of what you expected to happen.`,
-      ``,
-      `**Screenshots**`,
-      `If applicable, add screenshots to help explain your problem.`,
-      ``,
-      `**Desktop (please complete the following information):**`,
-      ` - OS: ${process.platform} ${os.release()}`,
-      ` - JellyTunes version: ${app.getVersion()}`,
-      ` - Jellyfin server version: [e.g. 10.9.0]`,
-      ``,
-      `**Log output**`,
-      '```',
-      logExcerpt,
-      '```',
-      ``,
-      `**Additional context**`,
-      `Add any other context about the problem here.`,
-    ].join('\n');
+    // ORAIN-0747: feed the FULL log content (not the last 25 lines) to
+    // the excerpt builder. It picks the last sync block (start +
+    // track-failures + end) and the recent non-sync errors, fits them
+    // inside the GitHub URL budget, and returns the markdown body
+    // ready to be encoded into the `body=` query parameter. Returns
+    // `(log file not found)` if main.log is missing.
+    const rawBody = logContent.length > 0 ? buildBugReportBody(logContent) : '(log file not found)';
+
+    // The builder's boilerplate leaves OS/version as placeholders.
+    // Substitute the live values here — the budget reserves 200 chars
+    // for them, so the URL ceiling is still respected.
+    const body = rawBody
+      .replace('<filled by handler>', `${process.platform} ${os.release()}`)
+      .replace('<filled by handler>', app.getVersion());
 
     const url =
       `https://github.com/orainlabs/jellytunes/issues/new?` +
