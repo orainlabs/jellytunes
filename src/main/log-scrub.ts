@@ -29,9 +29,23 @@ export function scrubPath(input: string): string {
   if (!input) return input;
   const home = os.homedir();
   if (!home) return input;
+  // ORAIN-0740 cycle 2 (LOW): the old `new RegExp(\`^${home}([\\\\/])\`)`
+  // shape used four backslashes in the template to mean a single literal
+  // backslash in the regex — readable only with a comment. We compute
+  // `home` as a regex source string with its own metacharacters escaped,
+  // then concatenate it into a regex literal. The `sep` group is now
+  // optional so home-as-input (no trailing separator) matches and scrubs
+  // to bare `~`. The three shapes:
+  //   - home + '/...'   → `~/...`
+  //   - home + '\\...'  → `~\...`  (Windows)
+  //   - home exactly    → `~`
+  //
+  // We anchor both branches with a lookahead `(?:[/\\]|$)` so a folder
+  // named exactly like home (e.g. `/Users/alice-evil`) does NOT match —
+  // the lookahead requires either a separator or end-of-string after
+  // `home`, which `/Users/alice` followed by `-evil` does not have.
   const escaped = home.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
-  const re = new RegExp(`^${escaped}([\\\\/])`);
-  return input.replace(re, (full) => `~${full.slice(home.length)}`);
+  return input.replace(new RegExp(`^${escaped}(?:(?=[/\\\\])|$)`), () => '~');
 }
 
 /**

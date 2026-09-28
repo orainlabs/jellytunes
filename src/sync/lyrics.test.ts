@@ -1063,7 +1063,13 @@ describe('processLyrics behavior', () => {
     const deps = createTestDeps({
       api: mockApi,
       fs: mockFs,
-      logger: { info: vi.fn(), warn: warnSpy, error: vi.fn(), debug: debugSpy },
+      logger: {
+        info: vi.fn(),
+        warn: warnSpy,
+        error: vi.fn(),
+        debug: debugSpy,
+        trackFailed: vi.fn(),
+      },
     });
     const core = createTestSyncCore(validConfig, deps);
 
@@ -1141,7 +1147,13 @@ describe('processLyrics behavior', () => {
     const deps = createTestDeps({
       api: mockApi,
       fs: mockFs,
-      logger: { info: vi.fn(), warn: warnSpy, error: vi.fn(), debug: debugSpy },
+      logger: {
+        info: vi.fn(),
+        warn: warnSpy,
+        error: vi.fn(),
+        debug: debugSpy,
+        trackFailed: vi.fn(),
+      },
     });
     const core = createTestSyncCore(validConfig, deps);
 

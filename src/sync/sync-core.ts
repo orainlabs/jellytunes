@@ -31,7 +31,7 @@ import { randomUUID } from 'node:crypto';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
-import { formatTrackFailed, logSyncStart } from '../main/log-scrub';
+import { formatTrackFailed, logSyncStart, logSyncEnd } from '../main/log-scrub';
 import { COVER_MAX_BYTES } from './cover-image';
 import { validateAudioBody, validateDownloadSize, MAX_DOWNLOAD_BYTES } from './download-validation';
 
@@ -227,7 +227,13 @@ export function estimateOutputBytes(
 }
 
 /** No-op logger used when no logger is injected (keeps module testable) */
-const noopLogger: SyncLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+const noopLogger: SyncLogger = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  debug: () => {},
+  trackFailed: () => {},
+};
 
 /**
  * ORAIN-0739 AC7: typed phase-tagged error raised from the download /
@@ -515,6 +521,26 @@ class SyncCoreImpl {
     const tracksFailed: string[] = [];
     let totalTracks = 0;
     let lyricsAdded = 0;
+    // ORAIN-0740 cycle 2 (AC2): bumped in runCopyPhase when a track
+    // completes the FFmpeg pipeline. Declared here so the catch path can
+    // include the partial count in the failure SyncResult — previously
+    // the failure result silently dropped the conversion counter.
+    // Note: this outer binding is never reassigned in sync() itself;
+    // runCopyPhase has its own LOCAL `statsConverted` which is returned
+    // through copyResult.statsConverted on the success path (line ~657).
+    // The catch / cancellation paths read this unused-as-placeholder `0`.
+    const statsConverted = 0;
+    // ORAIN-0740 cycle 2 (HIGH): capture the SyncResult produced by either
+    // the success path or the catch path so the finally block can emit a
+    // [sync-end] line that always pairs the [sync-start] logged post-fetch.
+    // Null only when something throws BEFORE building a result (e.g. error
+    // building the SyncResult itself).
+    let syncResult: SyncResult | null = null;
+    // ORAIN-0740 cycle 2 (HIGH): sync-start is logged AFTER fetch+validation
+    // (line ~576). Two early-return paths exist before that line — destination
+    // validation failure (line 559) and zero-tracks (line 595). Neither emits
+    // [sync-start], so the finally block must NOT emit [sync-end] for them.
+    let syncStartEmitted = false;
 
     try {
       this.cancellation.reset();
@@ -573,6 +599,7 @@ class SyncCoreImpl {
         },
         syncId,
       });
+      syncStartEmitted = true;
 
       if (totalTracks === 0) {
         return this.buildFailureResult(
@@ -628,9 +655,10 @@ class SyncCoreImpl {
 
       phaseManager.complete(stats);
 
-      return {
+      syncResult = {
         success: errors.length === 0,
         tracksCopied: stats.itemsProcessed,
+        tracksConverted: copyResult.statsConverted ?? 0,
         tracksSkipped: stats.itemsSkipped,
         tracksRetagged: copyResult.statsRetagged,
         tracksMoved: copyResult.statsMoved,
@@ -641,12 +669,14 @@ class SyncCoreImpl {
         totalSizeBytes: stats.bytesTransferred,
         durationMs: Date.now() - startTime,
       };
+      return syncResult;
     } catch (error) {
       if (error instanceof SyncCancelledError) {
         phaseManager.cancelled(stats.itemsProcessed, totalTracks || input.itemIds.length);
-        return {
+        syncResult = {
           success: false,
           tracksCopied: stats.itemsProcessed,
+          tracksConverted: statsConverted ?? 0,
           tracksSkipped: stats.itemsSkipped,
           tracksRetagged: 0,
           tracksMoved: 0,
@@ -658,14 +688,16 @@ class SyncCoreImpl {
           durationMs: Date.now() - startTime,
           cancelled: true,
         };
+        return syncResult;
       }
 
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       phaseManager.error(errorMsg);
 
-      return {
+      syncResult = {
         success: false,
         tracksCopied: stats.itemsProcessed,
+        tracksConverted: statsConverted ?? 0,
         tracksSkipped: stats.itemsSkipped,
         tracksRetagged: 0,
         tracksMoved: 0,
@@ -676,8 +708,41 @@ class SyncCoreImpl {
         totalSizeBytes: stats.bytesTransferred,
         durationMs: Date.now() - startTime,
       };
+      return syncResult;
     } finally {
       unsubscribe();
+      // ORAIN-0740 cycle 2 (HIGH): [sync-end] must ALWAYS follow [sync-start].
+      // Previously the emission lived in index.ts after `await syncCore.sync(...)`,
+      // so any unhandled error from a phase (network, FFmpeg crash, OOM) left
+      // a stranded [sync-start] entry on disk — support couldn't tell whether
+      // a sync was still running, had crashed, or was simply silent. Moving
+      // the emission into the finally block of sync() pairs the lines at
+      // their lifecycle point: whenever [sync-start] is logged (line ~570
+      // post-fetch), either the success path or the catch path returns a
+      // SyncResult, and that result feeds [sync-end] here.
+      //
+      // The early-return paths BEFORE [sync-start] (destination validation,
+      // zero-tracks) intentionally never emit a start line, so the finally
+      // block guards on `syncStartEmitted` to avoid orphan end lines.
+      //
+      // On the rare path where the try/catch itself throws a non-SyncError
+      // (e.g. error in phaseManager.error above), we still emit [sync-end]
+      // with zero counters — only thing missing then is the final byte total.
+      if (syncStartEmitted) {
+        const result = syncResult ?? buildFallbackFailureResult(startTime);
+        logSyncEnd(this.log, {
+          syncId,
+          tracksCopied: result.tracksCopied,
+          tracksConverted: result.tracksConverted,
+          tracksRetagged: result.tracksRetagged,
+          tracksSkipped: result.tracksSkipped,
+          tracksFailed: result.tracksFailed.length,
+          tracksRemoved: 0,
+          durationMs: result.durationMs,
+          totalSizeBytes: result.totalSizeBytes,
+          cancelled: result.cancelled ?? false,
+        });
+      }
     }
   }
 
@@ -725,6 +790,8 @@ class SyncCoreImpl {
     statsMoved: number;
     lyricsAdded: number;
     syncedBasenames: string[];
+    /** ORAIN-0740 cycle 2 (AC2): tracks that completed the FFmpeg path. */
+    statsConverted: number;
   }> {
     this.currentPhase = 'copying';
     phaseManager.startCopying(tracks.length);
@@ -775,6 +842,11 @@ class SyncCoreImpl {
     let statsRetagged = 0;
     let statsMoved = 0;
     let lyricsAdded = 0;
+    // ORAIN-0740 cycle 2 (AC2): real conversion counter — tracks that
+    // completed the FFmpeg pipeline (willConvert=true && !error). The
+    // previous [sync-end] line had `converted=tracksCopied`, which made
+    // every sync look like it converted everything.
+    let statsConverted = 0;
     const syncedBasenames: string[] = [];
 
     let allSyncedRecords: SyncedTrackRecord[] = [];
@@ -807,6 +879,9 @@ class SyncCoreImpl {
         statsRetagged += result.retagged ? 1 : 0;
         statsMoved += result.moved ? 1 : 0;
         lyricsAdded += result.lyricsAdded ?? 0;
+        // ORAIN-0740 cycle 2 (AC2): only count successful conversions.
+        // `converted` is true only when FFmpeg ran AND did not throw.
+        statsConverted += result.converted ? 1 : 0;
 
         if (result.error) {
           errors.push({
@@ -831,7 +906,11 @@ class SyncCoreImpl {
             declaredSize: track.size,
             hasImage,
           });
-          this.log.trackFailed?.(failedLine);
+          // ORAIN-0740 AC3: trackFailed is REQUIRED on SyncLogger; the
+          // optional chain was removed in cycle 2 because every caller had
+          // to wire it (otherwise production silently dropped [track-failed]
+          // lines). The line is already formatted and scrubbed upstream.
+          this.log.trackFailed(failedLine);
         }
 
         // ORAIN-0738 AC2: bump the numerator for EVERY outcome (copied,
@@ -866,7 +945,7 @@ class SyncCoreImpl {
     });
 
     this.cancellation.throwIfCancelled();
-    return { statsRetagged, statsMoved, lyricsAdded, syncedBasenames };
+    return { statsRetagged, statsMoved, lyricsAdded, syncedBasenames, statsConverted };
   }
 
   private async runCleanupPhase(
@@ -889,6 +968,9 @@ class SyncCoreImpl {
     return {
       success: false,
       tracksCopied: stats.itemsProcessed,
+      // ORAIN-0740 cycle 2 (AC2): zero on a pre-copy failure (validation
+      // or empty-tracks fast-path), because no track has hit FFmpeg yet.
+      tracksConverted: 0,
       tracksSkipped: stats.itemsSkipped,
       tracksRetagged: 0,
       tracksMoved: 0,
@@ -914,6 +996,11 @@ class SyncCoreImpl {
     processed: boolean;
     skipped: boolean;
     lyricsAdded: number;
+    /** ORAIN-0740 cycle 2 (AC2): true when the track reached the FFmpeg
+     * path (convertToMp3 && needsConversion). Mirrors `willConvert` on
+     * entry to processTrack so the outer loop can count conversions
+     * without recomputing the conversion predicate. */
+    converted: boolean;
     error?: string;
     /** ORAIN-0739 AC7: passed through from copyOrConvertTrack so the
      * outer loop can fill `SyncError.phase`. */
@@ -986,6 +1073,10 @@ class SyncCoreImpl {
     processed: boolean;
     skipped: boolean;
     lyricsAdded: number;
+    /** ORAIN-0740 cycle 2 (AC2): pass-through from copyOrConvertTrack when
+     * the record falls through to a re-download, otherwise always false.
+     * The early-return paths never invoke FFmpeg (rename / retag / skip). */
+    converted: boolean;
     error?: string;
   }> {
     const metadataChanged = syncedRecord.metadataHash !== currentHash;
@@ -1021,6 +1112,9 @@ class SyncCoreImpl {
           processed: true,
           skipped: false,
           lyricsAdded: lyricsResult,
+          // ORAIN-0740 cycle 2 (AC2): existing file was just renamed,
+          // FFmpeg was NOT invoked.
+          converted: false,
         };
       }
 
@@ -1037,6 +1131,9 @@ class SyncCoreImpl {
         processed: false,
         skipped: true,
         lyricsAdded: lyricsResult,
+        // ORAIN-0740 cycle 2 (AC2): unchanged existing copy on disk;
+        // FFmpeg was NOT invoked.
+        converted: false,
       };
     }
 
@@ -1091,6 +1188,9 @@ class SyncCoreImpl {
           processed: false,
           skipped: false,
           lyricsAdded: lyricsResult,
+          // ORAIN-0740 cycle 2 (AC2): re-tag writes metadata only,
+          // FFmpeg was NOT invoked.
+          converted: false,
         };
       }
       this.log.warn(`Re-tag failed for ${track.name}, falling back to re-download`);
@@ -1142,6 +1242,10 @@ class SyncCoreImpl {
     processed: boolean;
     skipped: boolean;
     lyricsAdded: number;
+    /** ORAIN-0740 cycle 2 (AC2): true when this track went through the
+     * FFmpeg conversion path. False for skipped, errored, or pure-copy
+     * tracks. */
+    converted: boolean;
     error?: string;
     /** ORAIN-0739 AC7: phase where the error originated, used by the
      * outer loop to fill `SyncError.phase`. Defaults are inferred from
@@ -1167,7 +1271,15 @@ class SyncCoreImpl {
             this.serverRootPath || null,
             options.lyricsMode ?? 'off',
           );
-          return { retagged: false, moved: false, processed: true, skipped: true, lyricsAdded: 0 };
+          // Skipped existing cross-format file: FFmpeg was NOT invoked.
+          return {
+            retagged: false,
+            moved: false,
+            processed: true,
+            skipped: true,
+            lyricsAdded: 0,
+            converted: false,
+          };
         }
         if (track.size && (await this.deps.fs.stat(outputPath)).size === track.size) {
           this.saveSyncedRecord(
@@ -1183,7 +1295,14 @@ class SyncCoreImpl {
             this.serverRootPath || null,
             options.lyricsMode ?? 'off',
           );
-          return { retagged: false, moved: false, processed: true, skipped: true, lyricsAdded: 0 };
+          return {
+            retagged: false,
+            moved: false,
+            processed: true,
+            skipped: true,
+            lyricsAdded: 0,
+            converted: false,
+          };
         }
       }
 
@@ -1232,6 +1351,9 @@ class SyncCoreImpl {
         processed: true,
         skipped: false,
         lyricsAdded: lyricsResult,
+        // Mirror the entry-time `willConvert`: if we hit the FFmpeg branch
+        // above, count it; if not, this is a pure copy and stays at zero.
+        converted: willConvert,
       };
     } catch (error) {
       // ORAIN-0739 AC7: read the typed phase off `SyncPhaseError` so the
@@ -1260,6 +1382,10 @@ class SyncCoreImpl {
         processed: false,
         skipped: false,
         lyricsAdded: 0,
+        // ORAIN-0740 cycle 2 (AC2): if FFmpeg failed, do NOT count the
+        // track as a successful conversion — `converted` reflects only
+        // tracks that completed the conversion pipeline.
+        converted: false,
         error: errorMsg,
         errorPhase,
       };
@@ -3174,3 +3300,31 @@ async function readHeaderBytes(fs: FileSystem, path: string, maxBytes: number): 
 // `'close'`-without-`'end'` path with hand-crafted Readables. Production
 // callers continue to call the module-private `readHeaderBytes`.
 export const readHeaderBytesForTest = readHeaderBytes;
+
+// ORAIN-0740 cycle 2 (HIGH): fallback SyncResult for the rare path where
+// sync()'s try/catch itself throws (e.g. an error inside phaseManager.error)
+// before any return statement runs. The finally block needs a SyncResult to
+// hand to logSyncEnd; this gives it one with zero counters and the elapsed
+// duration so the [sync-end] line is well-formed and the [sync-start]
+// emitted earlier is paired.
+export function buildFallbackFailureResult(startTime: number): SyncResult {
+  return {
+    success: false,
+    tracksCopied: 0,
+    tracksConverted: 0,
+    tracksSkipped: 0,
+    tracksRetagged: 0,
+    tracksMoved: 0,
+    tracksRemoved: 0,
+    lyricsAdded: 0,
+    tracksFailed: [],
+    errors: [
+      {
+        trackName: '',
+        message: 'Sync failed before producing a result; see preceding [track-failed] lines',
+      },
+    ],
+    totalSizeBytes: 0,
+    durationMs: Date.now() - startTime,
+  };
+}

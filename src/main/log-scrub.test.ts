@@ -55,6 +55,28 @@ describe('scrubPath', () => {
   it('does not partial-match a folder named the same as home', () => {
     expect(scrubPath('/Users/alice-evil/Music')).toBe('/Users/alice-evil/Music');
   });
+
+  // ORAIN-0740 cycle 2 (MEDIUM): trailing-slash handling. The current regex
+  // is `^${home}([\\/])` — it requires a separator AFTER the home segment.
+  // Three edge cases:
+  //   1. Input is EXACTLY the home string (no trailing slash). The regex
+  //      does not match because the separator group is missing, so the
+  //      home path leaks. The expected behaviour is to scrub it to `~`.
+  //   2. Input is the home string with a trailing slash. Matches the
+  //      separator branch; should produce `~/`.
+  //   3. Trailing slash on Linux home, same shape as POSIX.
+  it('scrubs an input that IS exactly the home path (no trailing slash)', () => {
+    expect(scrubPath('/Users/alice')).toBe('~');
+  });
+
+  it('scrubs home + trailing slash to ~/', () => {
+    expect(scrubPath('/Users/alice/')).toBe('~/');
+  });
+
+  it('scrubs Linux home + trailing slash', () => {
+    vi.mocked(os.homedir).mockReturnValue('/home/alice');
+    expect(scrubPath('/home/alice/')).toBe('~/');
+  });
 });
 
 describe('scrubError', () => {

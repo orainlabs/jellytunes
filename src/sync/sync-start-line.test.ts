@@ -46,6 +46,7 @@ function makeCapturingLogger(): { logger: SyncLogger; info: string[] } {
     warn: () => {},
     error: () => {},
     debug: () => {},
+    trackFailed: () => {},
   };
   return { logger, info };
 }

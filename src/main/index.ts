@@ -42,7 +42,7 @@ import { showLogFileInFolder } from './log-folder';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
 // ORAIN-0740: [sync-start]/[sync-end]/[track-failed] log lines + error scrubbing.
 // The wrappers in log-scrub make sure the error object never reaches log.error.
-import { logSyncEnd, logSyncError, diffAndLogVolumes, type VolumeLogState } from './log-scrub';
+import { logSyncError, diffAndLogVolumes, scrubPath, type VolumeLogState } from './log-scrub';
 
 // ─── Snap detection (ORAIN-0573) ─────────────────────────────────────────
 // snapd sets SNAP (mount path) and SNAP_NAME (registered name) on every
@@ -281,7 +281,7 @@ function listMountedVolumesFallback(): UsbDevice[] {
         }
       } catch (err) {
         oncePerSession(windowsDriveDetectionState, () => {
-          log.error('Windows drive detection error:', err);
+          logSyncError(log, 'Windows drive detection error', err);
         });
       }
     }
@@ -289,7 +289,7 @@ function listMountedVolumesFallback(): UsbDevice[] {
     // ORAIN-0740 AC4: once-per-session so a steady-state poll error does
     // not flood main.log at ~4 lines/minute.
     oncePerSession(fallbackVolumeDetectionState, () => {
-      log.error('Fallback volume detection error:', err2);
+      logSyncError(log, 'Fallback volume detection error', err2);
     });
   }
   return devices;
@@ -320,7 +320,7 @@ async function getDeviceInfo(devicePath: string): Promise<DeviceInfo> {
       return { total, free, used };
     }
   } catch (error) {
-    log.error('Error getting device info:', error);
+    logSyncError(log, 'Error getting device info', error);
   }
   return { total: 0, free: 0, used: 0 };
 }
@@ -360,7 +360,7 @@ async function detectFilesystem(devicePath: string): Promise<string> {
       return detectWindowsFilesystem(realFsutil, devicePath);
     }
   } catch (err) {
-    log.warn('Filesystem detection error:', err);
+    logSyncError(log, 'Filesystem detection error', err);
   }
   return 'unknown';
 }
@@ -590,7 +590,13 @@ async function syncTracks(options: {
       }
 
       syncedFiles++;
-      log.info(`Synced: ${track.name} -> ${outputPathFull}`);
+      // ORAIN-0740 cycle 2 (MEDIUM): scrub the destination path. The
+      // previous `log.info('Synced: ... -> ${outputPathFull}')` form leaked
+      // the user's home directory whenever the destination sat under
+      // it (which is the default). Pass through scrubPath so the line
+      // becomes `Synced: track.flac -> ~/Music/...` rather than the
+      // absolute path.
+      log.info(`Synced: ${track.name} -> ${scrubPath(outputPathFull)}`);
     } catch (error) {
       const errorMsg = `Failed to sync "${track.name}": ${error instanceof Error ? error.message : String(error)}`;
       log.error(errorMsg);
@@ -802,7 +808,8 @@ ipcMain.handle('log:openFolder', () => {
     showLogFileInFolder(undefined, () => log.transports.file.getFile().path, shell);
     return { success: true };
   } catch (err) {
-    log.error('log:openFolder error:', err);
+    // ORAIN-0740 cycle 2 (MEDIUM): scrub the error so stack/secret paths don't leak.
+    logSyncError(log, 'log:openFolder error', err);
     return { success: false, error: String(err) };
   }
 });
@@ -861,7 +868,8 @@ ipcMain.handle('bug:report', async () => {
     await shell.openExternal(url);
     return { success: true };
   } catch (err) {
-    log.error('bug:report error:', err);
+    // ORAIN-0740 cycle 2 (MEDIUM): scrub the error so stack/secret paths don't leak.
+    logSyncError(log, 'bug:report error', err);
     return { success: false, error: String(err) };
   }
 });
@@ -870,7 +878,7 @@ ipcMain.handle('usb:list', async () => {
   try {
     return await listUsbDevices();
   } catch (error) {
-    log.error('Error in usb:list handler:', error);
+    logSyncError(log, 'Error in usb:list handler', error);
     return [];
   }
 });
@@ -882,7 +890,7 @@ ipcMain.handle('usb:getDeviceInfo', async (_event, devicePath: string) => {
   try {
     return await getDeviceInfo(devicePath);
   } catch (error) {
-    log.error('Error getting device info:', error);
+    logSyncError(log, 'Error getting device info', error);
     return { total: 0, free: 0, used: 0 };
   }
 });
@@ -945,6 +953,15 @@ ipcMain.handle('sync:start2', async (_event, options) => {
     // rather than the placeholder `tracks=itemIds.length`. index.ts still
     // mints the correlation id so the renderer-progress and main.log share
     // the same id (passed via SyncInput.syncId).
+    //
+    // ORAIN-0740 cycle 2 (LOW): entropy choice — 8 hex chars (32 bits)
+    // gives ~4.29B unique ids, while 16 hex chars would give the full
+    // 122 bits of a UUIDv4. Why 8? The id is only used to correlate log
+    // lines within ONE main.log file for support: at 1 sync/minute the
+    // birthday collision probability is negligible (<1e-7/year) and the
+    // shorter form is easier to spot visually in main.log. If two syncs
+    // somehow coincide within one session, support can disambiguate via
+    // the timestamp on `[sync-start]`. The id is NOT a security token.
     const v2SyncId = randomUUID().slice(0, 8);
 
     // Validate inputs
@@ -971,6 +988,10 @@ ipcMain.handle('sync:start2', async (_event, options) => {
           warn: (msg) => log.warn('[sync]', msg),
           error: (msg) => log.error('[sync]', msg),
           debug: (msg) => log.debug('[sync]', msg),
+          // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
+          // Required so any future block that forgets to wire it fails at
+          // type-check (compile error), not at runtime silent-drop.
+          trackFailed: (msg) => log.warn('[track-failed]', msg),
         },
       },
     );
@@ -982,6 +1003,15 @@ ipcMain.handle('sync:start2', async (_event, options) => {
     // Detect destination filesystem for path sanitization
     const filesystemType = await detectFilesystem(destinationPath);
     log.info(`Destination filesystem: ${filesystemType}`);
+
+    // ORAIN-0740 cycle 2 (HIGH): [sync-start] AND [sync-end] both live
+    // inside `syncCore.sync()` now ([start] at line ~576 post-fetch,
+    // [end] inside the finally block of sync()). index.ts no longer
+    // emits either line — the lifecycle is owned by sync-core, so any
+    // unhandled error from a phase still produces a paired [sync-end]
+    // line on disk. Without this fix, an unhandled error left
+    // [sync-start] as an orphan on disk — support could not tell
+    // whether a sync was still running, cancelled, or aborted.
 
     // Run sync with progress callback that maps to renderer format
     const result = await syncCore.sync(
@@ -1023,19 +1053,6 @@ ipcMain.handle('sync:start2', async (_event, options) => {
     );
 
     activeSyncCore = null;
-    // ORAIN-0740 AC2: [sync-end] replaces the legacy "Sync v2 completed" line.
-    logSyncEnd(log, {
-      syncId: v2SyncId,
-      tracksCopied: result.tracksCopied,
-      tracksConverted: result.tracksCopied, // ORAIN-0738 separates these; parity copy for now
-      tracksRetagged: result.tracksRetagged,
-      tracksSkipped: result.tracksSkipped,
-      tracksFailed: result.tracksFailed.length,
-      tracksRemoved: 0,
-      durationMs: result.durationMs,
-      totalSizeBytes: result.totalSizeBytes,
-      cancelled: result.cancelled ?? false,
-    });
 
     // Record to SQLite
     const status = result.cancelled ? 'cancelled' : result.success ? 'success' : 'error';
@@ -1076,7 +1093,6 @@ ipcMain.handle('sync:start2', async (_event, options) => {
       totalSizeBytes: result.totalSizeBytes,
     };
   } catch (error) {
-    activeSyncCore = null;
     // ORAIN-0740 AC5: never pass the error object — only its message.
     logSyncError(log, 'Sync v2 error', error);
     return {
@@ -1153,6 +1169,8 @@ ipcMain.handle(
             warn: (msg) => log.warn('[batch]', msg),
             error: (msg) => log.error('[batch]', msg),
             debug: (msg) => log.debug('[batch]', msg),
+            // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
+            trackFailed: (msg) => log.warn('[track-failed]', msg),
           },
         });
         const cacheMissTypesMap = new Map(
@@ -1190,6 +1208,8 @@ ipcMain.handle(
             warn: (msg) => log.warn('[batch]', msg),
             error: (msg) => log.error('[batch]', msg),
             debug: (msg) => log.debug('[batch]', msg),
+            // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
+            trackFailed: (msg) => log.warn('[track-failed]', msg),
           },
         },
       );
@@ -1203,7 +1223,7 @@ ipcMain.handle(
       );
       return { success: true, ...result };
     } catch (error) {
-      log.error('sync:analyzeDiff error:', error);
+      logSyncError(log, 'sync:analyzeDiff error', error);
       return {
         success: false,
         items: [],
@@ -1265,7 +1285,7 @@ ipcMain.handle('sync:getSyncedTracks', (_event, mountPoint: string) => {
   try {
     return getSyncedTracksForDevice(mountPoint);
   } catch (error) {
-    log.error('sync:getSyncedTracks error:', error);
+    logSyncError(log, 'sync:getSyncedTracks error', error);
     return [];
   }
 });
@@ -1294,13 +1314,15 @@ ipcMain.handle(
           warn: (msg) => log.warn('[batch]', msg),
           error: (msg) => log.error('[batch]', msg),
           debug: (msg) => log.debug('[batch]', msg),
+          // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
+          trackFailed: (msg) => log.warn('[track-failed]', msg),
         },
       });
       const itemTypesMap = new Map([[itemId, itemType]]);
       const { tracks, errors } = await api.getTracksForItems([itemId], itemTypesMap);
       return { tracks, errors };
     } catch (error) {
-      log.error('sync:getTracksForItem error:', error);
+      logSyncError(log, 'sync:getTracksForItem error', error);
       return { tracks: [], errors: [error instanceof Error ? error.message : String(error)] };
     }
   },
@@ -1359,6 +1381,8 @@ ipcMain.handle(
             warn: (msg) => log.warn('[batch]', msg),
             error: (msg) => log.error('[batch]', msg),
             debug: (msg) => log.debug('[batch]', msg),
+            // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
+            trackFailed: (msg) => log.warn('[track-failed]', msg),
           },
         });
 
@@ -1408,7 +1432,7 @@ ipcMain.handle(
 
       return { tracks: cachedResults, errors: [] };
     } catch (error) {
-      log.error('sync:getTracksForItems error:', error);
+      logSyncError(log, 'sync:getTracksForItems error', error);
       return { tracks: [], errors: [error instanceof Error ? error.message : String(error)] };
     }
   },
@@ -1419,7 +1443,7 @@ ipcMain.handle('sync:getDeviceInfo', (_event, mountPoint: string) => {
   try {
     return getDeviceSyncInfo(mountPoint);
   } catch (error) {
-    log.error('getDeviceInfo error:', error);
+    logSyncError(log, 'getDeviceInfo error', error);
     return null;
   }
 });
@@ -1427,7 +1451,7 @@ ipcMain.handle('sync:getHistory', () => {
   try {
     return getRecentSyncHistory(20);
   } catch (error) {
-    log.error('getHistory error:', error);
+    logSyncError(log, 'getHistory error', error);
     return [];
   }
 });
@@ -1435,7 +1459,7 @@ ipcMain.handle('sync:getSyncedItems', (_event, mountPoint: string) => {
   try {
     return getSyncedItems(mountPoint);
   } catch (error) {
-    log.error('getSyncedItems error:', error);
+    logSyncError(log, 'getSyncedItems error', error);
     return [];
   }
 });
@@ -1465,6 +1489,8 @@ ipcMain.handle(
             warn: (m) => log.warn('[sync]', m),
             error: (m) => log.error('[sync]', m),
             debug: (m) => log.debug('[sync]', m),
+            // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
+            trackFailed: (m) => log.warn('[track-failed]', m),
           },
         },
       );
@@ -1482,7 +1508,7 @@ ipcMain.handle(
       }
       return result;
     } catch (error) {
-      log.error('removeItems error:', error);
+      logSyncError(log, 'removeItems error', error);
       return { removed: 0, errors: [error instanceof Error ? error.message : String(error)] };
     }
   },
@@ -1510,6 +1536,8 @@ ipcMain.handle(
             warn: (m) => log.warn('[sync]', m),
             error: (m) => log.error('[sync]', m),
             debug: (m) => log.debug('[sync]', m),
+            // ORAIN-0740 AC3 (cycle 2): trackFailed is REQUIRED on SyncLogger.
+            trackFailed: (m) => log.warn('[track-failed]', m),
           },
         },
       );
@@ -1528,7 +1556,7 @@ ipcMain.handle(
       clearDestinationRecords(destinationPath);
       return { deleted: result.removed, errors: result.errors };
     } catch (error) {
-      log.error('clearDestination error:', error);
+      logSyncError(log, 'clearDestination error', error);
       return { deleted: 0, errors: [error instanceof Error ? error.message : String(error)] };
     }
   },

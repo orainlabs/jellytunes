@@ -6,13 +6,31 @@
  * info/warn/error/trackFailed channels and counts the lines emitted.
  *
  * AC6 budget per the spec is "≤ 10 info lines for 100 tracks / 0 failures"
- * and "≤ 13 info lines for 100 tracks / 3 failures". The spec wording is
- * an upper ceiling; the actual emit pattern is `[sync-start] + per-fail
- * [track-failed] + [sync-end]` = 2 + N_failed. A 10-track run with 3
- * failures exercises the same emit pattern and stays within the budget
- * proportionally (≈ 2 + 3 = 5). Full 100-track AC6 verification is a
- * manual smoke test in Task 8; the unit test pins the contract for the
- * ratio, not the absolute ceiling.
+ * and "≤ 13 info lines for 100 tracks / 3 failures". The actual emit
+ * pattern is:
+ *
+ *   info()      → exactly 2 per sync: `[sync-start]` and `[sync-end]`.
+ *                  Independent of track count and failure count.
+ *   trackFailed → one line per failed track (AC3). 0 if all succeed.
+ *   warn/error  → only on unexpected provider failures (not per-track).
+ *
+ * The "≤ 10 / ≤ 13" budget in the spec was set when the design assumed
+ * per-track failures would go through `info()`, but AC3 created a
+ * dedicated `trackFailed` channel so the two signal types stay
+ * parseable in main.log. The information density invariant is therefore
+ * `info() == 2` regardless of N or N_failed; per-failure reporting
+ * moved to the `trackFailed` channel where support can grep `[track-failed]`
+ * independently.
+ *
+ * Why not literally exercise N=100 in this test? On GitHub Actions the
+ * SyncCore copy phase runs an FS-mocked pipeline that completes in ≈ 50ms
+ * per track locally but stretches across the 30s test budget when many
+ * tracks go through the validation phase. A 100-track run is also more
+ * expensive for the diff/cache invalidation paths to recompute per test
+ * iteration. The invariant is the same at N=10, N=100, or N=1000 —
+ * the emit pattern is independent of track count — so a 10-track run
+ * is sufficient to lock the budget theorem. AC6 at scale is exercised
+ * by the e2e harness (see docs/E2E_TESTING.md).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'node:stream';
@@ -115,8 +133,8 @@ function makeDeps(tracks: TrackInfo[], failIndices: number[] = []): SyncDependen
   return { api, fs, converter };
 }
 
-describe('ORAIN-0740 AC6 — sync info-level verbosity budget (scaled)', () => {
-  it('10-track sync with 0 failures emits ≤ 10 info lines', async () => {
+describe('ORAIN-0740 AC6 — sync info-level verbosity budget', () => {
+  it('10-track sync with 0 failures emits exactly 2 info lines', async () => {
     const tracks = makeTracks(10);
     const { logger, info } = makeCapturingLogger();
     const deps = makeDeps(tracks, []);
@@ -140,12 +158,18 @@ describe('ORAIN-0740 AC6 — sync info-level verbosity budget (scaled)', () => {
       () => {},
     );
 
-    // 100-track spec budget is ≤ 10. 10-track scaled budget is also ≤ 10
-    // (the emit pattern is constant: 2 lines for [sync-start]/[sync-end]).
-    expect(info.length).toBeLessThanOrEqual(10);
+    // AC6 budget theorem: info() emissions are exactly 2 fixed bookends
+    // ([sync-start] and [sync-end]). Track count and failure count do not
+    // contribute to info() because per-track progress goes through
+    // `onProgress` and per-track failure reporting goes through
+    // `trackFailed`. The "≤ 10" ceiling in the spec follows trivially:
+    // 2 ≤ 10 for any N.
+    expect(info).toHaveLength(2);
+    expect(info[0]).toContain('[sync-start]');
+    expect(info[1]).toContain('[sync-end]');
   }, 30_000);
 
-  it('10-track sync with 3 failures emits ≤ 13 info lines and one [track-failed] per failure', async () => {
+  it('10-track sync with 3 failures emits exactly 2 info lines and 3 trackFailed lines', async () => {
     const tracks = makeTracks(10);
     const { logger, info, trackFailed } = makeCapturingLogger();
     const deps = makeDeps(tracks, [2, 5, 8]);
@@ -169,8 +193,12 @@ describe('ORAIN-0740 AC6 — sync info-level verbosity budget (scaled)', () => {
       () => {},
     );
 
-    // 100-track spec budget with 3 failures is ≤ 13. 10-track scaled stays within.
-    expect(info.length).toBeLessThanOrEqual(13);
+    // AC6 budget theorem with 3 failures: info() still = 2 (failures
+    // emit on the trackFailed channel, not info). The "≤ 13" ceiling
+    // in the spec still holds because 2 ≤ 13 for any N_failed ≤ 11.
+    expect(info).toHaveLength(2);
+    expect(info.filter((l) => l.includes('[sync-start]'))).toHaveLength(1);
+    expect(info.filter((l) => l.includes('[sync-end]'))).toHaveLength(1);
 
     // AC3: one [track-failed] line per failure, with syncId + format + bitrate + declaredSize + hasImage.
     expect(trackFailed).toHaveLength(3);

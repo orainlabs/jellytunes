@@ -198,6 +198,25 @@ export type SyncPhase =
   'fetching' | 'copying' | 'converting' | 'validating' | 'complete' | 'cancelled' | 'error';
 
 /**
+ * Per-track phase — a strict subset of SyncPhase used for SyncError.phase
+ * tagging (ORAIN-0739). Different from the lifecycle SyncPhase because a
+ * track error only ever happens inside a stable operation phase, never
+ * in 'fetching' / 'complete' / 'cancelled' / 'error' which are wrapper
+ * states, not track-level work. This split between lifecycle and
+ * per-track phases was intentional — keeping them separate is a way to
+ * document "you can't fail a track in 'complete'".
+ *
+ * ORAIN-0740 cycle 2 (LOW): previously re-declared inline as a literal
+ * union inside `SyncError.phase`. That duplicated the source of truth
+ * and made it easy to drift when a new track-level phase is added
+ * (e.g. ORAIN-0739 added 'conversion' twice in different casts). The
+ * named alias `TrackFailurePhase` keeps the literal-union shape while
+ * naming it once, and `SyncError['phase']` reuses it via union with
+ * 'unknown' for "we don't know which phase this error came from".
+ */
+export type TrackFailurePhase = 'download' | 'validation' | 'conversion' | 'tagging' | 'write';
+
+/**
  * Progress event data
  */
 export interface SyncProgress {
@@ -241,8 +260,12 @@ export interface SyncError {
   trackName: string;
   /** Human-readable error message (e.g. FFmpeg stderr tail, "Permission denied"). */
   message: string;
-  /** Optional sync phase (download | validation | conversion | tagging | write). ORAIN-0739. */
-  phase?: 'download' | 'validation' | 'conversion' | 'tagging' | 'write';
+  /** Optional sync phase (download | validation | conversion | tagging | write). ORAIN-0739.
+   *  ORAIN-0740 cycle 2 (LOW): previously the inline union
+   *  `'download' | 'validation' | 'conversion' | 'tagging' | 'write'`
+   *  duplicated `TrackFailurePhase`. Now declared once and referenced
+   *  here so a future phase addition updates every call site at once. */
+  phase?: TrackFailurePhase;
 }
 
 /**
@@ -253,6 +276,13 @@ export interface SyncResult {
   success: boolean;
   /** Number of tracks successfully copied/converted */
   tracksCopied: number;
+  /** ORAIN-0740 cycle 2 (AC2): number of tracks that passed through the
+   * FFmpeg conversion path (convertToMp3 && needsConversion). Distinct
+   * from `tracksCopied`, which counts every track that ended up on the
+   * destination regardless of conversion. Without this counter, support
+   * cannot tell a sync that copied 100 MP3 originals from one that
+   * transcoded 100 FLAC originals to MP3. */
+  tracksConverted: number;
   /** Number of tracks skipped (already up-to-date on device) */
   tracksSkipped: number;
   /** Number of tracks re-tagged (metadata-only update, no re-download) */
@@ -371,15 +401,19 @@ export interface JellyfinPlaylistItem {
  * Injected as an optional dependency so the module stays testable without electron-log.
  *
  * ORAIN-0740: `trackFailed` is the channel for one [track-failed] line per
- * failed track. Optional so legacy callers (sync.test.ts fixtures) keep
- * compiling without it.
+ * failed track. Required (not optional) — making it required forces every
+ * caller (production + tests) to wire it; previously the optional chain
+ * `this.log.trackFailed?.(...)` silently dropped all [track-failed] lines
+ * in production because the seven `logger:` blocks in src/main/index.ts
+ * never defined it. The tests passed only because their capturing helpers
+ * happened to define it.
  */
 export interface SyncLogger {
   info: (msg: string) => void;
   warn: (msg: string) => void;
   error: (msg: string) => void;
   debug: (msg: string) => void;
-  trackFailed?: (msg: string) => void;
+  trackFailed: (msg: string) => void;
 }
 
 /**

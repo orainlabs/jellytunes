@@ -139,6 +139,7 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         error: (msg: string) => {
           errorLogs.push(msg);
         },
+        trackFailed: () => {},
       };
       const converter = createFFmpegConverter(logger);
 
@@ -179,6 +180,7 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         error: (msg: string) => {
           errorLogs.push(msg);
         },
+        trackFailed: () => {},
       };
       const converter = createFFmpegConverter(logger);
       // ORAIN-0732: signature switched from Readable to path. We pass a
@@ -238,6 +240,7 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         error: (msg: string) => {
           errorLogs.push(msg);
         },
+        trackFailed: () => {},
       };
       const converter = createFFmpegConverter(logger);
 
@@ -279,6 +282,7 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         error: (msg: string) => {
           errorLogs.push(msg);
         },
+        trackFailed: () => {},
       };
       const converter = createFFmpegConverter(logger);
 
@@ -320,6 +324,7 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         error: (m: string) => {
           errorLogs.push(m);
         },
+        trackFailed: () => {},
       };
       const converter = createFFmpegConverter(logger);
 

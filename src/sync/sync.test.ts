@@ -1251,6 +1251,7 @@ describe('Error Handling', () => {
         warn: vi.fn(),
         error: vi.fn(),
         debug: vi.fn(),
+        trackFailed: vi.fn(),
       };
 
       const deps: SyncDependencies = {
@@ -1350,6 +1351,7 @@ describe('Error Handling', () => {
         warn: vi.fn(),
         error: vi.fn(),
         debug: vi.fn(),
+        trackFailed: vi.fn(),
       };
 
       const core = createSyncCore(validConfig, {
