@@ -278,17 +278,18 @@ describe('buildCoverArtUrl', () => {
     expect(u).toContain('format=Jpg');
   });
 
-  it('matches Jellyfin path conventions: Users/{userId}/Items/{id}/Images/Primary', () => {
+  // ORAIN-0749 AC1: Jellyfin 10.10.3 and 12.0.0 only accept the unscoped
+  // `/Items/{id}/Images/Primary` route. The user-scoped `/Users/{u}/Items/...`
+  // variant returns 404 with an empty body (measured 2026-09-28 on v11 and v12).
+  it('matches Jellyfin path conventions: /Items/{id}/Images/Primary (no /Users/ segment)', () => {
     expect(buildCoverArtUrl('https://x', 'u9', 'i1')).toContain('/Items/i1/Images/Primary');
   });
 
-  it('preserves user-id (Jellyfin requires the user in the path)', () => {
-    expect(buildCoverArtUrl('https://x', 'u9', 'i1')).toContain('/Users/u9/');
+  it('does NOT include a /Users/ segment — the user-scoped path is a 404 in v11/v12', () => {
+    expect(buildCoverArtUrl('https://x', 'u9', 'i1')).not.toContain('/Users/');
   });
 
   it('strips a trailing slash from the base URL', () => {
-    expect(buildCoverArtUrl('https://x/', 'u', 'i')).toContain(
-      'https://x/Users/u/Items/i/Images/Primary',
-    );
+    expect(buildCoverArtUrl('https://x/', 'u', 'i')).toContain('https://x/Items/i/Images/Primary');
   });
 });

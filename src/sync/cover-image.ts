@@ -106,14 +106,23 @@ export function getJpegFrameType(bytes: Buffer): JpegFrameType {
  *     perceptible quality change for an embedded thumbnail; above 85 the
  *     file can grow past the original size when the source is already a
  *     high-quality JPEG.
+ *
+ * ORAIN-0749: the user-scoped path (`/Users/{userId}/Items/{id}/Images/Primary`)
+ * returns 404 with an empty body on Jellyfin 10.10.3 and 12.0.0. Only the
+ * unscoped `/Items/{id}/Images/Primary` variant is accepted. `userId` is kept
+ * in the signature for back-compat with existing callers but is no longer
+ * embedded in the URL.
  */
 export function buildCoverArtUrl(baseUrl: string, userId: string, itemId: string): string {
   const base = baseUrl.replace(/\/+$/, '');
   // Path-segments come from an untrusted source (API responses, third-party
   // URLs); encode them so a caller that later parses this URL won't inherit
-  // a path-injection bug if `userId`/`itemId` ever carries `#`, `?`, or `/`.
+  // a path-injection bug if `itemId` ever carries `#`, `?`, or `/`.
+  // `userId` is unused on the wire (see JSDoc) but accepted in the signature
+  // so existing call sites compile unchanged.
+  void userId;
   return (
-    `${base}/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}/Images/Primary` +
+    `${base}/Items/${encodeURIComponent(itemId)}/Images/Primary` +
     `?maxWidth=${COVER_MAX_DIM}&maxHeight=${COVER_MAX_DIM}` +
     `&quality=${COVER_QUALITY}&format=${COVER_FORMAT}`
   );

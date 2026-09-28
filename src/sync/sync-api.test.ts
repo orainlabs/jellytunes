@@ -1169,10 +1169,13 @@ describe('sync-api', () => {
 
       await api.getCoverArt('track-1');
       expect(seenUrl.value).not.toBeNull();
-      // Pin the user-scoped path prefix; a regression that silently drops
-      // `/Users/{userId}/` (Jellyfin requires the user segment) would
-      // otherwise pass as long as `/Items/track-1/...` is intact.
-      expect(seenUrl.value).toContain('/Users/user-1/Items/track-1/Images/Primary');
+      // ORAIN-0749 AC1: pin the unscoped `/Items/{id}/Images/Primary` path.
+      // Jellyfin 10.10.3 and 12.0.0 reject the user-scoped variant with 404
+      // (empty body), so a regression that silently adds `/Users/{userId}/`
+      // would pass this URL-shape check but fail end-to-end. The negative
+      // assertion locks the /Users/ segment out.
+      expect(seenUrl.value).toContain('/Items/track-1/Images/Primary');
+      expect(seenUrl.value).not.toContain('/Users/');
       expect(seenUrl.value).toContain('maxWidth=500');
       expect(seenUrl.value).toContain('maxHeight=500');
       expect(seenUrl.value).toContain('quality=85');

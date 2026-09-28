@@ -153,9 +153,48 @@ function encode(track, index) {
   execFileSync(ffmpeg.path, args);
 }
 
+/**
+ * ORAIN-0749 AC4: synthesize a 600x600 baseline JPEG cover for *Album Beta*
+ * so the end-to-end test can verify that:
+ *   - `embed` mode writes the album cover into each MP3 (≤ 500 px, baseline,
+ *     < 150 KB) and does NOT create a `cover.jpg` companion in the destination.
+ *   - `companion` mode writes exactly one `cover.jpg` per album directory and
+ *     leaves the MP3s without attached art.
+ *   - `off` mode never asks for cover art and never produces a `cover.jpg`.
+ *
+ * Album Gamma deliberately gets no cover so the E2E test can verify the
+ * "no cover" path: one warning per album, no embedded art, no companion file.
+ */
+function generateCoverJpg(outDir, width = 600, height = 600) {
+  mkdirSync(outDir, { recursive: true });
+  const out = join(outDir, 'cover.jpg');
+  // testsrc=size=WxH produces a deterministic colour pattern; baseline JPEG
+  // (the only SOF variant every car stereo / Walkman we care about reads).
+  // We force 1 frame (-frames:v 1) so the output is a single image.
+  execFileSync(ffmpeg.path, [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    `color=c=teal:size=${width}x${height}:duration=1:rate=1`,
+    '-frames:v',
+    '1',
+    '-q:v',
+    '2',
+    out,
+  ]);
+  return out;
+}
+
 export function generate() {
   rmSync(MUSIC_ROOT, { recursive: true, force: true });
   TRACKS.forEach(encode);
+  // ORAIN-0749 AC4: Album Beta gets a 600x600 JPEG cover. Album Gamma
+  // intentionally stays bare to exercise the missing-cover warning path.
+  generateCoverJpg(join(MUSIC_ROOT, 'Test Artist A', 'Album Beta'));
   return MUSIC_ROOT;
 }
 

@@ -407,6 +407,23 @@ class SyncCoreImpl {
   private processedCoverDirs = new Set<string>();
   /** Cover art cache keyed by Jellyfin album ID — avoids N HTTP requests for the same album's cover */
   private coverArtCache = new Map<string, Buffer>();
+  /**
+   * ORAIN-0749: in-flight cover-art fetches, keyed by cache key (albumId or
+   * trackId when no albumId). When two tracks in the same album are copied
+   * concurrently (`COPY_CONCURRENCY = 6`) they share the same promise so we
+   * only ever pay for one HTTP round-trip per album. On settlement the
+   * result is moved into `coverArtCache` (success) or
+   * `coverArtFailedAlbums` (failure) and this entry is dropped.
+   */
+  private coverArtInFlight = new Map<string, Promise<Buffer | undefined>>();
+  /**
+   * ORAIN-0749: album IDs whose cover fetch (album first, track fallback)
+   * failed. Lives outside `coverArtCache` so the ORAIN-0740 `[track-failed]`
+   * line keeps `hasImage = false` for tracks in albums without art. Without
+   * this, `hasImage` would falsely report true whenever a failed fetch was
+   * cached, masking the missing cover from the diagnostic line.
+   */
+  private coverArtFailedAlbums = new Set<string>();
   /** Session-level counter for cover art fetch failures — used to emit a single UI warning */
   private coverArtFailCount = 0;
 
@@ -2987,55 +3004,136 @@ class SyncCoreImpl {
 
   /**
    * Fetch cover art for a track if the mode requires it.
-   * Uses albumId for caching to avoid N HTTP requests for the same album's cover.
+   *
+   * ORAIN-0749: fetch the **album** image first; if that 404s, fall back
+   * to the **track** image. In libraries whose cover is a `cover.jpg`/
+   * `folder.jpg` folder image the track itself has no image of its own,
+   * so starting with the track would burn a 404 per track. Starting with
+   * the album also fixes the long-standing bug where the first track's
+   * (possibly missing) image dictated the entire album.
+   *
+   * Caching is keyed by `albumId` (or `trackId` when `albumId` is absent).
+   * Concurrent callers for the same key share a single in-flight promise
+   * so `COPY_CONCURRENCY` (6) tracks in one album still make at most two
+   * HTTP requests (album, then track) total.
+   *
+   * Failed fetches are remembered in `coverArtFailedAlbums`, which lives
+   * outside `coverArtCache` so the ORAIN-0740 `[track-failed]` line keeps
+   * `hasImage = false` for a track in an album without art.
+   *
    * Returns undefined when coverArtMode is 'off' or on error (non-blocking).
    */
-  private async getCoverArtBuffer(
+  private getCoverArtBuffer(
     trackId: string,
     albumId: string | undefined,
     mode: CoverArtMode,
   ): Promise<Buffer | undefined> {
-    if (mode === 'off') return undefined;
+    if (mode === 'off') return Promise.resolve(undefined);
 
-    // Check cache first using albumId
     const cacheKey = albumId ?? trackId;
-    if (this.coverArtCache.has(cacheKey)) {
-      return this.coverArtCache.get(cacheKey);
+
+    // Successful cache hit — fast path.
+    const cached = this.coverArtCache.get(cacheKey);
+    if (cached) return Promise.resolve(cached);
+
+    // Already known to be missing: skip the HTTP round-trips. The warning
+    // has already been logged once per (albumId|trackId).
+    if (this.coverArtFailedAlbums.has(cacheKey)) {
+      return Promise.resolve(undefined);
     }
 
-    try {
-      const buffer = await this.deps.api.getCoverArt(trackId);
+    // Concurrent dedup: if another track in the same album is already
+    // fetching, just wait on the same promise.
+    const inFlight = this.coverArtInFlight.get(cacheKey);
+    if (inFlight) return inFlight;
 
-      // Discard cover art exceeding 5MB to avoid embedding bloated images
-      const MAX_COVER_SIZE = 5 * 1024 * 1024; // 5 MB
-      if (buffer.length > MAX_COVER_SIZE) {
-        this.progressEmitter.emit({
-          phase: this.currentPhase,
-          current: 0,
-          total: 0,
-          warning: 'cover_art_too_large',
-        });
-        this.log.warn(
-          `Cover art for track ${trackId} exceeds 5 MB (${buffer.length} bytes) — discarding`,
-        );
-        return undefined;
-      }
+    const promise = this._fetchCoverArt(trackId, albumId, mode);
+    this.coverArtInFlight.set(cacheKey, promise);
+    // Always drop the in-flight entry once settled, regardless of outcome;
+    // the result lives on in `coverArtCache` or `coverArtFailedAlbums`.
+    void promise.finally(() => {
+      this.coverArtInFlight.delete(cacheKey);
+    });
+    return promise;
+  }
 
-      this.coverArtCache.set(cacheKey, buffer);
-      return buffer;
-    } catch {
-      this.coverArtFailCount++;
-      if (this.coverArtFailCount === 1) {
-        this.progressEmitter.emit({
-          phase: this.currentPhase,
-          current: 0,
-          total: 0,
-          warning: 'cover_art_unavailable',
-        });
+  /**
+   * Worker behind {@link getCoverArtBuffer}. Tries album first, falls back
+   * to track. On success caches the buffer; on failure caches the albumId
+   * in `coverArtFailedAlbums` and emits a single warning per album.
+   */
+  private async _fetchCoverArt(
+    trackId: string,
+    albumId: string | undefined,
+    mode: CoverArtMode,
+  ): Promise<Buffer | undefined> {
+    void mode; // already filtered by the caller
+    const cacheKey = albumId ?? trackId;
+
+    // Build the candidate list: album first (when we have one), then track.
+    const candidates: Array<{ id: string; kind: 'album' | 'track' }> = [];
+    if (albumId) candidates.push({ id: albumId, kind: 'album' });
+    candidates.push({ id: trackId, kind: 'track' });
+
+    let lastError: unknown = undefined;
+    for (const { id, kind } of candidates) {
+      try {
+        const buffer = await this.deps.api.getCoverArt(id);
+
+        // Discard cover art exceeding 5MB to avoid embedding bloated images
+        const MAX_COVER_SIZE = 5 * 1024 * 1024; // 5 MB
+        if (buffer.length > MAX_COVER_SIZE) {
+          this.progressEmitter.emit({
+            phase: this.currentPhase,
+            current: 0,
+            total: 0,
+            warning: 'cover_art_too_large',
+          });
+          this.log.warn(
+            `Cover art for ${kind} ${id} exceeds 5 MB (${buffer.length} bytes) — discarding`,
+          );
+          // Treat as failure for the purpose of de-duplication within the album.
+          this.coverArtFailedAlbums.add(cacheKey);
+          return undefined;
+        }
+
+        this.coverArtCache.set(cacheKey, buffer);
+        return buffer;
+      } catch (err) {
+        lastError = err;
+        // 404 → try the next candidate. Any other error (timeout, network)
+        // also bubbles up through the loop's `lastError`; we still try the
+        // fallback before giving up so a flaky album endpoint doesn't take
+        // out the cover for the whole sync.
+        if (err instanceof ApiError && err.statusCode !== 404) {
+          // Non-404: stop the loop, log + cache failure below.
+          break;
+        }
       }
-      this.log.warn(`Cover art not available for track ${trackId}`);
-      return undefined;
     }
+
+    // Both fetches failed (or the first one failed with a non-404). Emit
+    // exactly one warning per (albumId|trackId), pinned with the API status
+    // so the cause is in the log without a separate probe.
+    this.coverArtFailCount++;
+    if (this.coverArtFailCount === 1) {
+      this.progressEmitter.emit({
+        phase: this.currentPhase,
+        current: 0,
+        total: 0,
+        warning: 'cover_art_unavailable',
+      });
+    }
+    const status = lastError instanceof ApiError ? lastError.statusCode : 0;
+    if (albumId) {
+      this.log.warn(
+        `Cover art not available for album ${albumId} (track ${trackId}): HTTP ${status}`,
+      );
+    } else {
+      this.log.warn(`Cover art not available for track ${trackId}: HTTP ${status}`);
+    }
+    this.coverArtFailedAlbums.add(cacheKey);
+    return undefined;
   }
 
   /**

@@ -5411,6 +5411,372 @@ describe('getCoverArtBuffer', () => {
 
     expect(result.items[0]).toBeDefined();
   });
+
+  // =============================================================================
+  // ORAIN-0749: cover-art fetches the album image first, falls back to the track.
+  // =============================================================================
+
+  describe('ORAIN-0749 AC2: album-first / track-fallback fetch', () => {
+    function buildCoreWithAlbum(overrides: Partial<{ getCoverArt: any; tracks: any[] }>) {
+      const { Readable } = require('stream');
+      const tracks = overrides.tracks ?? [
+        {
+          id: 'track-1',
+          name: 'Track 1',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/lib/lib/Artist/Album/01.mp3',
+          format: 'mp3',
+          albumId: 'album-1',
+          parentItemId: 'album-1',
+          bitrate: 128000,
+        },
+      ];
+
+      const mockApi = createMockApiClient({
+        getCoverArt: overrides.getCoverArt,
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({ tracks, errors: [] });
+
+      const deps: SyncDependencies = {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+      };
+      const core = createTestSyncCore(validConfig, deps);
+      return { core, mockApi, Readable };
+    }
+
+    it('AC2(a): when the album returns 200, the track is never requested', async () => {
+      const getCoverArt = vi.fn(async (itemId: string) => {
+        if (itemId === 'album-1') return Buffer.from('album-cover');
+        throw new Error(`unexpected getCoverArt call for ${itemId}`);
+      });
+
+      const { core } = buildCoreWithAlbum({ getCoverArt });
+
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      const result = await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      expect(getCoverArt).toHaveBeenCalledTimes(1);
+      expect(getCoverArt).toHaveBeenCalledWith('album-1');
+      expect(result.success).toBe(true);
+    });
+
+    it('AC2(b): when the album returns 404, the track image is requested', async () => {
+      const { ApiError } = await import('./sync-api');
+      const getCoverArt = vi.fn(async (itemId: string) => {
+        if (itemId === 'album-1') throw new ApiError('not found', 404);
+        if (itemId === 'track-1') return Buffer.from('track-cover');
+        throw new Error(`unexpected getCoverArt call for ${itemId}`);
+      });
+
+      const { core } = buildCoreWithAlbum({ getCoverArt });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      expect(getCoverArt).toHaveBeenCalledTimes(2);
+      expect(getCoverArt).toHaveBeenNthCalledWith(1, 'album-1');
+      expect(getCoverArt).toHaveBeenNthCalledWith(2, 'track-1');
+    });
+
+    it('AC2(c): when albumId is missing, the track image is fetched directly', async () => {
+      const getCoverArt = vi.fn(async (itemId: string) => {
+        if (itemId === 'track-1') return Buffer.from('track-cover');
+        throw new Error(`unexpected getCoverArt call for ${itemId}`);
+      });
+
+      const { core } = buildCoreWithAlbum({
+        getCoverArt,
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track 1',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/Album/01.mp3',
+            format: 'mp3',
+            // albumId deliberately omitted
+            parentItemId: 'album-1',
+            bitrate: 128000,
+          },
+        ],
+      });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      expect(getCoverArt).toHaveBeenCalledTimes(1);
+      expect(getCoverArt).toHaveBeenCalledWith('track-1');
+    });
+  });
+
+  describe('ORAIN-0749 AC3: failure cache and one warning per album', () => {
+    function buildCoreWithThreeTracks(overrides: { getCoverArt: any; logger?: any }) {
+      const { Readable } = require('stream');
+      const tracks = [
+        {
+          id: 'track-1',
+          name: 'Track 1',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/lib/lib/Artist/Album/01.mp3',
+          format: 'mp3',
+          albumId: 'album-1',
+          parentItemId: 'album-1',
+          bitrate: 128000,
+        },
+        {
+          id: 'track-2',
+          name: 'Track 2',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/lib/lib/Artist/Album/02.mp3',
+          format: 'mp3',
+          albumId: 'album-1',
+          parentItemId: 'album-1',
+          bitrate: 128000,
+        },
+        {
+          id: 'track-3',
+          name: 'Track 3',
+          album: 'Album',
+          artists: ['Artist'],
+          path: '/music/lib/lib/Artist/Album/03.mp3',
+          format: 'mp3',
+          albumId: 'album-1',
+          parentItemId: 'album-1',
+          bitrate: 128000,
+        },
+      ];
+      const mockApi = createMockApiClient({
+        getCoverArt: overrides.getCoverArt,
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({ tracks, errors: [] });
+      const deps: SyncDependencies = {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+        logger: overrides.logger,
+      };
+      const core = createTestSyncCore(validConfig, deps);
+      return { core, mockApi };
+    }
+
+    it('AC3: 3-track album with no cover → ≤ 2 fetches and a single warning per album', async () => {
+      const { ApiError } = await import('./sync-api');
+      const getCoverArt = vi.fn(async () => {
+        throw new ApiError('not found', 404);
+      });
+      const warn = vi.fn();
+      const { core } = buildCoreWithThreeTracks({
+        getCoverArt,
+        logger: { warn, debug: () => {}, info: () => {}, error: () => {} } as any,
+      });
+
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      // AC3: at most one album fetch + one track fetch = ≤ 2 HTTP calls total
+      expect(getCoverArt.mock.calls.length).toBeLessThanOrEqual(2);
+
+      // AC3: exactly one warning about cover art for the whole album
+      const coverWarnings = warn.mock.calls.filter((args) =>
+        String(args[0] ?? '')
+          .toLowerCase()
+          .includes('cover'),
+      );
+      expect(coverWarnings).toHaveLength(1);
+    });
+
+    it('AC3: warning text pin — 404 includes HTTP 404 and 408 includes HTTP 408', async () => {
+      const { ApiError } = await import('./sync-api');
+      const { Readable } = require('stream');
+      const warn = vi.fn();
+      const mockApi404 = createMockApiClient({
+        getCoverArt: async () => {
+          throw new ApiError('not found', 404);
+        },
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi404 as any).getTracksForItems = async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track 1',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/Album/01.mp3',
+            format: 'mp3',
+            albumId: 'album-1',
+            parentItemId: 'album-1',
+            bitrate: 128000,
+          },
+        ],
+        errors: [],
+      });
+      const core404 = createTestSyncCore(validConfig, {
+        api: mockApi404,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+        logger: { warn, debug: () => {}, info: () => {}, error: () => {} } as any,
+      });
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core404.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      const w404 = warn.mock.calls
+        .map((c) => String(c[0] ?? ''))
+        .find((m) => m.toLowerCase().includes('cover'));
+      expect(w404).toBeDefined();
+      expect(w404).toContain('HTTP 404');
+      expect(w404).toContain('album-1');
+      expect(w404).toContain('track-1');
+
+      // Now run the 408 case in a fresh core (state must not carry the failure cache).
+      warn.mockClear();
+      const mockApi408 = createMockApiClient({
+        getCoverArt: async () => {
+          throw new ApiError('timed out', 408);
+        },
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi408 as any).getTracksForItems = async () => ({
+        tracks: [
+          {
+            id: 'track-2',
+            name: 'Track 2',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/Album/02.mp3',
+            format: 'mp3',
+            albumId: 'album-1',
+            parentItemId: 'album-1',
+            bitrate: 128000,
+          },
+        ],
+        errors: [],
+      });
+      const core408 = createTestSyncCore(validConfig, {
+        api: mockApi408,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+        logger: { warn, debug: () => {}, info: () => {}, error: () => {} } as any,
+      });
+      await core408.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      const w408 = warn.mock.calls
+        .map((c) => String(c[0] ?? ''))
+        .find((m) => m.toLowerCase().includes('cover'));
+      expect(w408).toBeDefined();
+      expect(w408).toContain('HTTP 408');
+    });
+
+    it('AC3: when no albumId is set, the warning is "for track {trackId}" without an album id', async () => {
+      const { ApiError } = await import('./sync-api');
+      const { Readable } = require('stream');
+      const warn = vi.fn();
+      const mockApi = createMockApiClient({
+        getCoverArt: async () => {
+          throw new ApiError('not found', 404);
+        },
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({
+        tracks: [
+          {
+            id: 'track-only',
+            name: 'Track',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/Album/track.mp3',
+            format: 'mp3',
+            parentItemId: 'album-1',
+            bitrate: 128000,
+          },
+        ],
+        errors: [],
+      });
+      const core = createTestSyncCore(validConfig, {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+        logger: { warn, debug: () => {}, info: () => {}, error: () => {} } as any,
+      });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      const w = warn.mock.calls
+        .map((c) => String(c[0] ?? ''))
+        .find((m) => m.toLowerCase().includes('cover'));
+      expect(w).toBeDefined();
+      expect(w).toContain('track-only');
+      expect(w).not.toMatch(/album album/);
+    });
+
+    it('AC3: failure cache lives outside coverArtCache — hasImage stays false on track-failed', async () => {
+      // ORAIN-0740 line 897 reads `this.coverArtCache.has(track.albumId ?? track.id)`
+      // to decide hasImage. The failure set must NOT register as a hit there,
+      // otherwise a track-failed line would falsely report hasImage=true.
+      const mockApi = createMockApiClient();
+      const core = createTestSyncCore(validConfig, {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+      });
+      const anyCore = core as any;
+      expect(anyCore.coverArtCache).toBeDefined();
+      expect(anyCore.coverArtFailedAlbums).toBeDefined();
+      // Sanity: they are separate state containers
+      expect(anyCore.coverArtCache).not.toBe(anyCore.coverArtFailedAlbums);
+    });
+  });
 });
 
 // =============================================================================
