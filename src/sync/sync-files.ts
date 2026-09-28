@@ -481,13 +481,17 @@ export function lastFFmpegError(stderr: string, maxLength = 200): string | undef
  * ORAIN-0752 AC4: the FFmpeg stderr tail may contain an absolute path
  * (POSIX `/…`, Windows `C:\` or `C:/`, UNC `\\server\share`) — typically
  * the temp file FFmpeg could not open. The user-facing SyncError.message
- * must never leak an absolute path; reuse the same scrub regex used by
- * the download error path (sync-core.ts:1837) so the two error sources
+ * must never leak an absolute path. The scrub anchors at the path-start
+ * (`/` or `\`, optionally preceded by a Windows drive letter) and
+ * consumes subsequent segments that may themselves contain whitespace
+ * (e.g. `C:\Program Files\…`, `C:\Users\John Doe\…`); only `\` and `/`
+ * segment boundaries are required. Reuses the same regex shape as the
+ * download-error path in `sync-core.ts:1842` so the two error sources
  * converge on `<path>` substitution.
  */
 export function ffmpegErrorMessage(code: number, stderr: string): string {
   const rawTail = lastFFmpegError(stderr);
-  const tail = rawTail?.replace(/(?:[a-zA-Z]:)?[\\/][^\s:'"]+/g, '<path>');
+  const tail = rawTail?.replace(/(?:[a-zA-Z]:)?[\\/](?:[^\\/:"']*[\\/])*[^\\/:"']*/g, '<path>');
   return tail ? `FFmpeg exited with code ${code}: ${tail}` : `FFmpeg exited with code ${code}`;
 }
 

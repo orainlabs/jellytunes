@@ -157,6 +157,33 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
       );
     });
 
+    // ORAIN-0752 AC4 rework — whitespace-bearing paths. The previous
+    // `[^\s:'"]` segment character class stopped at the first whitespace,
+    // leaking fragments like "Program Files" or "John Doe" to the user.
+    // The scrub now anchors at the path-start and consumes segments that
+    // may themselves contain spaces — only `\` and `/` segment
+    // boundaries are required.
+    it('replaces a Windows path with a whitespace-bearing segment ("Program Files") with <path>', () => {
+      const tail = 'No such file or directory: C:\\Program Files\\FFmpeg\\file.mp3';
+      expect(ffmpegErrorMessage(1, tail)).toBe(
+        'FFmpeg exited with code 1: No such file or directory: <path>',
+      );
+    });
+
+    it('replaces a Windows path with a whitespace-bearing segment ("John Doe") with <path>', () => {
+      const tail = 'No such file or directory: C:\\Users\\John Doe\\AppData\\Local\\Temp\\jt.mp3';
+      expect(ffmpegErrorMessage(1, tail)).toBe(
+        'FFmpeg exited with code 1: No such file or directory: <path>',
+      );
+    });
+
+    it('replaces a POSIX path with a whitespace-bearing segment with <path>', () => {
+      const tail = 'No such file or directory: /Users/Jane Smith/Music/file.mp3';
+      expect(ffmpegErrorMessage(1, tail)).toBe(
+        'FFmpeg exited with code 1: No such file or directory: <path>',
+      );
+    });
+
     it('leaves a plain-text stderr tail untouched (no-op scrub)', () => {
       expect(ffmpegErrorMessage(2, 'No such file or directory')).toBe(
         'FFmpeg exited with code 2: No such file or directory',

@@ -1835,11 +1835,17 @@ class SyncCoreImpl {
             // the user-visible error message. The full `rawMessage` may
             // contain local paths surfaced by the HTTP/IO layer; AC8
             // forbids exposing them. Match POSIX (`/…`), Windows
-            // (`C:\…`, `C:/…`), and UNC (`\\server\share`) styles. The
-            // `\\` case is the POSIX-escape interpretation; in the regex
-            // it must be unescaped to `\\` to match a literal backslash.
+            // (`C:\…`, `C:/…`), and UNC (`\\server\share`) styles.
+            //
+            // The scrub anchors at the path-start (`/` or `\`, optionally
+            // preceded by a Windows drive letter) and consumes subsequent
+            // segments that may themselves contain whitespace
+            // (e.g. `C:\Program Files\…`, `C:\Users\John Doe\…`); only
+            // `\` and `/` segment boundaries are required. The same regex
+            // is reused in `sync-files.ts:ffmpegErrorMessage` so both
+            // error sources converge on `<path>` substitution.
             const sanitizedMessage = rawMessage
-              .replace(/(?:[a-zA-Z]:)?[\\/][^\s:'"]+/g, '<path>')
+              .replace(/(?:[a-zA-Z]:)?[\\/](?:[^\\/:"']*[\\/])*[^\\/:"']*/g, '<path>')
               .slice(0, 200);
             phaseError = new SyncPhaseError('download', `Download failed: ${sanitizedMessage}`);
           }
