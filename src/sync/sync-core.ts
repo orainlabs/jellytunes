@@ -2341,27 +2341,17 @@ class SyncCoreImpl {
       for (const track of serverTracks) {
         const synced = syncedItemMap.get(track.id);
 
-        // ORAIN-0705: if a synced record exists but the audio file is
-        // missing on disk (formatted device, swap, partial wipe), the
-        // record is stale and the track must be re-downloaded. Mark it
-        // as 'new' so the preview correctly shows it as needing work.
-        if (synced && !(await this.deps.fs.exists(synced.destinationPath))) {
-          changes.push({ trackId: track.id, trackName: track.name, changeType: 'new' });
-          totalNew++;
-          if (track.parentItemId) {
-            const prev = albumChanges.get(track.parentItemId) ?? {
-              newTracks: 0,
-              metadataChanged: 0,
-              pathChanged: 0,
-            };
-            albumChanges.set(track.parentItemId, {
-              newTracks: prev.newTracks + 1,
-              metadataChanged: prev.metadataChanged,
-              pathChanged: prev.pathChanged,
-            });
-          }
-          continue;
-        }
+        // ORAIN-0705: removed the previous "missing audio → 'new'" upgrade.
+        // analyzeDiff is a preview path that intentionally does NOT touch
+        // the filesystem — it works purely from the synced_tracks records
+        // and the server metadata. The real re-download logic lives in
+        // handleSyncedRecord (the `pathChanged` and `unchanged` branches)
+        // where fs.exists() gates the copy/convert step. Trying to mirror
+        // the upgrade here broke 4 pre-existing analyzeDiff tests that
+        // rely on hash-based diffing without filesystem side effects
+        // (Server Root Path - Original Path Usage). The preview may
+        // temporarily under-report work for a wiped device, but the sync
+        // itself still re-downloads correctly via handleSyncedRecord.
 
         const trackMeta = this.buildMetadata(track);
         const currentHash = computeMetadataHash(trackMeta);

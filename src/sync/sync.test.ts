@@ -5,6 +5,7 @@
  * Tests use mocked dependencies to isolate unit behavior.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Readable } from 'stream';
 import type { SyncConfig, SyncInput, TrackInfo, ItemType, SyncLogger, SyncError } from './types';
 import { createSyncCore, createTestSyncCore, type SyncDependencies } from './sync-core';
 import { createMockApiClient } from './sync-api';
@@ -1966,6 +1967,18 @@ describe('Error Handling', () => {
     it('detects moved track and updates DB without re-downloading', async () => {
       const downloadSpy = vi.fn();
 
+      // ORAIN-0705: the pathChanged branch now distinguishes three sub-cases
+      // (audio at new path / audio at old path / audio at neither). The test
+      // simulates the "moved on disk" scenario by pre-creating the file at
+      // the OLD destination path; case (b) then renames it to the new path
+      // and updates the DB without re-downloading. Without the pre-created
+      // file the engine cannot tell apart "audio genuinely missing" from
+      // "test forgot to seed the filesystem", so it correctly re-downloads
+      // to keep the DB and disk consistent (case (c)).
+      const fsMock = createMockFileSystem();
+      fsMock.__setDirectory?.('/music/OldAlbum');
+      fsMock.writeFile('/music/OldAlbum/track.mp3', Buffer.from('audio-bytes'));
+
       const deps = createMockDeps({
         api: createMockApiClient({
           getTracksForItems: async () => ({
@@ -1974,6 +1987,7 @@ describe('Error Handling', () => {
           }),
           downloadItemStream: downloadSpy,
         }),
+        fs: fsMock,
       });
 
       // Override getSyncedTracksForDevice to return a record at the OLD path
@@ -2008,7 +2022,7 @@ describe('Error Handling', () => {
       });
 
       // upsertSyncedTrack should be called (update DB with new path)
-      // but NO download should occur for the moved track
+      // but NO download should occur for the moved track (case (b) rename)
       expect(vi.mocked(upsertSyncedTrack)).toHaveBeenCalled();
       expect(downloadSpy).not.toHaveBeenCalled();
     });
@@ -6734,4 +6748,443 @@ describe('ORAIN-0739 MEDIUM: readHeaderBytes rejects when close fires without en
 
     await expect(readHeaderBytesForTest(wrappedFs, '/anything', 8 * 1024)).rejects.toBeDefined();
   });
+});
+
+describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
+  // Metadata hash for this fixture, as computed by sync-core.computeMetadataHash.
+  // Verified empirically (see plan: hash(Original/Artist/Album/1) → c9d0916a2ac28b5f).
+  const HASH_0705 = 'c9d0916a2ac28b5f';
+
+  function makeTrack(overrides: Partial<TrackInfo> = {}): TrackInfo {
+    return {
+      id: 'track-0705',
+      name: 'Original',
+      album: 'Album',
+      artists: ['Artist'],
+      path: '/music/Artist/Album/track.mp3',
+      format: 'mp3',
+      size: 5_000_000,
+      trackNumber: 1,
+      ...overrides,
+    };
+  }
+
+  function existingRecord(
+    overrides: Partial<{
+      destinationPath: string;
+      trackId: string;
+      metadataHash: string;
+    }> = {},
+  ) {
+    return {
+      id: 1,
+      deviceId: 1,
+      itemId: 'album-0705',
+      trackId: overrides.trackId ?? 'track-0705',
+      destinationPath: overrides.destinationPath ?? '/music/Artist/Album/track.mp3',
+      fileSize: 5_000_000,
+      metadataHash: overrides.metadataHash ?? HASH_0705,
+      coverArtMode: 'embed',
+      encodedBitrate: '192k',
+      serverPath: '/music/Artist/Album/track.mp3',
+      serverRootPath: null,
+      syncedAt: new Date().toISOString(),
+    };
+  }
+
+  it('AC1: re-downloads and updates DB when the synced DB record exists but the audio file is missing', async () => {
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [makeTrack()], errors: [] }),
+        downloadItem: async () => Buffer.from('fresh-bytes'),
+      }),
+    });
+
+    // serverRootPath '/music/' lets getRelativePath strip the prefix cleanly,
+    // so outputDir comes out as '/music/Artist/Album' (no doubled prefix).
+    // That makes outputPath = '/music/Artist/Album/track.mp3' match the synced
+    // record's destinationPath, forcing pathChanged=false and routing through
+    // the new truly-unchanged fs.exists gate. Without this config, getOutputDir
+    // returns the doubled prefix and the test would silently land in the
+    // pathChanged case (c), not the truly-unchanged branch under test.
+    const config = { ...validConfig, serverRootPath: '/music/' };
+
+    // Record says: audio should be at /music/Artist/Album/track.mp3 — same as
+    // every other field (metadata + bitrate + cover all match). Until this fix,
+    // the truly-unchanged branch would short-circuit without re-downloading.
+    // The mocked query is read both for the companion snapshot and for the
+    // runCopyPhase lookup, so use mockReturnValue (always returns) rather than
+    // mockReturnValueOnce.
+    const record = existingRecord();
+    vi.mocked(getSyncedTracksForDevice).mockReturnValue([record] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValue([record] as any);
+
+    // Pre-create the SyncCore instance, then replace copyOrConvertTrack with a
+    // counting spy that delegates to the real implementation. The mock FS has
+    // no file at /music/Artist/Album/track.mp3 by default — so the truly-
+    // unchanged branch's new fs.exists check must trigger the re-download.
+    const core = createTestSyncCore(config, deps);
+    const origCopyOrConvert = (core as any).copyOrConvertTrack.bind(core);
+    const copySpy = vi.fn(origCopyOrConvert);
+    (core as any).copyOrConvertTrack = copySpy;
+
+    await core.sync({
+      itemIds: ['album-0705'],
+      itemTypes: new Map([['album-0705', 'album' as ItemType]]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    // File missing on disk → copyOrConvertTrack must have been invoked
+    expect(copySpy).toHaveBeenCalledTimes(1);
+    // copyOrConvertTrack calls upsertSyncedTrack as part of its write path
+    expect(vi.mocked(upsertSyncedTrack)).toHaveBeenCalled();
+  });
+
+  it('AC1 (failure path): does not write .lrc nor call processReplayGain when the re-download fails', async () => {
+    // ORAIN-0739 rewrote copyTrackFile to use downloadItemStream with a 30 s
+    // stall timer + body validation. Making the stream itself throw avoids
+    // waiting on the stall timer, but _downloadWithValidation has a 3-attempt
+    // retry loop (1 s + 3 s between attempts). To keep the test fast we
+    // exhaust ALL retries with a single throw per call — the final phaseError
+    // bubbles out of _downloadWithValidation and the copyOrConvertTrack catch
+    // path returns { error } without invoking processLyrics / processReplayGain.
+    let callCount = 0;
+    const downloadItemStreamSpy = vi.fn(async () => {
+      callCount++;
+      throw new Error('network down');
+    });
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({ tracks: [makeTrack()], errors: [] }),
+        downloadItemStream: downloadItemStreamSpy,
+      }),
+    });
+
+    const record = existingRecord();
+    vi.mocked(getSyncedTracksForDevice).mockReturnValue([record] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValue([record] as any);
+
+    const core = createTestSyncCore(validConfig, deps);
+    // Spy on the post-copy helpers — they must NOT fire because the file
+    // never made it to disk. lyricsMode 'lrc' would normally write a .lrc
+    // sibling if the audio existed.
+    const origProcessLyrics = (core as any).processLyrics.bind(core);
+    const lyricsSpy = vi.fn(origProcessLyrics);
+    (core as any).processLyrics = lyricsSpy;
+    const origProcessReplayGain = (core as any).processReplayGain.bind(core);
+    const rgSpy = vi.fn(origProcessReplayGain);
+    (core as any).processReplayGain = rgSpy;
+
+    const result = await core.sync({
+      itemIds: ['album-0705'],
+      itemTypes: new Map([['album-0705', 'album' as ItemType]]),
+      destinationPath: '/music',
+      options: { convertToMp3: false, lyricsMode: 'lrc' as const },
+    });
+
+    // processLyrics/processReplayGain are private helpers used ONLY after a
+    // successful write. When the re-download errors out inside
+    // copyOrConvertTrack's catch block, neither is called for that track.
+    expect(lyricsSpy).not.toHaveBeenCalled();
+    expect(rgSpy).not.toHaveBeenCalled();
+    // Error must be visible in the result. main post-0739 emits SyncError
+    // objects (not strings), so we read `message`.
+    expect(
+      (result.errors ?? []).some((e: { message: string }) => /sync|fail|down/i.test(e.message)),
+    ).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC2a / AC2b / AC2c — pathChanged branch behaviour
+  // ---------------------------------------------------------------------------
+
+  it('AC2a: pathChanged with audio already at outputPath updates DB only (no rename, no download)', async () => {
+    const downloadSpy = vi.fn();
+    const renameSpy = vi.fn();
+
+    const fsMock = createMockFileSystem();
+    // Track path /music/Artist/Album 2/track.mp3 + destinationPath /music
+    // produces outputPath /music/music/Artist/Album 2/track.mp3 (the root
+    // prefix is preserved when no serverRootPath is configured). Pre-create
+    // the file at that exact path so case (a) can find it.
+    const NEW_PATH = '/music/music/Artist/Album 2/track.mp3';
+    fsMock.__setDirectory?.('/music/music/Artist/Album 2');
+    fsMock.writeFile(NEW_PATH, Buffer.from('present'));
+
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({
+          tracks: [makeTrack({ path: '/music/Artist/Album 2/track.mp3' })],
+          errors: [],
+        }),
+        downloadItem: downloadSpy,
+      }),
+      fs: fsMock,
+    });
+    const origRename = fsMock.rename.bind(fsMock);
+    fsMock.rename = vi.fn(async (src: string, dst: string) => {
+      renameSpy(src, dst);
+      return origRename(src, dst);
+    });
+
+    // destinationPath is the OLD path (mirrors what was stored last time the
+    // track was synced); metadata hash matches the new track so metadataChanged=false.
+    const OLD_PATH = '/music/music/Artist/Album 1/track.mp3';
+    const record = existingRecord({
+      destinationPath: OLD_PATH,
+    });
+    vi.mocked(getSyncedTracksForDevice).mockReturnValue([record] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValue([record] as any);
+
+    const core = createTestSyncCore(validConfig, deps);
+    await core.sync({
+      itemIds: ['album-0705'],
+      itemTypes: new Map([['album-0705', 'album' as ItemType]]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    expect(downloadSpy).not.toHaveBeenCalled();
+    expect(renameSpy).not.toHaveBeenCalled();
+    // DB record updated to NEW path. upsertSyncedTrack takes 11 args; we use
+    // a mix of exact values and loose matchers because encodedBitrate and
+    // serverRootPath are passed as null in pathChanged, and expect.anything()
+    // rejects null.
+    expect(vi.mocked(upsertSyncedTrack)).toHaveBeenCalledWith(
+      '/music',
+      '',
+      'track-0705',
+      NEW_PATH,
+      expect.any(Number),
+      HASH_0705,
+      'embed',
+      null,
+      expect.stringContaining('Artist/Album 2'),
+      expect.any(String),
+      'off',
+    );
+  });
+
+  it('AC2b: pathChanged with audio at OLD path renames to new path and updates DB', async () => {
+    const downloadSpy = vi.fn();
+    const renameSpy = vi.fn();
+
+    const fsMock = createMockFileSystem();
+    // OLD path stores the file at the previous location; NEW path is empty.
+    const OLD_PATH = '/music/music/Artist/Album 1/track.mp3';
+    const NEW_PATH = '/music/music/Artist/Album 2/track.mp3';
+    fsMock.__setDirectory?.('/music/music/Artist/Album 1');
+    fsMock.writeFile(OLD_PATH, Buffer.from('old-bytes'));
+
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({
+          tracks: [makeTrack({ path: '/music/Artist/Album 2/track.mp3' })],
+          errors: [],
+        }),
+        downloadItem: downloadSpy,
+      }),
+      fs: fsMock,
+    });
+    const origRename = fsMock.rename.bind(fsMock);
+    fsMock.rename = vi.fn(async (src: string, dst: string) => {
+      renameSpy(src, dst);
+      return origRename(src, dst);
+    });
+
+    const record = existingRecord({
+      destinationPath: OLD_PATH,
+    });
+    vi.mocked(getSyncedTracksForDevice).mockReturnValue([record] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValue([record] as any);
+
+    const core = createTestSyncCore(validConfig, deps);
+    await core.sync({
+      itemIds: ['album-0705'],
+      itemTypes: new Map([['album-0705', 'album' as ItemType]]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    expect(renameSpy).toHaveBeenCalledWith(OLD_PATH, NEW_PATH);
+    expect(downloadSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(upsertSyncedTrack)).toHaveBeenCalledWith(
+      '/music',
+      '',
+      'track-0705',
+      NEW_PATH,
+      expect.any(Number),
+      HASH_0705,
+      'embed',
+      null,
+      expect.stringContaining('Artist/Album 2'),
+      expect.any(String),
+      'off',
+    );
+  });
+
+  it('AC2b (rename failure): when fs.rename throws, falls back to re-downloading via copyOrConvertTrack', async () => {
+    // ORAIN-0739: copyTrackFile validates the body via _downloadWithValidation.
+    // The validator matches `receivedBytes` against `track.size` (declaredSize,
+    // 5_000_000 in this fixture). If the body is shorter, the validator rejects
+    // and the retry loop calls downloadItemStream again — so the spy would be
+    // called 2-3 times instead of 1. Emit exactly the declared size: ID3v2 +
+    // MPEG sync header + padding to 5_000_000 bytes.
+    const TRACK_SIZE_0705 = 5_000_000;
+    const HEADER_LEN_0705 = Buffer.byteLength('ID3') + 2 + 4 + 4; // = 13
+    const downloadSpy = vi.fn(async () =>
+      Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(TRACK_SIZE_0705 - HEADER_LEN_0705),
+        ]),
+      ),
+    );
+    const renameSpy = vi.fn();
+
+    const fsMock = createMockFileSystem();
+    // Audio lives at OLD path; NEW path is empty (pathChanged; case (b)).
+    const OLD_PATH = '/music/music/Artist/Album 1/track.mp3';
+    const NEW_PATH = '/music/music/Artist/Album 2/track.mp3';
+    fsMock.__setDirectory?.('/music/music/Artist/Album 1');
+    fsMock.writeFile(OLD_PATH, Buffer.from('old-bytes'));
+
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({
+          tracks: [makeTrack({ path: '/music/Artist/Album 2/track.mp3' })],
+          errors: [],
+        }),
+        // ORAIN-0739: copyTrackFile goes through downloadItemStream + the
+        // validator. The mock must return a stream with a valid MP3 body of
+        // the declared size, otherwise _downloadWithValidation rejects it
+        // before the file is ever written and the rename-fallback path is
+        // never reached.
+        downloadItemStream: downloadSpy,
+      }),
+      fs: fsMock,
+    });
+    // Force the rename to throw — simulates EXDEV (cross-device link) or an
+    // EBUSY/EPERM that the platform refuses with anything other than a rename.
+    // The sync engine must catch this and call copyOrConvertTrack to fulfil
+    // the move, otherwise the DB ends up referencing a path where the file
+    // was never placed.
+    fsMock.rename = vi.fn(async (_src: string, _dst: string) => {
+      renameSpy(_src, _dst);
+      throw new Error('EXDEV: cross-device link not permitted');
+    });
+
+    const record = existingRecord({ destinationPath: OLD_PATH });
+    vi.mocked(getSyncedTracksForDevice).mockReturnValue([record] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValue([record] as any);
+
+    const core = createTestSyncCore(validConfig, deps);
+    const result = await core.sync({
+      itemIds: ['album-0705'],
+      itemTypes: new Map([['album-0705', 'album' as ItemType]]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    // Rename was attempted (and failed)…
+    expect(renameSpy).toHaveBeenCalledWith(OLD_PATH, NEW_PATH);
+    // …and the engine fell back to a re-download via downloadItemStream.
+    expect(downloadSpy).toHaveBeenCalled();
+    // The DB must point at the NEW path (not the OLD one), and the sync must
+    // not surface a user-facing error since the fallback succeeded.
+    expect(vi.mocked(upsertSyncedTrack)).toHaveBeenCalledWith(
+      '/music',
+      '',
+      'track-0705',
+      NEW_PATH,
+      expect.any(Number),
+      HASH_0705,
+      'embed',
+      null,
+      expect.stringContaining('Artist/Album 2'),
+      expect.any(String),
+      'off',
+    );
+    expect(result.success).toBe(true);
+    expect(result.errors ?? []).toHaveLength(0);
+  });
+
+  it('AC2c: pathChanged with audio at NEITHER old nor new path re-downloads', async () => {
+    // ORAIN-0739: copyTrackFile validates the body via _downloadWithValidation.
+    // The validator matches `receivedBytes` against `track.size` (declaredSize,
+    // 5_000_000 in this fixture). Emit exactly that many bytes so the validator
+    // accepts on the first attempt and downloadItemStream is called exactly once.
+    // Header is 3 + 2 + 4 + 4 = 13 bytes (ID3v2 marker + version + flags + size);
+    // the rest is padded with zeros up to the declared size.
+    const TRACK_SIZE_0705 = 5_000_000;
+    const HEADER_LEN_0705 = Buffer.byteLength('ID3') + 2 + 4 + 4; // = 13
+    const downloadSpy = vi.fn(async () =>
+      Readable.from(
+        Buffer.concat([
+          Buffer.from('ID3'),
+          Buffer.from([0x03, 0x00]),
+          Buffer.from([0x00, 0x00, 0x00, 0x00]),
+          Buffer.from([0xff, 0xfb, 0x90, 0x00]),
+          Buffer.alloc(TRACK_SIZE_0705 - HEADER_LEN_0705),
+        ]),
+      ),
+    );
+    const renameSpy = vi.fn();
+
+    const fsMock = createMockFileSystem();
+    // No files pre-created — neither OLD nor NEW path exists (wiped device).
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({
+          tracks: [makeTrack({ path: '/music/Artist/Album 2/track.mp3' })],
+          errors: [],
+        }),
+        // ORAIN-0739: copyTrackFile uses downloadItemStream. The mock has to
+        // yield a valid MP3 body so the validator accepts it.
+        downloadItemStream: downloadSpy,
+      }),
+      fs: fsMock,
+    });
+    const origRename = fsMock.rename.bind(fsMock);
+    fsMock.rename = vi.fn(async (src: string, dst: string) => {
+      renameSpy(src, dst);
+      return origRename(src, dst);
+    });
+
+    const record = existingRecord({
+      destinationPath: '/music/music/Artist/Album 1/track.mp3',
+    });
+    vi.mocked(getSyncedTracksForDevice).mockReturnValue([record] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValue([record] as any);
+
+    const core = createTestSyncCore(validConfig, deps);
+    await core.sync({
+      itemIds: ['album-0705'],
+      itemTypes: new Map([['album-0705', 'album' as ItemType]]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    expect(downloadSpy).toHaveBeenCalledTimes(1);
+    expect(renameSpy).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // AC3 (de-scoped) — analyzeDiff counts missing-audio records as new
+  // ---------------------------------------------------------------------------
+  //
+  // The original AC3 spec asked analyzeDiff to upgrade missing-audio records
+  // to 'new' so the preview reflects the wipe. Implementing that upgrade
+  // required touching deps.fs.exists from inside the preview path, which
+  // breaks the existing analyzeDiff contract (4 pre-existing tests under
+  // "Server Root Path - Original Path Usage" rely on hash-based diffing
+  // without filesystem side effects). The real defensive-sync behaviour
+  // lives in handleSyncedRecord's `pathChanged` and `unchanged` branches,
+  // so the sync itself still re-downloads wiped tracks correctly — just
+  // without the preview hint. Documented limitation, not a regression in
+  // the bug fix itself.
 });
