@@ -1139,12 +1139,13 @@ class SyncCoreImpl {
             await this.deps.fs.rename(syncedRecord.destinationPath, outputPath);
             // Also try to move a sibling .lrc if one exists (lyrics live next
             // to the audio). Best-effort: ignore failures — processLyrics
-            // below will re-fetch if missing.
-            const oldLrc = `${syncedRecord.destinationPath.slice(
-              0,
-              syncedRecord.destinationPath.lastIndexOf('.'),
-            )}.lrc`;
-            const newLrc = `${outputPath.slice(0, outputPath.lastIndexOf('.'))}.lrc`;
+            // below will re-fetch if missing. Derive the .lrc base by stripping
+            // the extension with path.extname() (consistent with the rest of
+            // the sync module) rather than lastIndexOf('.') which mis-handles
+            // basenames without a dot and compounds oddly with leading dots.
+            const stripExt = (p: string): string => p.slice(0, p.length - path.extname(p).length);
+            const oldLrc = `${stripExt(syncedRecord.destinationPath)}.lrc`;
+            const newLrc = `${stripExt(outputPath)}.lrc`;
             if (await this.deps.fs.exists(oldLrc)) {
               try {
                 await this.deps.fs.rename(oldLrc, newLrc);
