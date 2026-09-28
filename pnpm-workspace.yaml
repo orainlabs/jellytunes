@@ -8,29 +8,74 @@ overrides:
   # via V8_EXTERNAL_POINTER_TAG_COUNT and uses the 3-arg overload.
   nan: ^2.28.0
 
+# pnpm 11 replaced the v10 fields (onlyBuiltDependencies, ignoredBuiltDependencies,
+# neverBuiltDependencies, onlyBuiltDependenciesFile, ignoreDepScripts) with a
+# single `allowBuilds` map: each key is a package name, each value is an explicit
+# `true` (allow) or `false` (intentionally deny — suppresses the v11
+# ERR_PNPM_IGNORED_BUILDS warning).
+#
+# The legacy fields still parse but the v11 strict mode keeps emitting the
+# ignored-builds error for any package that has an install script, even one
+# already listed in ignoredBuiltDependencies — see ORAIN-0702. Declaring every
+# variant (darwin-arm64/x64, linux-*, win32-*) up front is required because the
+# CI matrix runs on every platform and pnpm 11 surfaces the warning for any
+# platform-specific variant pulled into node_modules by the parent
+# ffmpeg-installer / ffprobe-installer dev dep.
 allowBuilds:
+  # All @ffmpeg-installer/<platform> variants ship a precompiled binary and
+  # their postinstall runs `chmod u+x ffmpeg`. pnpm 11's install hook fires for
+  # every platform variant present in node_modules, even the ones that aren't
+  # the runner's native one (they come in as siblings of ffmpeg-installer).
+  '@ffmpeg-installer/darwin-arm64': true
   '@ffmpeg-installer/darwin-x64': true
+  '@ffmpeg-installer/linux-arm': true
+  '@ffmpeg-installer/linux-arm64': true
+  '@ffmpeg-installer/linux-ia32': true
+  '@ffmpeg-installer/linux-x64': true
+  '@ffmpeg-installer/win32-ia32': true
+  '@ffmpeg-installer/win32-x64': true
+  # All @ffprobe-installer/<platform> variants are pulled in transitively by
+  # @ffprobe-installer/ffprobe (devDep). Same postinstall pattern as ffmpeg:
+  # `chmod u+x ffprobe` on the shipped binary.
+  '@ffprobe-installer/darwin-arm64': true
+  '@ffprobe-installer/darwin-x64': true
+  '@ffprobe-installer/linux-arm': true
+  '@ffprobe-installer/linux-arm64': true
+  '@ffprobe-installer/linux-ia32': true
+  '@ffprobe-installer/linux-x64': true
+  '@ffprobe-installer/win32-ia32': true
+  '@ffprobe-installer/win32-x64': true
+  # Transitive dep of electron-builder. Its `install` hook is
+  # `prebuild-install || node-gyp rebuild` and pulls a Windows-only Squirrel
+  # prebuild; harmless on non-Windows CI legs (prebuild-install no-ops on a
+  # wrong-platform prebuild), so allow it everywhere to silence the warning.
+  'electron-winstaller': true
+  # Electron's own install hook downloads the platform binary.
   electron: true
+  # esbuild downloads a platform-native binary.
   esbuild: true
+  # sharp downloads a platform-native binary (libvips).
   sharp: true
-
-ignoredBuiltDependencies:
-  - drivelist
-  # usb-detection 4.14.2 install hook falls back to node-gyp@10 which can't parse
-  # Visual Studio 18 on the windows-2025-vs2026 runner. Native build is handled by
-  # `electron-builder install-app-deps` (postinstall) which uses @electron/rebuild
-  # + node-gyp@12 — verified locally on 2026-07-22.
-  - usb-detection
-  # better-sqlite3 13.0.3 dropped prebuild-install (only dep is node-addon-api) and
-  # declares no install script, so pnpm falls back to `node-gyp rebuild` against its
-  # binding.gyp — same node-gyp@11 that can't parse Visual Studio 18 on the
-  # windows-2025-vs2026 runner. Native build is handled by
-  # `electron-builder install-app-deps` (postinstall) which uses @electron/rebuild
-  # + node-gyp@12, same precedent as usb-detection above.
-  - better-sqlite3
-
-onlyBuiltDependencies:
-  - '@ffmpeg-installer/darwin-x64'
-  - electron
-  - esbuild
-  - sharp
+  # The next three have native build scripts that MUST NOT run during
+  # `pnpm install`: they're rebuilt by `electron-builder install-app-deps`
+  # (the `postinstall` script in package.json) against the right ABI using
+  # @electron/rebuild + node-gyp@12. Letting pnpm run them earlier fails on
+  # windows-2025-vs2026 because node-gyp@10/11 can't parse Visual Studio 18
+  # (verified 2026-07-22). Deny explicitly here so pnpm 11 stops emitting
+  # ERR_PNPM_IGNORED_BUILDS for them.
+  #
+  # usb-detection 4.14.2 install hook falls back to node-gyp@10 which can't
+  # parse Visual Studio 18 on the windows-2025-vs2026 runner. Native build
+  # is handled by `electron-builder install-app-deps` (postinstall) which
+  # uses @electron/rebuild + node-gyp@12 — verified locally on 2026-07-22.
+  usb-detection: false
+  # better-sqlite3 13.0.3 dropped prebuild-install (only dep is
+  # node-addon-api) and declares no install script, so pnpm falls back to
+  # `node-gyp rebuild` against its binding.gyp — same node-gyp@11 that can't
+  # parse Visual Studio 18 on the windows-2025-vs2026 runner. Native build is
+  # handled by `electron-builder install-app-deps` (postinstall) which uses
+  # @electron/rebuild + node-gyp@12, same precedent as usb-detection above.
+  better-sqlite3: false
+  # drivelist has a native build that's superseded by `electron-builder
+  # install-app-deps`, same pattern as usb-detection / better-sqlite3.
+  drivelist: false
