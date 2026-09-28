@@ -11,6 +11,9 @@ permissions:
 
 jobs:
   checks:
+    # Worst-case green run on record (2026-09-11) was 4.0 min; 30 min cuts real
+    # hangs without ever trimming a healthy run. See ORAIN-0698.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

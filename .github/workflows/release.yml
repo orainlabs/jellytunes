@@ -15,6 +15,10 @@ permissions:
 
 jobs:
   build:
+    # Same matrix as .github/workflows/build-test.yml: builds the Snap via LXD
+    # on Ubuntu. Worst-case green Linux leg was 88m 30s (run 34597779199);
+    # 180 min cuts real hangs while leaving 2× headroom. See ORAIN-0698.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -172,6 +176,11 @@ jobs:
 
   publish-release:
     needs: build
+    # Operator decision on 2026-09-28 (ORAIN-0698): every job in release.yml
+    # uses the same generous budget (180 min). publish-release only uploads
+    # artifacts in practice, but the spec keeps the per-workflow value flat so
+    # nobody can quietly lower it without going through the same review.
+    timeout-minutes: 180
     runs-on: ubuntu-latest
 
     steps:

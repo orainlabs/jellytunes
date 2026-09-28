@@ -8,6 +8,12 @@ permissions:
 
 jobs:
   build:
+    # Builds the Snap via LXD on Ubuntu. The slowest green Linux leg on
+    # record (run 34597779199, 2026-09-11) was 88m 30s, dominated by
+    # `Fetching stage-packages` on a slow Ubuntu mirror. 180 min cuts real
+    # hangs (was 6h before) while leaving 2× headroom on a healthy run. See
+    # ORAIN-0698.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:

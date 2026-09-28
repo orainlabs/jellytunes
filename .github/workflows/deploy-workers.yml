@@ -11,6 +11,9 @@ permissions:
 
 jobs:
   deploy-updates-worker:
+    # Worst-case green run on record (2026-09-11) was 10.0 min; 30 min cuts
+    # real hangs without ever trimming a healthy run. See ORAIN-0698.
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     defaults:
       run:
