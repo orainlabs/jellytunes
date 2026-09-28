@@ -267,7 +267,7 @@ export class SyncPhaseError extends Error {
 export class DownloadStalledError extends Error {
   readonly stallTimeoutMs: number;
   constructor(stallTimeoutMs: number) {
-    super(`Sin datos del servidor durante ${stallTimeoutMs / 1000} s`);
+    super(`No data from server for ${stallTimeoutMs / 1000} s`);
     this.name = 'DownloadStalledError';
     this.stallTimeoutMs = stallTimeoutMs;
   }
@@ -1743,7 +1743,7 @@ class SyncCoreImpl {
           // download-phase error so the retry loop catches it.
           phaseError = new SyncPhaseError(
             'download',
-            `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
+            `No data from server for ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
           );
         } else {
           // AC2: size check on the raw buffered body. AC2(c) compares
@@ -1822,7 +1822,7 @@ class SyncCoreImpl {
           if (error instanceof DownloadStalledError) {
             phaseError = new SyncPhaseError(
               'download',
-              `Sin datos del servidor durante ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
+              `No data from server for ${DOWNLOAD_STALL_TIMEOUT_MS / 1000} s`,
             );
           } else {
             const rawMessage = error instanceof Error ? error.message : String(error);
