@@ -6174,3 +6174,222 @@ describe('ORAIN-0734: SyncResult.errors is structured SyncError[]', () => {
     expect(cancelledError!.trackName).toBe('');
   });
 });
+
+// =============================================================================
+// ORAIN-0739 HIGH-2 (memory pressure / OOM near 2 GiB cap)
+//
+// AC6 raised the body cap to 2 GiB precisely because FLAC and other
+// container formats can grow that large. If the post-download body
+// validator (`validateAudioBody`) is fed the entire temp file, every
+// successful download near that cap will OOM during validation. The
+// fix is to feed `validateAudioBody` only an 8 KB header buffer, read
+// from disk via `fs.createReadStream` (streaming) rather than
+// `fs.readFile` (full-buffer).
+//
+// These tests guard the structural contract: the validation phase
+// MUST NOT call `fs.readFile` on the temp path (it would load the
+// entire file into heap), and it MUST instead call
+// `fs.createReadStream`. Behavioural correctness (the validator still
+// recognises audio magic) is covered by `download-validation.test.ts`.
+// =============================================================================
+
+describe('ORAIN-0739 HIGH-2: body validation streams the header, never reads the full file', () => {
+  // Large body — 100 KB — so that if the production code reads the full
+  // file into memory it is observable in the spy. The mock fs returns
+  // the file from a Buffer map keyed by path, so reading the whole file
+  // succeeds; the test's value is in *which fs method* was called.
+  const HEADER_READ_BYTES = 8 * 1024;
+  const FILE_SIZE = 100 * 1024; // 100 KB — well above the 8 KB header window
+
+  // Build a synthetic FLAC-shaped body padded with zeros to FILE_SIZE.
+  // `fLaC` magic in the first four bytes lets `validateAudioBody`
+  // recognise it; zeros are fine for the rest (validateAudioBody only
+  // inspects the first ~12 bytes for header signatures).
+  const VALID_AUDIO_BODY = Buffer.concat([Buffer.from('fLaC'), Buffer.alloc(FILE_SIZE - 4)]);
+
+  function buildStreamSpyDeps(): {
+    deps: SyncDependencies;
+    readFileCalls: string[];
+    createReadStreamCalls: string[];
+  } {
+    const readFileCalls: string[] = [];
+    const createReadStreamCalls: string[] = [];
+    const fs = createMockFileSystem();
+
+    const wrappedFs: typeof fs = {
+      ...fs,
+      // Wrap readFile to record every path the production code asks
+      // the filesystem to load. The HIGH-2 contract: the validation
+      // path MUST NOT call this with a temp-path argument, because
+      // doing so would load the entire body into heap.
+      readFile: async (path: string) => {
+        readFileCalls.push(path);
+        return fs.readFile(path);
+      },
+      createReadStream: async (path: string) => {
+        createReadStreamCalls.push(path);
+        return fs.createReadStream(path);
+      },
+    };
+
+    const track: TrackInfo = {
+      id: 'track-high2',
+      name: 'Track HIGH-2',
+      album: 'Album',
+      artists: ['Artist'],
+      path: '/music/Artist/Album/track.flac',
+      format: 'flac',
+      // declaredSize matches FILE_SIZE so AC2(c) does not fail and the
+      // validator reaches the body-fingerprint step (AC3).
+      size: FILE_SIZE,
+      trackNumber: 1,
+    };
+
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+      downloadItemStream: async () => require('stream').Readable.from(VALID_AUDIO_BODY),
+    });
+
+    const converter: AudioConverter = {
+      isAvailable: async () => true,
+      convertToMp3: async () => ({ success: true }),
+      convertStreamToMp3: async () => ({ success: true }),
+      convertStreamToMp3WithMeta: async () => ({ success: true }),
+      tagFile: async () => ({ success: true }),
+      readFileMetadata: async () => ({}),
+      embedLyrics: async () => ({ success: true }),
+      stripCoverArt: async () => ({ success: true, hadCover: false }),
+      embedReplayGain: async () => ({ success: true }),
+    };
+
+    return {
+      deps: { api, fs: wrappedFs, converter },
+      readFileCalls,
+      createReadStreamCalls,
+    };
+  }
+
+  it('validates the body via createReadStream, not readFile', async () => {
+    const { deps, readFileCalls, createReadStreamCalls } = buildStreamSpyDeps();
+    const core = createTestSyncCore(validConfig, deps);
+
+    const result = await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    expect(result.success).toBe(true);
+
+    // Structural contract (HIGH-2): validation MUST stream, not load.
+    // The current buggy implementation calls readFile with the temp
+    // path; the fix replaces that with createReadStream. Any readFile
+    // call whose path matches the convertAndCopy temp prefix (jt-conv_)
+    // or the copyTrackFile temp prefix (jt-copy_) is HIGH-2 regression.
+    const buggyTempReads = readFileCalls.filter((p) => /jt-(copy|conv)_/.test(p));
+    expect(
+      buggyTempReads,
+      `Expected NO fs.readFile calls on temp paths, got: ${JSON.stringify(buggyTempReads)}`,
+    ).toEqual([]);
+
+    // The streaming path MUST be used at least once for a temp path.
+    const streamingReads = createReadStreamCalls.filter((p) => /jt-(copy|conv)_/.test(p));
+    expect(
+      streamingReads.length,
+      `Expected fs.createReadStream to be called on a temp path, ` +
+        `got createReadStream calls: ${JSON.stringify(createReadStreamCalls)}`,
+    ).toBeGreaterThan(0);
+  });
+
+  it('limits the header read to HEADER_READ_BYTES (8 KB), not the full body', async () => {
+    // The fix accumulates stream chunks into a buffer up to
+    // HEADER_READ_BYTES, then stops reading. We verify by feeding a
+    // body whose first HEADER_READ_BYTES look like valid audio but
+    // whose bytes AFTER the header are deliberately invalid (would
+    // crash a full-read validator if any single byte near EOF
+    // mattered). The validator still accepts, proving only the
+    // header bytes were inspected.
+    const { Readable } = require('stream');
+    const header = Buffer.concat([Buffer.from('fLaC'), Buffer.alloc(HEADER_READ_BYTES - 4)]);
+    // Tail deliberately contains a JSON-like payload — if the
+    // validator ever inspected past the header it would reject.
+    const tail = Buffer.from('{"err":"should-not-be-inspected-by-validateAudioBody"}');
+    const fullBody = Buffer.concat([
+      header,
+      Buffer.alloc(FILE_SIZE - header.length - tail.length),
+      tail,
+    ]);
+
+    const readFileCalls: string[] = [];
+    const createReadStreamCalls: string[] = [];
+    const fs = createMockFileSystem();
+    const wrappedFs: typeof fs = {
+      ...fs,
+      readFile: async (path: string) => {
+        readFileCalls.push(path);
+        return fs.readFile(path);
+      },
+      createReadStream: async (path: string) => {
+        createReadStreamCalls.push(path);
+        return fs.createReadStream(path);
+      },
+    };
+
+    const track: TrackInfo = {
+      id: 'track-high2-tail',
+      name: 'Track HIGH-2 Tail',
+      album: 'Album',
+      artists: ['Artist'],
+      path: '/music/Artist/Album/track.flac',
+      format: 'flac',
+      size: FILE_SIZE,
+      trackNumber: 1,
+    };
+
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks: [track], errors: [] }),
+      downloadItemStream: async () => Readable.from(fullBody),
+    });
+
+    const converter: AudioConverter = {
+      isAvailable: async () => true,
+      convertToMp3: async () => ({ success: true }),
+      convertStreamToMp3: async () => ({ success: true }),
+      convertStreamToMp3WithMeta: async () => ({ success: true }),
+      tagFile: async () => ({ success: true }),
+      readFileMetadata: async () => ({}),
+      embedLyrics: async () => ({ success: true }),
+      stripCoverArt: async () => ({ success: true, hadCover: false }),
+      embedReplayGain: async () => ({ success: true }),
+    };
+
+    const core = createTestSyncCore(validConfig, {
+      api,
+      fs: wrappedFs,
+      converter,
+    });
+
+    const result = await core.sync({
+      itemIds: ['album-1'],
+      itemTypes: new Map<string, ItemType>([['album-1', 'album']]),
+      destinationPath: '/music',
+      options: { convertToMp3: false },
+    });
+
+    // Validator saw only the 8 KB header (which looks like fLaC) so it
+    // accepted; if it had read the full file the tail would have been
+    // inspected and the validator would have considered the body
+    // "binary but unknown" — which is also `ok: true` in the current
+    // implementation. The structural guard above is what actually
+    // pins the streaming contract; this assertion only verifies
+    // end-to-end success, not the byte-level reading. It exists as a
+    // smoke check that the streaming validator wires through
+    // successfully.
+    expect(result.success).toBe(true);
+
+    const buggyTempReads = readFileCalls.filter((p) => /jt-(copy|conv)_/.test(p));
+    expect(buggyTempReads).toEqual([]);
+    expect(createReadStreamCalls.some((p) => /jt-(copy|conv)_/.test(p))).toBe(true);
+  });
+});

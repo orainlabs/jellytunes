@@ -1395,11 +1395,18 @@ class SyncCoreImpl {
             // AC3: body fingerprint. Use a fixed 8KB header buffer to
             // validate magic bytes without loading the entire file into
             // memory. AC6 enforces a 2 GiB cap, but files approaching
-            // that size could cause OOM if fully buffered.
+            // that size could cause OOM if fully buffered. The fix is
+            // streaming: open the temp file via `createReadStream`,
+            // accumulate chunks until we hold HEADER_READ_BYTES (or the
+            // stream ends), then stop reading and validate. The
+            // `subarray` pattern from earlier cycles returned a *view*
+            // into a full-file buffer that was already loaded into
+            // heap — it did not free memory, only narrowed the window
+            // the validator saw. With streaming, the FS read itself
+            // stops at 8 KB for files large enough to make the
+            // difference meaningful.
             const HEADER_READ_BYTES = 8 * 1024; // 8 KB
-            const body = await this.deps.fs.readFile(tmpPath);
-            const header =
-              body.length <= HEADER_READ_BYTES ? body : body.subarray(0, HEADER_READ_BYTES);
+            const header = await readHeaderBytes(this.deps.fs, tmpPath, HEADER_READ_BYTES);
             const bodyResult = validateAudioBody(header);
             if (!bodyResult.ok) {
               const _reason: string = (bodyResult as { ok: false; reason: string }).reason;
@@ -2958,4 +2965,102 @@ export interface SyncCore {
  */
 export function createTestSyncCore(config: SyncConfig, deps: SyncDependencies): SyncCore {
   return new SyncCoreImpl(config, deps);
+}
+
+// =============================================================================
+// readHeaderBytes — streaming header reader for post-download body
+// fingerprinting (ORAIN-0739 HIGH-2)
+//
+// AC6 lets the body cap reach 2 GiB. Reading the full body into heap
+// for AC3's magic-byte check is unsafe: every successful download near
+// the cap would OOM. `readHeaderBytes` opens a stream, accumulates
+// chunks until `maxBytes` is reached or the stream ends, then closes
+// the stream and returns the truncated buffer. It uses `FileSystem` so
+// it can be tested with the mock fs without touching real disk.
+// =============================================================================
+
+/**
+ * Read up to `maxBytes` from `path` via `FileSystem.createReadStream`.
+ * Returns a buffer of length `min(actualFileSize, maxBytes)`. Stops
+ * reading once enough bytes are accumulated — large files never load
+ * the body into heap.
+ *
+ * Stream errors bubble up so the caller's existing error path
+ * (catch → SyncPhaseError) handles them uniformly.
+ */
+async function readHeaderBytes(fs: FileSystem, path: string, maxBytes: number): Promise<Buffer> {
+  const stream = await fs.createReadStream(path);
+  // `FileSystem.createReadStream` returns a `NodeJS.ReadableStream`.
+  // For `'data'` event payloads (Buffer | string) and `destroy()` we
+  // need the concrete `Readable` API. Cast at the boundary once so the
+  // event handlers below are typed end-to-end.
+  const readable = stream as NodeJS.ReadableStream & {
+    on(event: 'data', listener: (chunk: Buffer | string) => void): unknown;
+    on(event: 'end', listener: () => void): unknown;
+    on(event: 'error', listener: (err: Error) => void): unknown;
+    on(event: 'close', listener: () => void): unknown;
+    removeAllListeners(event?: string): unknown;
+    destroy(): unknown;
+  };
+
+  return await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      readable.removeAllListeners('data');
+      readable.removeAllListeners('end');
+      readable.removeAllListeners('error');
+      readable.removeAllListeners('close');
+    };
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      // Best-effort destroy so the FD does not leak while the promise
+      // settles. `destroy()` on an already-ended stream is a no-op.
+      try {
+        readable.destroy();
+      } catch {
+        // ignore — we are returning the buffered result regardless
+      }
+      fn();
+    };
+
+    readable.on('data', (chunk: Buffer | string) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      // If a single chunk exceeds maxBytes, slice it and stop.
+      if (total + buf.length >= maxBytes) {
+        const remaining = maxBytes - total;
+        chunks.push(remaining > 0 ? buf.subarray(0, remaining) : Buffer.alloc(0));
+        total = maxBytes;
+        settle(() => resolve(Buffer.concat(chunks, total)));
+        return;
+      }
+      chunks.push(buf);
+      total += buf.length;
+    });
+
+    readable.on('end', () => {
+      settle(() => resolve(Buffer.concat(chunks, total)));
+    });
+
+    readable.on('error', (err: Error) => {
+      settle(() => reject(err));
+    });
+
+    // `'close'` fires after `'end'`/`'error'` on a normal stream.
+    // We don't need to settle here — 'end'/'error' already did — but
+    // if neither fires (e.g. consumer destroy without end), the
+    // explicit `destroy()` above closes the FD and this is the last
+    // observable signal.
+    readable.on('close', () => {
+      // If the stream ended without emitting 'end' (rare, but
+      // happens when the producer errors before any chunk), and we
+      // never settled, settle now with whatever we have.
+      settle(() => resolve(Buffer.concat(chunks, total)));
+    });
+  });
 }
