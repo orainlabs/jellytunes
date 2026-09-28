@@ -5776,6 +5776,319 @@ describe('getCoverArtBuffer', () => {
       // Sanity: they are separate state containers
       expect(anyCore.coverArtCache).not.toBe(anyCore.coverArtFailedAlbums);
     });
+
+    // -------------------------------------------------------------------------
+    // REWORK CYCLE 2 (code-reviewer HIGH findings)
+    // -------------------------------------------------------------------------
+
+    it('REWORK: 6-track album with slow cover fetches shares a single album request (runWithConcurrency dedup)', async () => {
+      // ORAIN-0749 AC3 + MEDIUM from cycle 1: the existing ≤2-calls test
+      // runs serially or semi-serially. Under COPY_CONCURRENCY=6, six tracks
+      // in one album must still collapse to a single album fetch via
+      // `coverArtInFlight` dedup. We assert that with a 50ms latency on
+      // every call, the 6 tracks trigger exactly one album fetch + one
+      // track fetch (≤ 2 HTTP calls total — same as the sequential case).
+      const { ApiError } = await import('./sync-api');
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const getCoverArt = vi.fn(async (itemId: string) => {
+        await sleep(50);
+        // Album 404, track 200 — fallback exercised.
+        if (itemId === 'album-1') throw new ApiError('not found', 404);
+        return Buffer.from('track-cover');
+      });
+
+      const { Readable } = require('stream');
+      const tracks = Array.from({ length: 6 }, (_, i) => ({
+        id: `track-${i + 1}`,
+        name: `Track ${i + 1}`,
+        album: 'Album',
+        artists: ['Artist'],
+        path: `/music/lib/lib/Artist/Album/0${i + 1}.mp3`,
+        format: 'mp3',
+        albumId: 'album-1',
+        parentItemId: 'album-1',
+        bitrate: 128000,
+      }));
+      const mockApi = createMockApiClient({
+        getCoverArt,
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({ tracks, errors: [] });
+      const core = createTestSyncCore(validConfig, {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+      });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      // Album (404) + track (200): two distinct fetches. Under concurrency
+      // the album dedup means a single album HTTP request is made even
+      // though 6 tracks ask for it.
+      expect(getCoverArt).toHaveBeenCalledTimes(2);
+      expect(getCoverArt).toHaveBeenCalledWith('album-1');
+      expect(getCoverArt).toHaveBeenCalledWith('track-1');
+    });
+
+    it('REWORK: 2 albums without cover → only 1 warning per album, not 2 globally', async () => {
+      // ORAIN-0749 cycle 1 LOW: the existing single-album test does not
+      // prove that two distinct albums without cover each emit their own
+      // warning (one-per-album is the AC3 invariant, not one-per-sync).
+      const { ApiError } = await import('./sync-api');
+      const { Readable } = require('stream');
+      const getCoverArt = vi.fn(async () => {
+        throw new ApiError('not found', 404);
+      });
+      const warn = vi.fn();
+      const mockApi = createMockApiClient({
+        getCoverArt,
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({
+        tracks: [
+          {
+            id: 'track-a1',
+            name: 'A1',
+            album: 'A',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/A/01.mp3',
+            format: 'mp3',
+            albumId: 'album-A',
+            parentItemId: 'album-A',
+            bitrate: 128000,
+          },
+          {
+            id: 'track-b1',
+            name: 'B1',
+            album: 'B',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/B/01.mp3',
+            format: 'mp3',
+            albumId: 'album-B',
+            parentItemId: 'album-B',
+            bitrate: 128000,
+          },
+        ],
+        errors: [],
+      });
+      const core = createTestSyncCore(validConfig, {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+        logger: { warn, debug: () => {}, info: () => {}, error: () => {} } as any,
+      });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([
+        ['album-A', 'album'],
+        ['album-B', 'album'],
+      ]);
+
+      await core.sync({
+        itemIds: ['album-A', 'album-B'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      // One cover warning per missing album, not collapsed to one globally.
+      const coverWarnings = warn.mock.calls
+        .map((c) => String(c[0] ?? ''))
+        .filter((m) => m.toLowerCase().includes('cover'));
+      expect(coverWarnings).toHaveLength(2);
+      expect(coverWarnings.some((m) => m.includes('album-A'))).toBe(true);
+      expect(coverWarnings.some((m) => m.includes('album-B'))).toBe(true);
+    });
+
+    it('REWORK: album image > 5 MB does not poison the cache — track image is still tried', async () => {
+      // ORAIN-0749 cycle 1 HIGH #3: the `cover_art_too_large` branch added
+      // `cacheKey = albumId` to `coverArtFailedAlbums` and `return undefined`
+      // immediately, skipping the track fallback. A track whose own image
+      // is well under the limit would then never be fetched for subsequent
+      // tracks in the same album because the failure cache blocked the
+      // call. The intended semantics: oversized album cover → discard, try
+      // the track next; oversized track cover → discard, fall through to
+      // the failure path (warning + cache).
+      const FIVE_MB = 5 * 1024 * 1024;
+      const { Readable } = require('stream');
+      const getCoverArt = vi.fn(async (itemId: string) => {
+        if (itemId === 'album-1') return Buffer.alloc(FIVE_MB + 1, 0xff);
+        if (itemId === 'track-1') return Buffer.from('small-track-cover');
+        throw new Error(`unexpected getCoverArt call for ${itemId}`);
+      });
+      const mockApi = createMockApiClient({
+        getCoverArt,
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track 1',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/Album/01.mp3',
+            format: 'mp3',
+            albumId: 'album-1',
+            parentItemId: 'album-1',
+            bitrate: 128000,
+          },
+        ],
+        errors: [],
+      });
+      const core = createTestSyncCore(validConfig, {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+      });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      // The album oversized image is discarded and the track fallback
+      // returns its small cover.
+      expect(getCoverArt).toHaveBeenCalledTimes(2);
+      expect(getCoverArt).toHaveBeenCalledWith('album-1');
+      expect(getCoverArt).toHaveBeenCalledWith('track-1');
+      // The track image landed in the success cache, not the failure set.
+      const anyCore = core as any;
+      expect(anyCore.coverArtCache.has('album-1')).toBe(true);
+      expect(anyCore.coverArtFailedAlbums.has('album-1')).toBe(false);
+    });
+
+    it('REWORK: album > 5 MB AND track > 5 MB → cache as failure, no generic not-available warning', async () => {
+      // ORAIN-0749 cycle 1 HIGH #3: when *both* candidates are oversized,
+      // the loop must still cache the failure so future tracks in the
+      // album skip the fetch. The per-attempt `cover_art_too_large`
+      // warning already names the cause; the generic "not available"
+      // warning would just add noise.
+      const FIVE_MB = 5 * 1024 * 1024;
+      const { Readable } = require('stream');
+      const getCoverArt = vi.fn(async () => Buffer.alloc(FIVE_MB + 1, 0xff));
+      const warn = vi.fn();
+      const mockApi = createMockApiClient({
+        getCoverArt,
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track 1',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/Album/01.mp3',
+            format: 'mp3',
+            albumId: 'album-1',
+            parentItemId: 'album-1',
+            bitrate: 128000,
+          },
+        ],
+        errors: [],
+      });
+      const core = createTestSyncCore(validConfig, {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+        logger: { warn, debug: () => {}, info: () => {}, error: () => {} } as any,
+      });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      expect(getCoverArt).toHaveBeenCalledTimes(2);
+      const coverWarnings = warn.mock.calls
+        .map((c) => String(c[0] ?? ''))
+        .filter((m) => m.toLowerCase().includes('cover'));
+      // Two `cover_art_too_large` warnings (one per attempt) — the generic
+      // "not available" warning is suppressed because the per-attempt
+      // warning already names the cause.
+      expect(coverWarnings).toHaveLength(2);
+      expect(coverWarnings.every((m) => m.includes('exceeds 5 MB'))).toBe(true);
+      const anyCore = core as any;
+      expect(anyCore.coverArtCache.has('album-1')).toBe(false);
+      expect(anyCore.coverArtFailedAlbums.has('album-1')).toBe(true);
+    });
+
+    it('REWORK: 408 response stops the loop and warns — does not consume a second timeout on the track', async () => {
+      // ORAIN-0749 cycle 1 HIGH #2: the comment claimed "we still try the
+      // fallback before giving up" but the code does `break` on any
+      // non-404. The conservative behaviour (one timeout, not two) is
+      // intentional — each `getCoverArt` may sit on a 30s Jellyfin
+      // timeout, and 6 concurrent tracks would otherwise stall the sync.
+      // We pin both halves: (a) a single call is made when the first
+      // attempt errors non-404, (b) the warning still carries `HTTP 408`.
+      const { ApiError } = await import('./sync-api');
+      const { Readable } = require('stream');
+      const getCoverArt = vi.fn(async (itemId: string) => {
+        if (itemId === 'album-1') throw new ApiError('timed out', 408);
+        throw new Error(`track should not be requested when album errors 408: ${itemId}`);
+      });
+      const warn = vi.fn();
+      const mockApi = createMockApiClient({
+        getCoverArt,
+        downloadItemStream: async () => Readable.from(Buffer.alloc(100)),
+      });
+      (mockApi as any).getTracksForItems = async () => ({
+        tracks: [
+          {
+            id: 'track-1',
+            name: 'Track 1',
+            album: 'Album',
+            artists: ['Artist'],
+            path: '/music/lib/lib/Artist/Album/01.mp3',
+            format: 'mp3',
+            albumId: 'album-1',
+            parentItemId: 'album-1',
+            bitrate: 128000,
+          },
+        ],
+        errors: [],
+      });
+      const core = createTestSyncCore(validConfig, {
+        api: mockApi,
+        fs: createMockFileSystem(),
+        converter: createMockConverter(),
+        logger: { warn, debug: () => {}, info: () => {}, error: () => {} } as any,
+      });
+      mockGetSyncedTracksForItem.mockReturnValue([]);
+      const itemTypes = new Map<string, ItemType>([['album-1', 'album']]);
+
+      await core.sync({
+        itemIds: ['album-1'],
+        itemTypes,
+        destinationPath: '/usb',
+        options: { coverArtMode: 'embed', bitrate: '192k', convertToMp3: false },
+      });
+
+      // Single HTTP call (album 408) — no fallback attempt that would
+      // stall on a second timeout.
+      expect(getCoverArt).toHaveBeenCalledTimes(1);
+      expect(getCoverArt).toHaveBeenCalledWith('album-1');
+      const coverWarnings = warn.mock.calls
+        .map((c) => String(c[0] ?? ''))
+        .filter((m) => m.toLowerCase().includes('cover'));
+      expect(coverWarnings).toHaveLength(1);
+      expect(coverWarnings[0]).toContain('HTTP 408');
+    });
   });
 });
 

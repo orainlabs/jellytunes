@@ -3047,7 +3047,7 @@ class SyncCoreImpl {
     const inFlight = this.coverArtInFlight.get(cacheKey);
     if (inFlight) return inFlight;
 
-    const promise = this._fetchCoverArt(trackId, albumId, mode);
+    const promise = this._fetchCoverArt(trackId, albumId);
     this.coverArtInFlight.set(cacheKey, promise);
     // Always drop the in-flight entry once settled, regardless of outcome;
     // the result lives on in `coverArtCache` or `coverArtFailedAlbums`.
@@ -3065,9 +3065,7 @@ class SyncCoreImpl {
   private async _fetchCoverArt(
     trackId: string,
     albumId: string | undefined,
-    mode: CoverArtMode,
   ): Promise<Buffer | undefined> {
-    void mode; // already filtered by the caller
     const cacheKey = albumId ?? trackId;
 
     // Build the candidate list: album first (when we have one), then track.
@@ -3080,7 +3078,11 @@ class SyncCoreImpl {
       try {
         const buffer = await this.deps.api.getCoverArt(id);
 
-        // Discard cover art exceeding 5MB to avoid embedding bloated images
+        // Discard cover art exceeding 5MB to avoid embedding bloated images.
+        // Continue with the next candidate instead of returning: an oversized
+        // *album* cover shouldn't poison the failure cache for the track's
+        // own (potentially well-sized) image, and the loop's bottom path
+        // handles the "both oversized" case by caching the failure once.
         const MAX_COVER_SIZE = 5 * 1024 * 1024; // 5 MB
         if (buffer.length > MAX_COVER_SIZE) {
           this.progressEmitter.emit({
@@ -3092,45 +3094,52 @@ class SyncCoreImpl {
           this.log.warn(
             `Cover art for ${kind} ${id} exceeds 5 MB (${buffer.length} bytes) — discarding`,
           );
-          // Treat as failure for the purpose of de-duplication within the album.
-          this.coverArtFailedAlbums.add(cacheKey);
-          return undefined;
+          continue;
         }
 
         this.coverArtCache.set(cacheKey, buffer);
         return buffer;
       } catch (err) {
         lastError = err;
-        // 404 → try the next candidate. Any other error (timeout, network)
-        // also bubbles up through the loop's `lastError`; we still try the
-        // fallback before giving up so a flaky album endpoint doesn't take
-        // out the cover for the whole sync.
+        // 404 → try the next candidate. A non-404 error (timeout, 5xx,
+        // network) breaks the loop instead of falling through to the
+        // track endpoint: each `getCoverArt` may sit on a 30s Jellyfin
+        // timeout, and under COPY_CONCURRENCY=6 a second timeout per
+        // track would stall the whole sync. `lastError` retains the
+        // first error so the warning below still names the actual cause.
         if (err instanceof ApiError && err.statusCode !== 404) {
-          // Non-404: stop the loop, log + cache failure below.
           break;
         }
       }
     }
 
-    // Both fetches failed (or the first one failed with a non-404). Emit
-    // exactly one warning per (albumId|trackId), pinned with the API status
-    // so the cause is in the log without a separate probe.
-    this.coverArtFailCount++;
-    if (this.coverArtFailCount === 1) {
-      this.progressEmitter.emit({
-        phase: this.currentPhase,
-        current: 0,
-        total: 0,
-        warning: 'cover_art_unavailable',
-      });
-    }
-    const status = lastError instanceof ApiError ? lastError.statusCode : 0;
-    if (albumId) {
-      this.log.warn(
-        `Cover art not available for album ${albumId} (track ${trackId}): HTTP ${status}`,
-      );
-    } else {
-      this.log.warn(`Cover art not available for track ${trackId}: HTTP ${status}`);
+    // The loop exits without a cache hit in three cases:
+    //  - a non-404 error broke the loop (timeout, 5xx, network)
+    //  - every candidate returned a 404
+    //  - every candidate returned an oversized buffer (no exception, no `lastError`)
+    // In each case we cache the failure once and skip future fetches for this
+    // key. The "not available" warning is suppressed when both candidates
+    // were oversized — the per-attempt `cover_art_too_large` warning already
+    // names the cause and the generic warning would only add noise.
+    const allOversized = lastError === undefined;
+    if (!allOversized) {
+      this.coverArtFailCount++;
+      if (this.coverArtFailCount === 1) {
+        this.progressEmitter.emit({
+          phase: this.currentPhase,
+          current: 0,
+          total: 0,
+          warning: 'cover_art_unavailable',
+        });
+      }
+      const status = lastError instanceof ApiError ? lastError.statusCode : 0;
+      if (albumId) {
+        this.log.warn(
+          `Cover art not available for album ${albumId} (track ${trackId}): HTTP ${status}`,
+        );
+      } else {
+        this.log.warn(`Cover art not available for track ${trackId}: HTTP ${status}`);
+      }
     }
     this.coverArtFailedAlbums.add(cacheKey);
     return undefined;

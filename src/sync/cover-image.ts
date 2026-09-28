@@ -112,6 +112,10 @@ export function getJpegFrameType(bytes: Buffer): JpegFrameType {
  * unscoped `/Items/{id}/Images/Primary` variant is accepted. `userId` is kept
  * in the signature for back-compat with existing callers but is no longer
  * embedded in the URL.
+ *
+ * @deprecated `userId` is unused — kept only for back-compat with existing
+ * call sites. Re-introducing the `/Users/{userId}/` segment would silently
+ * break v10.10+ installs; do not reintroduce until every caller has migrated.
  */
 export function buildCoverArtUrl(baseUrl: string, userId: string, itemId: string): string {
   const base = baseUrl.replace(/\/+$/, '');
