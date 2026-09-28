@@ -42,7 +42,7 @@ import { showLogFileInFolder } from './log-folder';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
 // ORAIN-0740: [sync-start]/[sync-end]/[track-failed] log lines + error scrubbing.
 // The wrappers in log-scrub make sure the error object never reaches log.error.
-import { logSyncEnd, logSyncError } from './log-scrub';
+import { logSyncEnd, logSyncError, diffAndLogVolumes, type VolumeLogState } from './log-scrub';
 
 // ─── Snap detection (ORAIN-0573) ─────────────────────────────────────────
 // snapd sets SNAP (mount path) and SNAP_NAME (registered name) on every
@@ -162,6 +162,11 @@ log.info('JellyTunes starting...');
 
 let mainWindow: BrowserWindow | null = null;
 
+// ORAIN-0740 AC4: shared state for the volume-detection diff helper. The
+// device-watcher polls `listUsbDevices()` every 15 s; this lets the
+// per-poll log line fire only when the device set actually changes.
+const volumeLogState: VolumeLogState = { lastDeviceKeys: null, errorLogged: { logged: false } };
+
 // Import device watcher
 import { startDeviceWatcher, stopDeviceWatcher } from './device-watcher';
 
@@ -206,9 +211,13 @@ function listLinuxRemovableMounts(): UsbDevice[] {
 
 async function listUsbDevices(): Promise<UsbDevice[]> {
   // drivelist removed - using folder selection instead
-  // For USB detection, user selects folder manually
-  log.info('USB detection disabled - using folder selection dialog');
-  return listMountedVolumesFallback();
+  // For USB detection, user selects folder manually.
+  // ORAIN-0740 AC4: the per-poll "Found N volumes" line previously fired
+  // every 15 s and produced ~240 lines/hour in main.log for a steady
+  // state. The diff helper below only logs when the device set changes.
+  const devices = listMountedVolumesFallback();
+  diffAndLogVolumes(volumeLogState, devices, log);
+  return devices;
 }
 
 function listMountedVolumesFallback(): UsbDevice[] {
@@ -277,9 +286,12 @@ function listMountedVolumesFallback(): UsbDevice[] {
       }
     }
   } catch (err2) {
-    log.error('Fallback volume detection error:', err2);
+    // ORAIN-0740 AC4: once-per-session so a steady-state poll error does
+    // not flood main.log at ~4 lines/minute.
+    oncePerSession(fallbackVolumeDetectionState, () => {
+      log.error('Fallback volume detection error:', err2);
+    });
   }
-  log.info(`Fallback: Found ${devices.length} volumes`);
   return devices;
 }
 
@@ -394,6 +406,10 @@ let activeSyncCore: import('../sync').SyncCore | null = null;
 // with one entry per poll — a log-bomb that hides real problems. The flag
 // is the mutable state for the `oncePerSession` helper in `windows-fsutil.ts`.
 const windowsDriveDetectionState: { logged: boolean } = { logged: false };
+
+// ORAIN-0740 AC4: same once-per-session pattern for the cross-platform
+// fallback volume detection (darwin /Volumes, linux mount table, win32 fsutil).
+const fallbackVolumeDetectionState: { logged: boolean } = { logged: false };
 
 // Helper to extract server root from a file path
 // Example: /mediamusic/lib/lib/4 Strings/Album/track.flac -> /mediamusic/lib/lib/

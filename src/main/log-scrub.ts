@@ -204,3 +204,76 @@ export function logTrackFailed(
   const safe = { ...args, cause: scrubError(args.cause) };
   log.info(formatTrackFailed(safe));
 }
+
+// =============================================================================
+// VOLUME DETECTION DIFF (ORAIN-0740 AC4)
+// =============================================================================
+
+/**
+ * Mutable state shared across calls to `diffAndLogVolumes`. The
+ * device-watcher polls every 15 s; the helper needs to remember the
+ * previous set between polls so it can diff.
+ */
+export interface VolumeLogState {
+  /** Set of device paths seen on the previous poll. `null` means "not seeded yet". */
+  lastDeviceKeys: Set<string> | null;
+  /** Counter state for `oncePerSession` semantics on the error path. */
+  errorLogged: { logged: boolean };
+}
+
+/**
+ * Extract the canonical identity of a device for set membership. macOS /Volumes
+ * entries and Windows drive letters use `device`; mountpoint-based entries use
+ * the first mountpoint path. Falls back to `displayName`.
+ */
+export function deviceKey(d: {
+  device?: string;
+  mountpoints?: Array<{ path: string }>;
+  displayName?: string;
+}): string {
+  if (d.device) return d.device;
+  if (d.mountpoints && d.mountpoints.length > 0) return d.mountpoints[0].path;
+  return d.displayName ?? '';
+}
+
+/**
+ * Emit a log line only when the volume set has actually changed since the last
+ * poll. Mirrors the `device-watcher.ts:237-245` diff pattern.
+ *
+ * First call: seeds `lastDeviceKeys`, emits one "initial" line so support has
+ * a baseline to read.
+ * Subsequent calls with the same set: silent.
+ * Calls with additions or removals: one "attached" / "detached" line each.
+ *
+ * Pure function — no fs, no electron. Cross-platform.
+ */
+export function diffAndLogVolumes(
+  state: VolumeLogState,
+  currentDevices: Array<{
+    device?: string;
+    mountpoints?: Array<{ path: string }>;
+    displayName?: string;
+  }>,
+  log: LoggerLike,
+): void {
+  const currentKeys = new Set(currentDevices.map(deviceKey));
+
+  if (state.lastDeviceKeys === null) {
+    state.lastDeviceKeys = currentKeys;
+    log.info(`[volume-detection] initial: ${currentKeys.size} device(s)`);
+    return;
+  }
+
+  const added = [...currentKeys].filter((k) => !state.lastDeviceKeys!.has(k));
+  const removed = [...state.lastDeviceKeys].filter((k) => !currentKeys.has(k));
+
+  if (added.length === 0 && removed.length === 0) return;
+
+  if (added.length > 0) {
+    log.info(`[volume-detection] attached: ${added.join(', ')}`);
+  }
+  if (removed.length > 0) {
+    log.info(`[volume-detection] detached: ${removed.join(', ')}`);
+  }
+  state.lastDeviceKeys = currentKeys;
+}
