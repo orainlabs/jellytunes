@@ -27,9 +27,11 @@ import type {
 } from './types';
 
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 import { ALL_AUDIO_EXTENSIONS, CONVERT_CONCURRENCY, COPY_CONCURRENCY } from './audio-formats';
 import { buildConvertTempPath, buildCopyTrackTempPath } from './temp-path';
+import { formatTrackFailed } from '../main/log-scrub';
 import { COVER_MAX_BYTES } from './cover-image';
 import { validateAudioBody, validateDownloadSize, MAX_DOWNLOAD_BYTES } from './download-validation';
 
@@ -502,6 +504,10 @@ class SyncCoreImpl {
     const stats = createProgressStats();
     stats.startTime = startTime;
 
+    // ORAIN-0740: use caller's syncId if provided, otherwise mint a short
+    // random id. Same pattern as index.ts (`v2SyncId = randomUUID().slice(0, 8)`).
+    const syncId = input.syncId ?? randomUUID().slice(0, 8);
+
     const unsubscribe = onProgress ? this.progressEmitter.subscribe(onProgress) : () => {};
 
     const phaseManager = new PhaseManager(this.progressEmitter);
@@ -566,6 +572,7 @@ class SyncCoreImpl {
         tracksFailed,
         errors,
         stats,
+        syncId,
       );
       lyricsAdded = copyResult.lyricsAdded;
 
@@ -690,6 +697,7 @@ class SyncCoreImpl {
     tracksFailed: string[],
     errors: SyncError[],
     stats: ReturnType<typeof createProgressStats>,
+    syncId: string,
   ): Promise<{
     statsRetagged: number;
     statsMoved: number;
@@ -785,6 +793,23 @@ class SyncCoreImpl {
             phase: result.errorPhase,
           });
           tracksFailed.push(track.id);
+
+          // ORAIN-0740 AC3: one [track-failed] line per failed track,
+          // scoped by syncId. The wrapper scrubs the cause string so a
+          // thrown ApiError's body/headers can't leak through to main.log.
+          const hasImage = this.coverArtCache.has(track.albumId ?? track.id);
+          const failedLine = formatTrackFailed({
+            syncId,
+            trackId: track.id,
+            trackName: track.name,
+            phase: result.errorPhase ?? 'download',
+            cause: result.error,
+            format: track.format,
+            bitrate: track.bitrate,
+            declaredSize: track.size,
+            hasImage,
+          });
+          this.log.trackFailed?.(failedLine);
         }
 
         // ORAIN-0738 AC2: bump the numerator for EVERY outcome (copied,

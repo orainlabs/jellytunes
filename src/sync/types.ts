@@ -53,6 +53,14 @@ export interface SyncInput {
   destinationPath: string;
   /** Optional conversion settings */
   options?: SyncOptions;
+  /**
+   * ORAIN-0740: correlation id emitted in `[sync-start]` and `[track-failed]`
+   * log lines. Optional — SyncCore generates a random 8-char id when omitted
+   * (matches the main-process pattern). Callers that already minted an id
+   * (e.g. index.ts to correlate renderer progress with main.log) can pass it
+   * through so the same id appears in both places.
+   */
+  syncId?: string;
 }
 
 /**
@@ -347,12 +355,17 @@ export interface JellyfinPlaylistItem {
 /**
  * Minimal logger interface for the sync module.
  * Injected as an optional dependency so the module stays testable without electron-log.
+ *
+ * ORAIN-0740: `trackFailed` is the channel for one [track-failed] line per
+ * failed track. Optional so legacy callers (sync.test.ts fixtures) keep
+ * compiling without it.
  */
 export interface SyncLogger {
   info: (msg: string) => void;
   warn: (msg: string) => void;
   error: (msg: string) => void;
   debug: (msg: string) => void;
+  trackFailed?: (msg: string) => void;
 }
 
 /**
