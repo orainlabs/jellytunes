@@ -3,8 +3,6 @@ import { cleanup, render, screen, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AboutModal } from './AboutModal';
 
-const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard') ?? undefined;
-
 beforeEach(() => {
   const mockApi = {
     getVersion: vi.fn().mockResolvedValue('1.2.3'),
@@ -34,16 +32,6 @@ beforeEach(() => {
   };
   // @ts-expect-error — Mocking window.api for test environment
   window.api = mockApi;
-  // jsdom does not implement navigator.clipboard — provide a stub that
-  // individual tests can override. Without this, copying throws.
-  // Always re-assign (never gate on 'clipboard' in navigator) so the
-  // mock is reset between tests; the previous gate kept the first
-  // test's vi.fn() alive across tests.
-  Object.defineProperty(navigator, 'clipboard', {
-    value: { writeText: vi.fn().mockResolvedValue(undefined) },
-    configurable: true,
-    writable: true,
-  });
 });
 
 afterEach(() => {
@@ -52,13 +40,6 @@ afterEach(() => {
   // the next test.
   cleanup();
   vi.useRealTimers();
-  // Restore the descriptor jsdom originally exposed so we never leak
-  // the stub into other test files that share this worker.
-  if (clipboardDescriptor) {
-    Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
-  } else {
-    delete (navigator as { clipboard?: unknown }).clipboard;
-  }
 });
 
 describe('AboutModal', () => {
@@ -206,25 +187,29 @@ describe('AboutModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  // ORAIN-0735 AC1: the "Open log folder" link sits next to View on GitHub
-  // and Support on Ko-fi in the tertiary-links row.
-  it('renders the Open log folder link next to View on GitHub and Support on Ko-fi', async () => {
+  // ORAIN-0750 AC3: the Open log folder link lives inside the App group,
+  // not in the same row as View on GitHub / Support on Ko-fi.
+  it('renders the Open log folder link inside the App group', async () => {
     render(<AboutModal onClose={vi.fn()} />);
     await waitFor(() => {
-      expect(screen.getByText(/Open log folder/)).toBeInTheDocument();
+      expect(screen.getByTestId('about-group-app')).toBeInTheDocument();
     });
-    // AC1 is about *position*, not just presence. Walk up to the closest
-    // flex-row container; "View on GitHub", "Support on Ko-fi" and the
-    // open-log-folder link must all sit on the same flex-row (i.e. be
-    // descendants of the same `flex flex-row` ancestor). This catches
-    // the case where the link is rendered in a separate row even though
-    // a find-by-text would happily pass.
-    const openLog = screen.getByTestId('open-log-folder-button');
-    const flexRow = openLog.closest('.flex.flex-row');
-    expect(flexRow).not.toBeNull();
-    expect(flexRow).toContainElement(screen.getByText(/View on GitHub/));
-    expect(flexRow).toContainElement(screen.getByText(/Support on Ko-fi/));
-    expect(flexRow).toContainElement(openLog);
+    const appGroup = screen.getByTestId('about-group-app');
+    expect(appGroup).toContainElement(screen.getByTestId('open-log-folder-button'));
+    expect(appGroup).toContainElement(screen.getByTestId('log-path'));
+  });
+
+  // ORAIN-0750 AC3: View on GitHub / Support on Ko-fi live in the accessory
+  // group, not in the primary row.
+  it('renders GitHub and Ko-fi links in the accessory group', async () => {
+    render(<AboutModal onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('about-group-accessory')).toBeInTheDocument();
+    });
+    const accessory = screen.getByTestId('about-group-accessory');
+    expect(accessory).toContainElement(screen.getByText(/View on GitHub/));
+    expect(accessory).toContainElement(screen.getByText(/Support on Ko-fi/));
+    expect(accessory).toContainElement(screen.getByText('Contact Us'));
   });
 
   // ORAIN-0735 AC2: the full log path is exposed via tooltip (title attr)
@@ -237,7 +222,7 @@ describe('AboutModal', () => {
   });
 
   // ORAIN-0735 AC2: the log path element keeps its data-testid so QA can
-  // assert against it. We use it for tooltip copy + clipboard copy.
+  // assert against it.
   it('renders a log-path element with the path accessible to assistive tech', async () => {
     window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
     render(<AboutModal onClose={vi.fn()} />);
@@ -259,71 +244,40 @@ describe('AboutModal', () => {
     expect(window.api.openLogFolder).toHaveBeenCalledTimes(1);
   });
 
-  // ORAIN-0735 / studio-qa finding [MEDIUM]: the copy button's aria-label
-  // currently says only "Copy log path". Blind users learn the destination
-  // only after pressing the button. Surface the path in the label.
-  it('exposes the log path in the copy button aria-label', async () => {
-    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
+  // ORAIN-0750 AC6: three groups, each role="group", with aria-labelledby
+  // or aria-label.
+  it('renders three semantic groups with accessible names', async () => {
     render(<AboutModal onClose={vi.fn()} />);
-    const copyButton = await screen.findByTestId('copy-log-path-button');
-    expect(copyButton).toHaveAttribute('aria-label', 'Copy log path: /var/log/jellytunes/main.log');
+    await waitFor(() => {
+      expect(screen.getByTestId('about-modal')).toBeInTheDocument();
+    });
+    const primary = screen.getByTestId('about-group-primary');
+    const accessory = screen.getByTestId('about-group-accessory');
+    const app = screen.getByTestId('about-group-app');
+
+    expect(primary).toHaveAttribute('role', 'group');
+    expect(primary).toHaveAttribute('aria-labelledby', 'about-group-primary-heading');
+
+    expect(accessory).toHaveAttribute('role', 'group');
+    // Accesorias has no visible heading; rely on aria-label.
+    expect(accessory).toHaveAttribute('aria-label', 'External links');
+
+    expect(app).toHaveAttribute('role', 'group');
+    expect(app).toHaveAttribute('aria-labelledby', 'about-group-app-heading');
   });
 
-  // ORAIN-0735 AC2: a copy icon next to the link copies the path to the
-  // clipboard and confirms with a check for ~2s.
-  it('copies the log path to the clipboard when the copy button is clicked and shows a check', async () => {
-    vi.useFakeTimers();
-    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, {
-      clipboard: { writeText },
+  // ORAIN-0750 AC6: Tab order follows visual order
+  // (primaries → accesorias → App → Close).
+  it('Tab order follows visual groups: Report a Bug first, Close last', async () => {
+    render(<AboutModal onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('about-modal')).toBeInTheDocument();
     });
-    let renderResult: ReturnType<typeof render> | undefined;
-    await act(async () => {
-      renderResult = render(<AboutModal onClose={vi.fn()} />);
-      // Flush microtasks so useEffect's getLogPath().then(setLogPath) settles
-      // before we look for the button.
-      await Promise.resolve();
-    });
-    const copyButton = renderResult!.getByTestId('copy-log-path-button');
-    await act(async () => {
-      copyButton.click();
-      await Promise.resolve();
-    });
-    expect(writeText).toHaveBeenCalledWith('/var/log/jellytunes/main.log');
-    // Right after clicking, the check confirmation is shown.
-    expect(screen.getByTestId('copy-log-path-button')).toHaveTextContent(/✓/);
-    // After ~2s, the copy icon is restored.
-    await act(async () => {
-      vi.advanceTimersByTime(2100);
-    });
-    expect(screen.getByTestId('copy-log-path-button')).not.toHaveTextContent(/✓/);
-  });
-
-  // studio-qa finding [HIGH]: the 2s setTimeout used to revert the copy
-  // confirmation previously had no handle saved and no cleanup. We verify
-  // it cancels on unmount so React does not warn about setState on an
-  // unmounted component and so the confirmation does not flash after
-  // the modal is gone.
-  it('clears the copy confirmation setTimeout when unmounted before 2s elapse', async () => {
-    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
-    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
-    window.api.getLogPath = vi.fn().mockResolvedValue('/var/log/jellytunes/main.log');
-    const { unmount } = render(<AboutModal onClose={vi.fn()} />);
-    const copyButton = await screen.findByTestId('copy-log-path-button');
-    await act(async () => {
-      copyButton.click();
-      await Promise.resolve();
-    });
-    setTimeoutSpy.mockClear();
-    clearTimeoutSpy.mockClear();
-    unmount();
-    // The unmount path must call clearTimeout on the confirmation handle.
-    // Before the fix this call would not happen because the handle was
-    // never stored.
-    expect(clearTimeoutSpy).toHaveBeenCalled();
-    setTimeoutSpy.mockRestore();
-    clearTimeoutSpy.mockRestore();
+    const modal = screen.getByTestId('about-modal');
+    const focusableSelector = 'button, a[href], [role="switch"]';
+    const focusables = Array.from(modal.querySelectorAll<HTMLElement>(focusableSelector));
+    expect(focusables[0]).toHaveTextContent(/Report a Bug/);
+    expect(focusables[focusables.length - 1]).toHaveTextContent(/^Close$/);
   });
 
   // studio-qa finding [HIGH]: per-test useFakeTimers must be paired with
