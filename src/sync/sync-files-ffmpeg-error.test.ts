@@ -121,6 +121,47 @@ describe('createFFmpegConverter error reporting — ORAIN-0726', () => {
         'FFmpeg exited with code 2: No such file or directory',
       );
     });
+
+    // ORAIN-0752 AC4: the user-facing SyncError.message must not contain
+    // any absolute path surfaced by FFmpeg's stderr (POSIX, Windows C:\ or
+    // C:/, UNC \\server\share). Each input below uses a different path
+    // shape; the same scrub regex is reused from the download-error path
+    // in sync-core.ts:1837. Assertions are OS-agnostic — they assert the
+    // OUTPUT string contains <path>, not the OS-specific input shape.
+    it('replaces a POSIX absolute path in the stderr tail with <path>', () => {
+      const tail = 'No such file or directory: /var/folders/abc/jt-copy_xyz.mp3';
+      expect(ffmpegErrorMessage(1, tail)).toBe(
+        'FFmpeg exited with code 1: No such file or directory: <path>',
+      );
+    });
+
+    it('replaces a Windows backslash absolute path in the stderr tail with <path>', () => {
+      const tail =
+        'No such file or directory: C:\\Users\\dev\\AppData\\Local\\Temp\\jt-copy_xyz.mp3';
+      expect(ffmpegErrorMessage(1, tail)).toBe(
+        'FFmpeg exited with code 1: No such file or directory: <path>',
+      );
+    });
+
+    it('replaces a Windows forward-slash absolute path in the stderr tail with <path>', () => {
+      const tail = 'No such file or directory: C:/Users/dev/AppData/Local/Temp/jt-copy_xyz.mp3';
+      expect(ffmpegErrorMessage(1, tail)).toBe(
+        'FFmpeg exited with code 1: No such file or directory: <path>',
+      );
+    });
+
+    it('replaces a UNC path in the stderr tail with <path>', () => {
+      const tail = 'No such file or directory: \\\\server\\share\\temp\\jt-copy_xyz.mp3';
+      expect(ffmpegErrorMessage(1, tail)).toBe(
+        'FFmpeg exited with code 1: No such file or directory: <path>',
+      );
+    });
+
+    it('leaves a plain-text stderr tail untouched (no-op scrub)', () => {
+      expect(ffmpegErrorMessage(2, 'No such file or directory')).toBe(
+        'FFmpeg exited with code 2: No such file or directory',
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
