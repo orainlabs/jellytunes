@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
+import { randomUUID } from 'node:crypto';
 
 // Import new sync module
 import { createSyncCore, type CoverArtMode, type TrackInfo } from '../sync';
@@ -39,6 +40,9 @@ import {
 import { getOrCreateDeviceId } from './device-id';
 import { showLogFileInFolder } from './log-folder';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
+// ORAIN-0740: [sync-start]/[sync-end]/[track-failed] log lines + error scrubbing.
+// The wrappers in log-scrub make sure the error object never reaches log.error.
+import { logSyncStart, logSyncEnd, logSyncError } from './log-scrub';
 
 // ─── Snap detection (ORAIN-0573) ─────────────────────────────────────────
 // snapd sets SNAP (mount path) and SNAP_NAME (registered name) on every
@@ -897,7 +901,8 @@ ipcMain.handle('sync:start', async (_event, options) => {
     });
     return result;
   } catch (error) {
-    log.error('Sync error:', error);
+    // ORAIN-0740 AC5: scrub error before logging.
+    logSyncError(log, 'Sync error', error);
     return {
       success: false,
       errors: [error instanceof Error ? error.message : String(error)],
@@ -919,7 +924,28 @@ ipcMain.handle('sync:start2', async (_event, options) => {
       destinationPath,
       options: syncOptions = {},
     } = options;
-    log.info(`Starting sync v2 to ${destinationPath} with ${itemIds.length} items`);
+    // ORAIN-0740 AC1: emit [sync-start] via the scrubbed formatter.
+    // `trackCount` is the post-fetch count; SyncCore re-emits the line with
+    // the real count (Task 5). Until then, this placeholder tracks the item
+    // count so support has a value to read.
+    const v2SyncId = randomUUID().slice(0, 8);
+    logSyncStart(log, {
+      appVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      destinationPath,
+      destinationFilesystem: 'pending',
+      itemCount: itemIds.length,
+      trackCount: itemIds.length,
+      options: {
+        convertToMp3: syncOptions.convertToMp3 ?? false,
+        bitrate: syncOptions.bitrate,
+        coverArtMode: syncOptions.coverArtMode ?? 'embed',
+        lyricsMode: syncOptions.lyricsMode ?? 'off',
+        embedMetadata: syncOptions.embedMetadata ?? true,
+      },
+      syncId: v2SyncId,
+    });
 
     // Validate inputs
     if (!serverUrl || !apiKey || !userId) {
@@ -992,9 +1018,19 @@ ipcMain.handle('sync:start2', async (_event, options) => {
     );
 
     activeSyncCore = null;
-    log.info(
-      `Sync v2 completed: ${result.tracksCopied} copied, ${result.tracksSkipped} skipped, ${result.errors.length} errors`,
-    );
+    // ORAIN-0740 AC2: [sync-end] replaces the legacy "Sync v2 completed" line.
+    logSyncEnd(log, {
+      syncId: v2SyncId,
+      tracksCopied: result.tracksCopied,
+      tracksConverted: result.tracksCopied, // ORAIN-0738 separates these; parity copy for now
+      tracksRetagged: result.tracksRetagged,
+      tracksSkipped: result.tracksSkipped,
+      tracksFailed: result.tracksFailed.length,
+      tracksRemoved: 0,
+      durationMs: result.durationMs,
+      totalSizeBytes: result.totalSizeBytes,
+      cancelled: result.cancelled ?? false,
+    });
 
     // Record to SQLite
     const status = result.cancelled ? 'cancelled' : result.success ? 'success' : 'error';
@@ -1036,7 +1072,8 @@ ipcMain.handle('sync:start2', async (_event, options) => {
     };
   } catch (error) {
     activeSyncCore = null;
-    log.error('Sync v2 error:', error);
+    // ORAIN-0740 AC5: never pass the error object — only its message.
+    logSyncError(log, 'Sync v2 error', error);
     return {
       success: false,
       errors: [

@@ -20,6 +20,11 @@ import {
   formatSyncStart,
   formatSyncEnd,
   formatTrackFailed,
+  logSyncStart,
+  logSyncEnd,
+  logSyncError,
+  logTrackFailed,
+  type LoggerLike,
 } from './log-scrub';
 
 describe('scrubPath', () => {
@@ -221,5 +226,108 @@ describe('formatTrackFailed', () => {
     expect(out).toContain('bitrate=1200000');
     expect(out).toContain('declaredSize=45000000');
     expect(out).toContain('hasImage=true');
+  });
+});
+
+function makeCapturingLogger(): { logger: LoggerLike; info: string[]; error: string[] } {
+  const info: string[] = [];
+  const error: string[] = [];
+  return {
+    logger: {
+      info: (m) => info.push(m),
+      error: (m) => error.push(m),
+    },
+    info,
+    error,
+  };
+}
+
+describe('logSyncStart / logSyncEnd wrappers', () => {
+  it('logSyncStart emits one [sync-start] line through log.info', () => {
+    const { logger, info, error } = makeCapturingLogger();
+    logSyncStart(logger, {
+      appVersion: '1.0.0',
+      platform: 'linux',
+      arch: 'x64',
+      destinationPath: '/mnt/usb',
+      destinationFilesystem: 'ext4',
+      itemCount: 1,
+      trackCount: 1,
+      options: { convertToMp3: false, coverArtMode: 'off', lyricsMode: 'off', embedMetadata: true },
+      syncId: 's',
+    });
+    expect(info).toHaveLength(1);
+    expect(info[0]).toContain('[sync-start]');
+    expect(error).toHaveLength(0);
+  });
+
+  it('logSyncEnd emits one [sync-end] line through log.info', () => {
+    const { logger, info, error } = makeCapturingLogger();
+    logSyncEnd(logger, {
+      syncId: 's',
+      tracksCopied: 5,
+      tracksConverted: 5,
+      tracksRetagged: 0,
+      tracksSkipped: 0,
+      tracksFailed: 0,
+      tracksRemoved: 0,
+      durationMs: 100,
+      totalSizeBytes: 5000,
+      cancelled: false,
+    });
+    expect(info).toHaveLength(1);
+    expect(info[0]).toContain('[sync-end]');
+    expect(error).toHaveLength(0);
+  });
+});
+
+describe('logSyncError — never leaks the error object', () => {
+  it('passes only the message, not the error, to log.error', () => {
+    const { logger, error } = makeCapturingLogger();
+    const apiErr = new Error('HTTP 500') as Error & { body: string };
+    apiErr.body = '{"token":"deadbeef"}';
+    logSyncError(logger, 'Sync v2 error', apiErr);
+    expect(error).toHaveLength(1);
+    expect(error[0]).toBe('Sync v2 error: HTTP 500');
+    expect(error[0]).not.toContain('deadbeef');
+    expect(error[0]).not.toContain('body');
+  });
+
+  it('handles non-Error throwables', () => {
+    const { logger, error } = makeCapturingLogger();
+    logSyncError(logger, 'Sync error', 'plain string');
+    expect(error[0]).toBe('Sync error: plain string');
+  });
+});
+
+describe('logTrackFailed — defensive scrubbing on cause', () => {
+  it('emits one [track-failed] line via log.info', () => {
+    const { logger, info } = makeCapturingLogger();
+    logTrackFailed(logger, {
+      syncId: 's',
+      trackId: 't1',
+      trackName: 'Song',
+      phase: 'download',
+      cause: 'fetch failed',
+    });
+    expect(info).toHaveLength(1);
+    expect(info[0]).toContain('[track-failed]');
+    expect(info[0]).toContain('cause=fetch failed');
+  });
+
+  it('scrubs a non-string cause before emitting', () => {
+    const { logger, info } = makeCapturingLogger();
+    const apiErr = new Error('HTTP 401') as Error & { body: string };
+    apiErr.body = '{"token":"deadbeefcafebabe"}';
+    logTrackFailed(logger, {
+      syncId: 's',
+      trackId: 't1',
+      trackName: 'Song',
+      phase: 'download',
+      // @ts-expect-error — the wrapper must scrub even when caller passes the raw error
+      cause: apiErr,
+    });
+    expect(info[0]).not.toContain('deadbeef');
+    expect(info[0]).toContain('cause=HTTP 401');
   });
 });
