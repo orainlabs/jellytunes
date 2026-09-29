@@ -32,12 +32,7 @@ import {
 import { runSnapConnectionProbes, type SnapctlResult } from './snap-connections';
 import { listRemovableMountpoints } from './removable-mounts';
 import { detectLinuxFilesystem } from './filesystem-type';
-import {
-  detectWindowsFilesystem,
-  listWindowsDriveLetters,
-  oncePerSession,
-  realFsutil,
-} from './windows-fsutil';
+import { detectWindowsFilesystem, listWindowsDrives, oncePerSession, realCim } from './windows-cim';
 import { detectDarwinFilesystem, realDarwinFs } from './darwin-diskutil';
 import { getOrCreateDeviceId } from './device-id';
 import { showLogFileInFolder } from './log-folder';
@@ -219,12 +214,12 @@ async function listUsbDevices(): Promise<UsbDevice[]> {
   // ORAIN-0740 AC4: the per-poll "Found N volumes" line previously fired
   // every 15 s and produced ~240 lines/hour in main.log for a steady
   // state. The diff helper below only logs when the device set changes.
-  const devices = listMountedVolumesFallback();
+  const devices = await listMountedVolumesFallback();
   diffAndLogVolumes(volumeLogState, devices, log);
   return devices;
 }
 
-function listMountedVolumesFallback(): UsbDevice[] {
+async function listMountedVolumesFallback(): Promise<UsbDevice[]> {
   const platform = process.platform;
   const devices: UsbDevice[] = [];
   try {
@@ -264,23 +259,23 @@ function listMountedVolumesFallback(): UsbDevice[] {
     } else if (platform === 'linux') {
       devices.push(...listLinuxRemovableMounts());
     } else if (platform === 'win32') {
-      // ORAIN-0725 / GitHub issue #23: the Windows volume-detection binary
-      // used pre-24H2 is gone in Windows 11 24H2+.
-      // `fsutil fsinfo drives` ships in C:\Windows\System32 on every supported
-      // Windows install and has no PowerShell startup cost. Errors are logged
-      // once per session — the device-watcher polls every 15 s and would
-      // otherwise log-bomb the file.
+      // ORAIN-0757: enumerate via `Get-CimInstance Win32_LogicalDisk` (5 s
+      // timeout). The previous fsutil path was locale-fragile (matched the
+      // localized "File System Name" column) and dropped DriveType filtering
+      // in v0.7.1 — listing optical + network drives as if they were USB.
+      // `listWindowsDrives` returns `mountPath` already colon-rooted
+      // (`G:\`), so the downstream `extractDriveLetter` check sees the
+      // shape it expects. Errors are logged once per session.
       try {
-        const driveLetters = listWindowsDriveLetters(realFsutil);
-        for (const letter of driveLetters) {
-          const mountPath = `${letter}\\`;
+        const drives = await listWindowsDrives(realCim);
+        for (const d of drives) {
           devices.push({
-            device: mountPath,
-            displayName: letter,
+            device: d.mountPath,
+            displayName: d.letter,
             size: 0,
-            mountpoints: [{ path: mountPath }],
-            isRemovable: true,
-            vendorName: 'Local',
+            mountpoints: [{ path: d.mountPath }],
+            isRemovable: d.isRemovable,
+            vendorName: d.vendorName,
           });
         }
       } catch (err) {
@@ -348,12 +343,13 @@ async function detectFilesystem(devicePath: string): Promise<string> {
       const label = detectLinuxFilesystem(fs, devicePath);
       if (label !== 'unknown') return label;
     } else if (platform === 'win32') {
-      // ORAIN-0725 / GitHub issue #23: the pre-24H2 Windows volume binary is
-      // gone in Windows 11 24H2+.
-      // Use `fsutil fsinfo volumeinfo <drive>:` which ships in every Windows
-      // install. Returns 'unknown' on any failure, which the sanitizer
-      // handles by gating on platform=win32 (ORAIN-0725).
-      return detectWindowsFilesystem(realFsutil, devicePath);
+      // ORAIN-0757: read the FileSystem property straight from
+      // Win32_LogicalDisk (5 s timeout, language-independent). The
+      // previous fsutil regex matched the localized "File System Name"
+      // column header — Spanish (or any non-English) Windows broke it.
+      // Returns 'unknown' on any failure, which the sanitizer handles
+      // by gating on platform=win32 (ORAIN-0725).
+      return detectWindowsFilesystem(realCim, devicePath);
     }
   } catch (err) {
     logSyncError(log, 'Filesystem detection error', err);
@@ -400,7 +396,7 @@ let activeSyncCore: import('../sync').SyncCore | null = null;
 // because the `fsutil` binary is unavailable in some restricted environment),
 // the device-watcher polls every 15 s. Without a dedup, the error log fills
 // with one entry per poll — a log-bomb that hides real problems. The flag
-// is the mutable state for the `oncePerSession` helper in `windows-fsutil.ts`.
+// is the mutable state for the `oncePerSession` helper in `windows-cim.ts`.
 const windowsDriveDetectionState: { logged: boolean } = { logged: false };
 
 // ORAIN-0740 AC4: same once-per-session pattern for the cross-platform
