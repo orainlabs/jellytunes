@@ -127,8 +127,9 @@ test.describe('E11: About modal layout at 448px modal width', () => {
     await login(page, serverConfig);
     await openAboutModal(page);
 
-    await page.getByRole('button', { name: 'Check Updates' }).click();
-    await expect(page.getByText('v9.9.9')).toBeVisible();
+    // The modal checks for updates on mount, so the "Check Updates" button is already
+    // replaced by the version link when an update is available.
+    await expect(page.getByTestId('about-group-primary').getByText('v9.9.9')).toBeVisible();
 
     const modal = page.getByTestId('about-modal');
     const overflow = await modal.evaluate(

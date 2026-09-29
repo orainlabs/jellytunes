@@ -28,9 +28,12 @@ pnpm test:e2e
 pnpm test:e2e --project=jellyfin-v11
 pnpm test:e2e --project=jellyfin-v12
 
-# After you're done, stop the containers
-docker compose -f tests/e2e/docker-compose.v11.yml down
-docker compose -f tests/e2e/docker-compose.v12.yml down
+# After you're done, stop the containers. Keep `-v`: the images declare anonymous
+# /config and /cache volumes, and a plain `down` leaves them behind. After the next
+# rebuild.sh they shadow the freshly baked config, so the API key in .server.*.json
+# no longer exists in the container and every check fails with HTTP 401.
+docker compose -f tests/e2e/docker-compose.v11.yml down -v
+docker compose -f tests/e2e/docker-compose.v12.yml down -v
 ```
 
 > **Note on version naming**: The project labels jellyfin-v11 and jellyfin-v12 are colloquial — they refer to Jellyfin major lineages (10.10.x → 10.11.x is "v11", 12.0.x → 12.1.x is "v12"). The actual images pinned are 10.10.3 and 12.0-rc7.20260831-232051 (immutable timestamped tag).
