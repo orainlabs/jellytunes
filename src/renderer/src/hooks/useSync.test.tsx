@@ -491,9 +491,7 @@ describe('useSync', () => {
         // Both resolve to the same 2 tracks → totalBytes must equal 8 MB
         // (sum of unique), not 16 MB.
         selectedTracks: new Set(['artist-1', 'album-1']),
-        syncedItemsInfo: [
-          { id: 'album-1', name: 'Abbey Road', type: 'album' as const },
-        ],
+        syncedItemsInfo: [{ id: 'album-1', name: 'Abbey Road', type: 'album' as const }],
         outOfSyncItems: new Set<string>(),
       };
 
@@ -590,7 +588,7 @@ describe('useSync', () => {
     it('willRemoveCount uses countRemoveTracks when selectedTracks is empty (delete-only path)', async () => {
       // MEDIUM-2 fix: when selectedTracks is empty, the delete-only branch is taken
       // (useSync.ts:342) which calls registry.countRemoveTracks(toDeleteIds, syncFolder)
-      // directly — bypassing the itemTrackMap aggregation path (line 473).
+      // directly — bypassing the itemTrackMap aggregation path (~line 545).
       // deviceSyncedTracks stores records keyed by the album/playlist ID that owns each
       // track on the device (not artist ID), so we use album-1 here.
       const registry = getTrackRegistry();

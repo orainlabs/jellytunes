@@ -572,15 +572,21 @@ export function useSync({
 
     const newItems = buildItemPreviews(
       newItemIds,
-      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds).total ?? 0,
+      (id) =>
+        registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds)
+          .total ?? 0,
     );
     const updatedItems = buildItemPreviews(
       updatedItemIds,
-      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds).total ?? 0,
+      (id) =>
+        registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds)
+          .total ?? 0,
     );
     const alreadySyncedItems = buildItemPreviews(
       alreadySyncedItemIds,
-      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds).total ?? 0,
+      (id) =>
+        registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds)
+          .total ?? 0,
     );
     const removedItems = buildItemPreviews(toDeleteIds, (id) =>
       registry.countRemoveBytes([id], syncFolder),
