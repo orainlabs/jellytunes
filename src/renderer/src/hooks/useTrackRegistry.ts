@@ -7,6 +7,7 @@
  */
 
 import { logger } from '@/utils/logger';
+import { deduplicateByKey } from '../../../sync/track-dedup';
 
 export interface TrackInfo {
   id: string;
@@ -332,24 +333,39 @@ export function createTrackRegistry() {
    * Calculate total size for selected items on a device.
    * Uses tick-based estimation for uncached items (immediate, no HTTP calls).
    * When convertToMp3=true, never fetches — always estimates.
+   *
+   * ORAIN-0755: deduplicates tracks by trackId across selected items so that
+   * overlapping selections (artist A + album A) don't double-count shared
+   * tracks. Tick-only items can also be deduped via `tickCoveredItemIds` (e.g.
+   * an album whose tick estimate is subsumed by its parent artist's ticks).
    */
   const calculateSize = (
     selectedItems: Set<string>,
     devicePath: string,
     convertToMp3: boolean,
     bitrate?: string,
+    /**
+     * Items whose tick-based estimate is already covered by another selected
+     * item (e.g. an album whose ticks are subsumed by its parent artist).
+     * Only consulted on the tick branch (no trackIds loaded).
+     */
+    tickCoveredItemIds?: ReadonlySet<string>,
   ): { total: number | null; isTickEstimate: boolean } => {
     const syncedTracks = state.deviceSyncedTracks.get(devicePath);
     if (!syncedTracks) return { total: null, isTickEstimate: false };
 
     let total = 0;
     let usedTicks = false;
+    // ORAIN-0755 AC3: dedup loaded tracks by id before summing.
+    const seenLoadedTrackIds = new Set<string>();
 
     for (const itemId of selectedItems) {
       if (state.itemTracks.has(itemId)) {
         // Tracks fetched from server — use real sizes (may be 0 if artist has no indexed albums)
         const trackIds = state.itemTracks.get(itemId)!;
         for (const trackId of trackIds) {
+          if (seenLoadedTrackIds.has(trackId)) continue;
+          seenLoadedTrackIds.add(trackId);
           const synced = syncedTracks.get(trackId);
           const info = state.trackMap.get(trackId);
 
@@ -366,7 +382,9 @@ export function createTrackRegistry() {
           }
         }
       } else {
-        // Not yet fetched — use tick-based estimation
+        // Not yet fetched — use tick-based estimation.
+        // ORAIN-0755 AC4: drop items whose ticks are covered by another selection.
+        if (tickCoveredItemIds?.has(itemId)) continue;
         const ticks = state.itemTicks.get(itemId) ?? 0;
         total += estimateSizeFromTicks(ticks, convertToMp3, bitrate);
         if (ticks > 0) usedTicks = true;
@@ -549,17 +567,17 @@ export function createTrackRegistry() {
    * Returns total duration in seconds.
    */
   const calculateDuration = (selectedItems: Set<string>): number => {
-    const seenTrackIds = new Set<string>();
     let totalSeconds = 0;
 
     for (const itemId of selectedItems) {
       const trackIds = state.itemTracks.get(itemId);
 
       if (trackIds && trackIds.length > 0) {
+        // ORAIN-0755: dedup shared trackIds across selected items using the
+        // shared pure module (single source of truth, first-occurrence-wins).
+        const uniqueTrackIds = deduplicateByKey(trackIds, (id) => id);
         let itemSeconds = 0;
-        for (const trackId of trackIds) {
-          if (seenTrackIds.has(trackId)) continue;
-          seenTrackIds.add(trackId);
+        for (const trackId of uniqueTrackIds) {
           const info = state.trackMap.get(trackId);
           if (info?.durationSeconds) itemSeconds += info.durationSeconds;
         }
