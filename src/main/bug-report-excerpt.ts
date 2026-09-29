@@ -166,7 +166,7 @@ const NO_SYNC_NOTE = '(no sync in current log)';
 const SYNC_DID_NOT_FINISH_NOTE = '(sync did not finish)';
 const TRUNCATION_NOTE_PREFIX = '… and ';
 const TRUNCATION_NOTE_SUFFIX =
-  ' more failed tracks — please attach main.log (About > Open log folder)';
+  ' more failed tracks — please attach main.log (About > Log files > Open folder)';
 
 /**
  * The fixed boilerplate that wraps the log excerpt. Mirrors the
@@ -252,7 +252,7 @@ interface RenderArgs {
 }
 
 const LOG_MISSING_NOTE =
-  '(log file not found — please attach main.log from About > Open log folder)';
+  '(log file not found — please attach main.log from About > Log files > Open folder)';
 
 function renderExcerpt({ syncLines, hasEnd, otherLines, logMissing, budget }: RenderArgs): string {
   const sections: string[] = [];

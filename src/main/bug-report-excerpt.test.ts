@@ -254,7 +254,7 @@ describe('buildBugReportBody', () => {
     expect(body).toContain('[sync-start]');
     expect(body).toContain('[sync-end]');
     expect(body).toMatch(
-      /… and (\d+) more failed tracks — please attach main\.log \(About > Open log folder\)/,
+      /… and (\d+) more failed tracks — please attach main\.log \(About > Log files > Open folder\)/,
     );
     const m = body.match(/… and (\d+) more/);
     expect(Number(m![1])).toBeGreaterThan(0);

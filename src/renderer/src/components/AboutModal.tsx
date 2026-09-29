@@ -233,25 +233,27 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
         <div
           data-testid="about-group-app"
           role="group"
-          aria-labelledby="about-group-app-heading"
+          aria-label="App settings"
           className="border-t border-outline_variant/40 pt-4 mb-4"
         >
-          <h3 id="about-group-app-heading" className="text-title-sm text-on_surface mb-3">
-            App
-          </h3>
-
-          <a
-            href="#"
-            data-testid="open-log-folder-button"
-            onClick={(e) => {
-              e.preventDefault();
-              void handleOpenLogFolder();
-            }}
-            title={logPath || undefined}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 h-10 text-body-sm text-on_surface_variant border border-outline_variant/40 hover:border-outline_variant/60 hover:text-on_surface rounded-lg transition-colors w-full mb-3 whitespace-nowrap"
-          >
-            Open log folder 📂
-          </a>
+          {/* ORAIN-0756: the App heading is gone — the group is named via
+              aria-label. The log-files row sits above the analytics row
+              so the privacy line stays glued to the switch it refers to. */}
+          <div className="flex items-center justify-between px-1 py-2 text-body-sm text-on_surface_variant">
+            <span>Log files</span>
+            <button
+              type="button"
+              data-testid="open-log-folder-button"
+              onClick={() => {
+                void handleOpenLogFolder();
+              }}
+              title={logPath || undefined}
+              aria-label="Open log folder"
+              className="px-3 py-1 text-body-sm text-on_surface_variant border border-outline_variant/40 hover:text-on_surface rounded-lg transition-colors whitespace-nowrap"
+            >
+              Open folder
+            </button>
+          </div>
           {/* data-testid="log-path" is preserved (sr-only) so QA can read
               the resolved path without exposing it visually. */}
           <span data-testid="log-path" className="sr-only">

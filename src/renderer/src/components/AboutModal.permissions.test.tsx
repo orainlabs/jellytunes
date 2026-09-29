@@ -31,6 +31,7 @@ beforeEach(() => {
     logInfo: vi.fn(),
     getLogPath: vi.fn().mockResolvedValue('/mock/log'),
     // ORAIN-0735: keep permissions tests consistent with the main mock.
+    // ORAIN-0756: the control is a <button>, not an <a>.
     openLogFolder: vi.fn().mockResolvedValue({ success: true }),
     isSnap: vi.fn().mockResolvedValue(true),
     checkSnapPermissions: vi.fn().mockResolvedValue({
