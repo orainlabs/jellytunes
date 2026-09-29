@@ -395,27 +395,6 @@ export function createTrackRegistry() {
   };
 
   /**
-   * Get track count for selected items (new tracks only, not already synced)
-   */
-  const countNewTracks = (selectedItems: Set<string>, devicePath: string): number => {
-    const syncedTracks = state.deviceSyncedTracks.get(devicePath);
-    if (!syncedTracks) return 0;
-
-    let count = 0;
-    for (const itemId of selectedItems) {
-      const trackIds = state.itemTracks.get(itemId);
-      if (!trackIds) continue;
-
-      for (const trackId of trackIds) {
-        if (!syncedTracks.has(trackId)) {
-          count++;
-        }
-      }
-    }
-    return count;
-  };
-
-  /**
    * Count synced tracks for a specific item from deviceSyncedTracks.
    * Needed for artist-type items whose tracks are stored under albumId (parentItemId),
    * not under artistId, so getItemTrackIds(artistId) returns [].
@@ -604,7 +583,6 @@ export function createTrackRegistry() {
     setItemTypes,
     fetchTracksForItems,
     calculateSize,
-    countNewTracks,
     countRemoveBytes,
     countRemoveTracks,
     countSyncedItemTracks,

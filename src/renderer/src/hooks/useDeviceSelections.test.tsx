@@ -10,7 +10,6 @@ const mockRegistry = {
   setItemTypes: vi.fn(),
   fetchTracksForItems: vi.fn().mockResolvedValue(true),
   calculateSize: vi.fn().mockReturnValue({ total: null, isTickEstimate: false }),
-  countNewTracks: vi.fn().mockReturnValue(0),
   getSyncedMusicBytes: vi.fn().mockReturnValue(0),
   invalidateAll: vi.fn(),
   invalidateItem: vi.fn(),
@@ -66,7 +65,6 @@ beforeEach(() => {
   mockRegistry.setItemTypes.mockClear();
   mockRegistry.fetchTracksForItems.mockResolvedValue(true);
   mockRegistry.calculateSize.mockReturnValue({ total: null, isTickEstimate: false });
-  mockRegistry.countNewTracks.mockReturnValue(0);
   mockRegistry.getSyncedMusicBytes.mockReturnValue(0);
   mockRegistry.getItemTrackIds.mockReturnValue([]);
   mockRegistry.getItemType.mockReturnValue('artist');
