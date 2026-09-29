@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { deduplicateByKey } from '../../sync/track-dedup';
+import { deduplicateByKey } from '../../../sync/track-dedup';
 import type {
   JellyfinConfig,
   Artist,
@@ -376,41 +376,39 @@ export function useSync({
       (id) => syncedIds.has(id) && !outOfSyncItems.has(id),
     );
 
-    // Deduplicated track IDs across all selected items
+    // ORAIN-0755: dedupe (itemId, trackId) pairs by trackId using the shared
+    // pure module (first-occurrence-wins). The deduped list is the single
+    // source of truth for both the per-item track map and the owner map below:
+    // each trackId is owned by the first item that claimed it, so a track in
+    // two categories (e.g. an album already-synced AND its parent artist,
+    // still "new") counts once and lands in exactly one category.
     const allItemIds = [...selectedTracks];
-    const seenTrackIds = new Set<string>();
-    const itemTrackMap = new Map<string, Set<string>>(); // itemId -> trackIds (for size calculation)
+    const flatClaims = allItemIds.flatMap((itemId) =>
+      registry.getItemTrackIds(itemId).map((tid) => ({ itemId, tid })),
+    );
+    const dedupedClaims = deduplicateByKey(flatClaims, (c) => c.tid);
 
-    for (const itemId of allItemIds) {
-      const trackIds = registry.getItemTrackIds(itemId);
-      const uniqueTrackIds = new Set<string>();
-      for (const tid of trackIds) {
-        if (!seenTrackIds.has(tid)) {
-          seenTrackIds.add(tid);
-          uniqueTrackIds.add(tid);
-        }
-      }
-      // Always record an entry when the item has been fetched (trackIds.length > 0),
-      // even if all its tracks were already claimed by an earlier item.
-      // This distinguishes "all tracks reclaimed → 0" from "not yet fetched → use fallback".
-      if (trackIds.length > 0) {
-        itemTrackMap.set(itemId, uniqueTrackIds);
-      }
-    }
-
-    // ORAIN-0755: build the unique trackId set ONCE for the whole selection,
-    // then assign each trackId to the category of the FIRST item that
-    // claimed it. This guarantees a track in two categories (e.g. an album
-    // already-synced AND its parent artist, still "new") counts once and
-    // lands in exactly one category.
+    // itemId -> trackIds this item OWNS (post-dedup). Items not yet fetched
+    // are omitted (trackIds.length === 0) — the size/duration code falls back
+    // to registry.getItemTrackCount for those. Items that ARE fetched but
+    // have no owned tracks still get an empty Set entry, so callers can
+    // distinguish "fetched, all reclaimed → 0" from "not yet fetched".
+    const itemTrackMap = new Map<string, Set<string>>();
     const trackIdOwnerItem = new Map<string, string>();
     const uniqueTrackIdsList: string[] = [];
+    for (const { itemId, tid } of dedupedClaims) {
+      trackIdOwnerItem.set(tid, itemId);
+      uniqueTrackIdsList.push(tid);
+      let owned = itemTrackMap.get(itemId);
+      if (!owned) {
+        owned = new Set<string>();
+        itemTrackMap.set(itemId, owned);
+      }
+      owned.add(tid);
+    }
     for (const itemId of allItemIds) {
-      const trackIds = registry.getItemTrackIds(itemId);
-      for (const tid of trackIds) {
-        if (trackIdOwnerItem.has(tid)) continue;
-        trackIdOwnerItem.set(tid, itemId);
-        uniqueTrackIdsList.push(tid);
+      if (registry.getItemTrackIds(itemId).length > 0 && !itemTrackMap.has(itemId)) {
+        itemTrackMap.set(itemId, new Set<string>());
       }
     }
 

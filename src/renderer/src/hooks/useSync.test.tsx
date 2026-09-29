@@ -556,8 +556,8 @@ describe('useSync', () => {
       // Without the AC4 fix: totalBytes = 7_000_000 (double-counted).
       // With the fix:           totalBytes = 3_500_000 (album subsumed).
       registry.setItemTicks([
-        { id: 'artist-1', ticks: 1_000_000_000 },
-        { id: 'album-1', ticks: 1_000_000_000 },
+        { id: 'artist-1', ticks: 1_000_000_000, type: 'artist' },
+        { id: 'album-1', ticks: 1_000_000_000, type: 'album' },
       ]);
 
       // mockAlbums has album-1 with AlbumArtist = 'The Beatles' and mockArtists

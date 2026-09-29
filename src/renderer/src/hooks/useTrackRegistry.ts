@@ -356,32 +356,38 @@ export function createTrackRegistry() {
 
     let total = 0;
     let usedTicks = false;
-    // ORAIN-0755 AC3: dedup loaded tracks by id before summing.
-    const seenLoadedTrackIds = new Set<string>();
-
+    // ORAIN-0755 AC3: dedup loaded tracks across the whole selection via the
+    // shared pure module (first-occurrence-wins). Per-item dedup is not
+    // enough — overlapping items (artist + album that contains its tracks)
+    // would double-count.
+    const flatTrackIds: string[] = [];
     for (const itemId of selectedItems) {
       if (state.itemTracks.has(itemId)) {
-        // Tracks fetched from server — use real sizes (may be 0 if artist has no indexed albums)
         const trackIds = state.itemTracks.get(itemId)!;
-        for (const trackId of trackIds) {
-          if (seenLoadedTrackIds.has(trackId)) continue;
-          seenLoadedTrackIds.add(trackId);
-          const synced = syncedTracks.get(trackId);
-          const info = state.trackMap.get(trackId);
+        for (const tid of trackIds) flatTrackIds.push(tid);
+      }
+    }
+    const uniqueTrackIds = deduplicateByKey(flatTrackIds, (id) => id);
 
-          if (synced) {
-            // Already synced - estimate if converting to MP3
-            total += convertToMp3
-              ? estimateMp3Size(synced.fileSize, info?.bitrate, bitrate, info?.format)
-              : synced.fileSize;
-          } else if (info?.size) {
-            // Not synced yet - use server size
-            total += convertToMp3
-              ? estimateMp3Size(info.size, info.bitrate, bitrate, info?.format)
-              : info.size;
-          }
-        }
-      } else {
+    for (const trackId of uniqueTrackIds) {
+      const synced = syncedTracks.get(trackId);
+      const info = state.trackMap.get(trackId);
+
+      if (synced) {
+        // Already synced - estimate if converting to MP3
+        total += convertToMp3
+          ? estimateMp3Size(synced.fileSize, info?.bitrate, bitrate, info?.format)
+          : synced.fileSize;
+      } else if (info?.size) {
+        // Not synced yet - use server size
+        total += convertToMp3
+          ? estimateMp3Size(info.size, info.bitrate, bitrate, info?.format)
+          : info.size;
+      }
+    }
+
+    for (const itemId of selectedItems) {
+      if (!state.itemTracks.has(itemId)) {
         // Not yet fetched — use tick-based estimation.
         // ORAIN-0755 AC4: drop items whose ticks are covered by another selection.
         if (tickCoveredItemIds?.has(itemId)) continue;

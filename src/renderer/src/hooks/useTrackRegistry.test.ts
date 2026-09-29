@@ -140,8 +140,8 @@ describe('calculateSize deduplication by trackId', () => {
 
     // Set ticks directly. 1_000_000_000 ticks @ 0.0035 bytes/tick = 3_500_000 bytes each.
     registry.setItemTicks([
-      { id: 'artist-1', ticks: 1_000_000_000 },
-      { id: 'album-1', ticks: 1_000_000_000 },
+      { id: 'artist-1', ticks: 1_000_000_000, type: 'artist' },
+      { id: 'album-1', ticks: 1_000_000_000, type: 'album' },
     ]);
 
     const ticksOnly = registry.calculateSize(
