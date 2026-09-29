@@ -449,12 +449,50 @@ export function useSync({
       }
       return out;
     };
-    const newTracksBytes =
-      registry.calculateSize(ownerItemIdsFor(newTrackIdsSet), syncFolder, convertToMp3, bitrate).total ?? 0;
-    const updatedTracksBytes =
-      registry.calculateSize(ownerItemIdsFor(updatedTrackIdsSet), syncFolder, convertToMp3, bitrate).total ?? 0;
-    const alreadySyncedBytes =
-      registry.calculateSize(ownerItemIdsFor(alreadySyncedTrackIdsSet), syncFolder, convertToMp3, bitrate).total ?? 0;
+
+    // ORAIN-0755 AC4: when no tracks have been fetched yet (tick-only
+    // branch), `trackIdOwnerItem` is empty and `ownerItemIdsFor` would
+    // produce empty Sets — calculateSize would return null for every
+    // category. Instead we drop each category's items into the size call
+    // directly AND pass `tickCoveredItemIds` so the registry can suppress
+    // tick double-counts (album ticks covered by their parent artist).
+    //
+    // Match rule (per the spec note): `album.AlbumArtist === selectedArtist.Name`.
+    // Fragile against collaborations / "Various Artists" — the spec accepts
+    // that risk; AC4 documents the limit.
+    const tickCoveredItemIds = new Set<string>();
+    const selectedArtistNames = new Set<string>();
+    for (const a of artists) {
+      if (selectedTracks.has(a.Id) || selectedArtists.has(a.Id) || selectedAlbumArtists.has(a.Id)) {
+        selectedArtistNames.add(a.Name);
+      }
+    }
+    for (const album of albums) {
+      if (
+        selectedTracks.has(album.Id) &&
+        album.AlbumArtist &&
+        selectedArtistNames.has(album.AlbumArtist)
+      ) {
+        tickCoveredItemIds.add(album.Id);
+      }
+    }
+
+    // Loaded-tracks mode (trackIdOwnerItem populated): route through the
+    // owner map. Tick-only mode (no loaded tracks): route through the
+    // per-category item sets directly + tickCoveredItemIds.
+    const hasLoadedTracks = trackIdOwnerItem.size > 0;
+    const sizeCall = (categoryItemSet: Set<string>, categoryTrackIds: Set<string>) =>
+      registry.calculateSize(
+        hasLoadedTracks ? ownerItemIdsFor(categoryTrackIds) : categoryItemSet,
+        syncFolder,
+        convertToMp3,
+        bitrate,
+        hasLoadedTracks ? undefined : tickCoveredItemIds,
+      ).total ?? 0;
+
+    const newTracksBytes = sizeCall(newItemSet, newTrackIdsSet);
+    const updatedTracksBytes = sizeCall(updatedItemSet, updatedTrackIdsSet);
+    const alreadySyncedBytes = sizeCall(alreadySyncedItemSet, alreadySyncedTrackIdsSet);
     const willRemoveBytes = registry.countRemoveBytes(toDeleteIds, syncFolder);
 
     const getItemName = (id: string): string =>
@@ -536,15 +574,15 @@ export function useSync({
 
     const newItems = buildItemPreviews(
       newItemIds,
-      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate).total ?? 0,
+      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds).total ?? 0,
     );
     const updatedItems = buildItemPreviews(
       updatedItemIds,
-      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate).total ?? 0,
+      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds).total ?? 0,
     );
     const alreadySyncedItems = buildItemPreviews(
       alreadySyncedItemIds,
-      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate).total ?? 0,
+      (id) => registry.calculateSize(new Set([id]), syncFolder, convertToMp3, bitrate, tickCoveredItemIds).total ?? 0,
     );
     const removedItems = buildItemPreviews(toDeleteIds, (id) =>
       registry.countRemoveBytes([id], syncFolder),

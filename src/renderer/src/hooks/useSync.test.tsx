@@ -536,6 +536,57 @@ describe('useSync', () => {
       registry.invalidateDevice('/Volumes/USB');
     });
 
+    it('tick estimate does not double-count an album whose artist is also selected (AC4)', async () => {
+      // AC4 wiring: useSync must detect that album-1's ticks are subsumed
+      // by the selected artist-1 and pass that to calculateSize. Otherwise,
+      // when no tracks are loaded yet (tick-only branch), the total would
+      // include both the artist's and the album's ticks.
+      const registry = getTrackRegistry();
+      registry.invalidateAll();
+      registry.invalidateDevice('/Volumes/USB');
+
+      // No getTracksForItem → tick branch in calculateSize.
+      const api = createMockApi({
+        getSyncedTracks: vi.fn().mockResolvedValue([]),
+        getTracksForItem: vi.fn().mockResolvedValue({ tracks: [], errors: [] }),
+      });
+      Object.defineProperty(window, 'api', { value: api, writable: true });
+
+      // Seed ticks: artist-1 and album-1 each estimate 3_500_000 bytes.
+      // Without the AC4 fix: totalBytes = 7_000_000 (double-counted).
+      // With the fix:           totalBytes = 3_500_000 (album subsumed).
+      registry.setItemTicks([
+        { id: 'artist-1', ticks: 1_000_000_000 },
+        { id: 'album-1', ticks: 1_000_000_000 },
+      ]);
+
+      // mockAlbums has album-1 with AlbumArtist = 'The Beatles' and mockArtists
+      // has artist-1 with Name = 'The Beatles' — matching the AC4 rule.
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1', 'album-1']),
+        outOfSyncItems: new Set<string>(),
+      };
+
+      const { result } = renderHook(() => useSync(props));
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+      await act(async () => {
+        await registry.loadDeviceSyncedTracks('/Volumes/USB');
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.showPreview).toBe(true);
+      const data = result.current.previewData!;
+      expect(data.totalBytes).toBe(3_500_000);
+
+      registry.invalidateDevice('/Volumes/USB');
+    });
+
     it('willRemoveCount uses countRemoveTracks when selectedTracks is empty (delete-only path)', async () => {
       // MEDIUM-2 fix: when selectedTracks is empty, the delete-only branch is taken
       // (useSync.ts:342) which calls registry.countRemoveTracks(toDeleteIds, syncFolder)
