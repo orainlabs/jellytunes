@@ -41,6 +41,7 @@ import {
 import { detectDarwinFilesystem, realDarwinFs } from './darwin-diskutil';
 import { getOrCreateDeviceId } from './device-id';
 import { showLogFileInFolder } from './log-folder';
+import { isValidPath } from './path-validation';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
 // ORAIN-0740: [sync-start]/[sync-end]/[track-failed] log lines + error scrubbing.
 // The wrappers in log-scrub make sure the error object never reaches log.error.
@@ -762,17 +763,9 @@ ipcMain.handle('session:clear', () => {
 ipcMain.handle('app:sessionStorageAvailable', () => sessionStorageProvider !== null);
 
 // ---------------------------------------------------------------------------
-// IPC path validation helper
-// Ensures renderer-supplied paths are absolute and contain no null bytes or
-// shell metacharacters that could be misused if a path ever reaches a shell.
+// IPC path validation helper — see ./path-validation.ts (extracted ORAIN-0757
+// AC6 so the same predicate guards sync:start2 BEFORE mkdirSync runs).
 // ---------------------------------------------------------------------------
-function isValidPath(p: unknown): p is string {
-  if (typeof p !== 'string' || p.length === 0) return false;
-  if (p.includes('\0')) return false; // null byte
-  // Must be absolute: starts with / (unix) or X:\ or \\ (windows)
-  const isAbsolute = p.startsWith('/') || /^[A-Za-z]:[/\\]/.test(p) || p.startsWith('\\\\');
-  return isAbsolute;
-}
 
 // Renderer logging — forward renderer-side errors/warnings to the main log file
 // Only level and a sanitized message are accepted (no raw objects to avoid leaking PII)
@@ -952,7 +945,18 @@ ipcMain.handle('sync:start2', async (_event, options) => {
       return { success: false, errors: ['Missing serverUrl, apiKey, or userId'], tracksCopied: 0 };
     }
 
-    // Create destination folder if needed
+    // Create destination folder if needed — but only after validating
+    // the path. ORAIN-0757 AC6: a malformed renderer-supplied path
+    // (relative, null byte, or bare drive letter like 'G\' that slipped
+    // past the previous regression) used to reach mkdirSync directly,
+    // which threw or created a directory at a surprising location.
+    if (!isValidPath(destinationPath)) {
+      return {
+        success: false,
+        errors: [`Invalid destinationPath: ${String(destinationPath)}`],
+        tracksCopied: 0,
+      };
+    }
     if (!fs.existsSync(destinationPath)) {
       fs.mkdirSync(destinationPath, { recursive: true });
     }
