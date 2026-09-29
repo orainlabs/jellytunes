@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { deduplicateByKey } from '../../sync/track-dedup';
 import type {
   JellyfinConfig,
   Artist,
@@ -397,19 +398,63 @@ export function useSync({
       }
     }
 
+    // ORAIN-0755: build the unique trackId set ONCE for the whole selection,
+    // then assign each trackId to the category of the FIRST item that
+    // claimed it. This guarantees a track in two categories (e.g. an album
+    // already-synced AND its parent artist, still "new") counts once and
+    // lands in exactly one category.
+    const trackIdOwnerItem = new Map<string, string>();
+    const uniqueTrackIdsList: string[] = [];
+    for (const itemId of allItemIds) {
+      const trackIds = registry.getItemTrackIds(itemId);
+      for (const tid of trackIds) {
+        if (trackIdOwnerItem.has(tid)) continue;
+        trackIdOwnerItem.set(tid, itemId);
+        uniqueTrackIdsList.push(tid);
+      }
+    }
+
     // Calculate deduplicated total duration
     const totalDurationSeconds = registry.calculateDuration(selectedTracks);
 
-    // Calculate sizes using deduplicated track sets per category
-    const newItemSet = new Set(newItemIds);
-    const updatedItemSet = new Set(updatedItemIds);
-    const alreadySyncedItemSet = new Set(alreadySyncedItemIds);
+    // ORAIN-0755: each category's bytes = sum over the tracks it owns. The
+    // ownership Map guarantees no trackId appears in more than one category,
+    // so `newTracksBytes + updatedTracksBytes + alreadySyncedBytes` is the
+    // sum of the bytes of every unique trackId in the selection.
+    const newTrackIdsSet = new Set<string>();
+    const updatedTrackIdsSet = new Set<string>();
+    const alreadySyncedTrackIdsSet = new Set<string>();
+    for (const [tid, ownerItemId] of trackIdOwnerItem) {
+      if (outOfSyncItems.has(ownerItemId)) updatedTrackIdsSet.add(tid);
+      else if (syncedIds.has(ownerItemId)) alreadySyncedTrackIdsSet.add(tid);
+      else newTrackIdsSet.add(tid);
+    }
+
+    // Per-category itemId sets, used downstream for calculateDuration.
+    const newItemSet = new Set<string>();
+    const updatedItemSet = new Set<string>();
+    const alreadySyncedItemSet = new Set<string>();
+    for (const itemId of newItemIds) newItemSet.add(itemId);
+    for (const itemId of updatedItemIds) updatedItemSet.add(itemId);
+    for (const itemId of alreadySyncedItemIds) alreadySyncedItemSet.add(itemId);
+
+    // The registry's calculateSize dedups by trackId within a selection. We
+    // pass the owner itemId of each track in the category so that
+    // overlapping items don't double-count across calls.
+    const ownerItemIdsFor = (trackSet: Set<string>): Set<string> => {
+      const out = new Set<string>();
+      for (const tid of trackSet) {
+        const owner = trackIdOwnerItem.get(tid);
+        if (owner) out.add(owner);
+      }
+      return out;
+    };
     const newTracksBytes =
-      registry.calculateSize(newItemSet, syncFolder, convertToMp3, bitrate).total ?? 0;
+      registry.calculateSize(ownerItemIdsFor(newTrackIdsSet), syncFolder, convertToMp3, bitrate).total ?? 0;
     const updatedTracksBytes =
-      registry.calculateSize(updatedItemSet, syncFolder, convertToMp3, bitrate).total ?? 0;
+      registry.calculateSize(ownerItemIdsFor(updatedTrackIdsSet), syncFolder, convertToMp3, bitrate).total ?? 0;
     const alreadySyncedBytes =
-      registry.calculateSize(alreadySyncedItemSet, syncFolder, convertToMp3, bitrate).total ?? 0;
+      registry.calculateSize(ownerItemIdsFor(alreadySyncedTrackIdsSet), syncFolder, convertToMp3, bitrate).total ?? 0;
     const willRemoveBytes = registry.countRemoveBytes(toDeleteIds, syncFolder);
 
     const getItemName = (id: string): string =>
@@ -506,7 +551,7 @@ export function useSync({
     );
 
     setPreviewData({
-      trackCount: seenTrackIds.size,
+      trackCount: uniqueTrackIdsList.length,
       totalBytes: newTracksBytes + updatedTracksBytes + alreadySyncedBytes,
       totalDurationSeconds,
       formatBreakdown: {},

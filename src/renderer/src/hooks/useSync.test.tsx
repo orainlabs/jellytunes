@@ -463,6 +463,79 @@ describe('useSync', () => {
       expect(data.alreadySyncedCount).toBe(10);
     });
 
+    it('totalBytes reflects unique tracks only when categories overlap (new vs already-synced)', async () => {
+      // AC5: a track present in two categories (new + already-synced) must
+      // count once. Before the fix, calculateSize was called per category
+      // without dedup across categories → totalBytes > sum-of-unique-bytes.
+      const registry = getTrackRegistry();
+      registry.invalidateAll();
+
+      const sharedTracks = ['track-1', 'track-2'];
+      const trackObjects = sharedTracks.map((id) => ({
+        id,
+        name: id,
+        path: `/m/${id}.mp3`,
+        format: 'mp3',
+        size: 4_000_000,
+      }));
+
+      const api = createMockApi({
+        getSyncedTracks: vi.fn().mockResolvedValue([]), // nothing synced yet
+        getTracksForItem: vi.fn().mockResolvedValue({ tracks: trackObjects, errors: [] }),
+      });
+      Object.defineProperty(window, 'api', { value: api, writable: true });
+
+      const props = {
+        ...defaultProps,
+        // 'artist-1' is NEW (not in syncedItemsInfo), 'album-1' is ALREADY SYNCED.
+        // Both resolve to the same 2 tracks → totalBytes must equal 8 MB
+        // (sum of unique), not 16 MB.
+        selectedTracks: new Set(['artist-1', 'album-1']),
+        syncedItemsInfo: [
+          { id: 'album-1', name: 'Abbey Road', type: 'album' as const },
+        ],
+        outOfSyncItems: new Set<string>(),
+      };
+
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+      // Populate deviceSyncedTracks so calculateSize returns non-null totals.
+      await act(async () => {
+        await registry.loadDeviceSyncedTracks('/Volumes/USB');
+      });
+      await act(async () => {
+        await registry.ensureItemTracks('artist-1', 'artist', {
+          serverUrl: 'https://jellyfin.test',
+          apiKey: 'test-key',
+          userId: 'user-1',
+        });
+      });
+      await act(async () => {
+        await registry.ensureItemTracks('album-1', 'album', {
+          serverUrl: 'https://jellyfin.test',
+          apiKey: 'test-key',
+          userId: 'user-1',
+        });
+      });
+
+      await act(async () => {
+        await result.current.handleStartSync();
+      });
+
+      expect(result.current.showPreview).toBe(true);
+      const data = result.current.previewData!;
+      // Each trackId counted once → 2 tracks × 4 MB = 8 MB.
+      expect(data.totalBytes).toBe(8_000_000);
+
+      // Clean up: the registry is a global singleton; invalidateDevice clears
+      // the cached empty deviceSyncedTracks Map so the next test
+      // (willRemoveCount) can repopulate it.
+      registry.invalidateDevice('/Volumes/USB');
+    });
+
     it('willRemoveCount uses countRemoveTracks when selectedTracks is empty (delete-only path)', async () => {
       // MEDIUM-2 fix: when selectedTracks is empty, the delete-only branch is taken
       // (useSync.ts:342) which calls registry.countRemoveTracks(toDeleteIds, syncFolder)
