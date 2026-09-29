@@ -43,6 +43,7 @@ import {
   sanitizePathComponent,
   hasTraversalSegment,
 } from './sync-config';
+import { deduplicateTracks } from './track-dedup';
 import {
   upsertSyncedTrack,
   getSyncedTracksForDevice,
@@ -283,31 +284,8 @@ const DOWNLOAD_RETRY_DELAYS_MS = [1000, 3000] as const;
 // the existing error handling.
 const DOWNLOAD_STALL_TIMEOUT_MS = 30_000;
 
-// ORAIN-0709: deduplicate tracks by id. When the selection contains overlapping
-// items (e.g. artist + albumArtist + album + playlist), the same track.id appears
-// once per originating item. Consumers count each appearance separately — inflating
-// tracksCopied, tracksRetagged, totalSizeBytes, and estimate.totalBytes.
-// Keeping the first occurrence preserves parentItemId for analyzeDiff grouping.
-/**
- * Deduplicates tracks by `track.id`, returning a new array with only the first
- * occurrence of each unique ID kept. Subsequent occurrences with the same ID are
- * dropped (first-occurrence-wins for `parentItemId`).
- *
- * Used by ORAIN-0709 to prevent inflated counts when the user selection overlaps
- * (e.g. artist + albumArtist + album + playlist all resolve to the same pool of
- * tracks — without dedup, tracksCopied / tracksRetagged would be N × multiplicity).
- *
- * @param tracks - Array of tracks, possibly containing duplicate `id` values.
- * @returns New array with duplicate `id` entries removed (preserves order).
- */
-function deduplicateTracks(tracks: TrackInfo[]): TrackInfo[] {
-  const seen = new Set<string>();
-  return tracks.filter((track) => {
-    if (seen.has(track.id)) return false;
-    seen.add(track.id);
-    return true;
-  });
-}
+// ORAIN-0755: deduplicateTracks lives in ./track-dedup (pure module, shared with
+// the renderer). Replaces the local copy that ORAIN-0709 introduced.
 
 /**
  * Mock database interface for testing.
