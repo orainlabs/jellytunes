@@ -77,7 +77,7 @@ export function SyncSuccessModal({
             // ORAIN-0752 AC1: ⚠ instead of ✗ so the icon next to the title
             // does not look like a window-close control. The data-testid
             // pins the assertion against future glyph changes.
-            <span data-testid="sync-failed-icon" className="text-2xl">
+            <span data-testid="sync-failed-icon" className="text-2xl text-error">
               ⚠
             </span>
           )}

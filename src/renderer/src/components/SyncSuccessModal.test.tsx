@@ -171,6 +171,8 @@ describe('SyncSuccessModal', () => {
     expect(title.className).toMatch(/text-error/);
     const icon = screen.getByTestId('sync-failed-icon');
     expect(icon.textContent).toBe('⚠');
+    // The icon shares the title's red so the failure header reads as one unit.
+    expect(icon.className).toMatch(/text-error/);
     // Regression guard: the old glyph must not appear next to the title
     // in the failed state — it is what made the modal look like a
     // window-close control.
