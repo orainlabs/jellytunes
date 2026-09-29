@@ -554,31 +554,59 @@ export function createTrackRegistry() {
   const calculateDuration = (selectedItems: Set<string>): number => {
     let totalSeconds = 0;
 
+    // ORAIN-0755 AC3: dedup cached tracks across the whole selection via the
+    // shared pure module (first-occurrence-wins). Per-item dedup is not
+    // enough — overlapping items (artist + album that contains its tracks)
+    // would double-count `durationSeconds`. Mirrors calculateSize lines 363-370.
+    const flatTrackIds: string[] = [];
+    for (const itemId of selectedItems) {
+      const trackIds = state.itemTracks.get(itemId);
+      if (trackIds && trackIds.length > 0) {
+        for (const tid of trackIds) flatTrackIds.push(tid);
+      }
+    }
+    const uniqueTrackIds = deduplicateByKey(flatTrackIds, (id) => id);
+
+    // Track which trackIds already contributed `durationSeconds` so a track
+    // shared by overlapping items (artist + its album) is only counted once.
+    // Items whose cached tracks all lacked durationSeconds contribute 0 here
+    // and fall back to item-level RunTimeTicks below.
+    const counted = new Set<string>();
+    let cachedSeconds = 0;
+    for (const trackId of uniqueTrackIds) {
+      const info = state.trackMap.get(trackId);
+      if (info?.durationSeconds) {
+        cachedSeconds += info.durationSeconds;
+        counted.add(trackId);
+      }
+    }
+
     for (const itemId of selectedItems) {
       const trackIds = state.itemTracks.get(itemId);
 
       if (trackIds && trackIds.length > 0) {
-        // ORAIN-0755: dedup shared trackIds across selected items using the
-        // shared pure module (single source of truth, first-occurrence-wins).
-        const uniqueTrackIds = deduplicateByKey(trackIds, (id) => id);
-        let itemSeconds = 0;
-        for (const trackId of uniqueTrackIds) {
-          const info = state.trackMap.get(trackId);
-          if (info?.durationSeconds) itemSeconds += info.durationSeconds;
+        // Did THIS item contribute any cached seconds, or are all its
+        // cached tracks missing durationSeconds (e.g. loaded from the local
+        // device DB)? Fall back to item-level ticks in the latter case.
+        let itemContributed = false;
+        for (const tid of trackIds) {
+          if (counted.has(tid)) {
+            itemContributed = true;
+            break;
+          }
         }
-        if (itemSeconds > 0) {
-          totalSeconds += itemSeconds;
-        } else {
-          // Tracks present but no durationSeconds — fall back to item ticks
+        if (!itemContributed) {
           const ticks = state.itemTicks.get(itemId) ?? 0;
           if (ticks > 0) totalSeconds += ticks / TICKS_PER_SECOND;
         }
       } else {
-        // No cached tracks — fall back to item-level RunTimeTicks
+        // No cached tracks — fall back to item-level RunTimeTicks.
         const ticks = state.itemTicks.get(itemId) ?? 0;
         if (ticks > 0) totalSeconds += ticks / TICKS_PER_SECOND;
       }
     }
+
+    if (cachedSeconds > 0) totalSeconds += cachedSeconds;
     return totalSeconds;
   };
 
