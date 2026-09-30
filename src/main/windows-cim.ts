@@ -32,6 +32,15 @@ export interface CimLogicalDisk {
   deviceId: string; // "C:" / "G:"
   driveType: number; // 2 removable, 3 local, 4 network, 5 optical
   filesystem: string; // "NTFS" / "FAT32" / "exFAT" / ""
+  // ORAIN-0759 AC2: `VolumeName` from the WMI record. ConvertTo-Json 5.1
+  // serialises absent strings as `null`; on a labelled volume it is the
+  // string (potentially with `\uXXXX` escapes for non-ASCII characters,
+  // which `JSON.parse` decodes for us). Empty string when the property is
+  // missing or null — the formatter trims and decides whether to include
+  // the parenthetical. Whitespace-only labels are kept verbatim here so
+  // the formatter can drop them, which keeps this parser a pure shape
+  // transform.
+  volumeLabel: string;
 }
 
 /** Filesystem labels the sync layer cares about for sanitization. */
@@ -81,6 +90,9 @@ export function parseCimLogicalDisks(stdout: string): CimLogicalDisk[] {
         deviceId: rec.DeviceID as string,
         driveType: rec.DriveType as number,
         filesystem: typeof rec.FileSystem === 'string' ? (rec.FileSystem as string) : '',
+        // ORAIN-0759: missing property, null, or non-string → empty string.
+        // Whitespace-only labels are preserved so the formatter can decide.
+        volumeLabel: typeof rec.VolumeName === 'string' ? (rec.VolumeName as string) : '',
       });
     }
   }
@@ -93,23 +105,40 @@ export interface WindowsDrive {
   mountPath: string; // "G:\\" — ends with :\\ for `extractDriveLetter`
   isRemovable: boolean;
   vendorName: string; // "Removable" for DriveType=2, "Local" for 3
+  // ORAIN-0759 AC1: optional `VolumeName` from WMI. Missing/empty/whitespace
+  // means "no label"; the consumer renders just the letter in that case.
+  volumeLabel: string;
 }
 
 /**
  * Render the device-list `displayName` for a Windows drive.
+ *
  * ORAIN-0758 AC4: v0.7.1 used `X:` (with the colon); the ORAIN-0757
  * call site passed `d.letter` alone and produced 'G' instead of 'G:'.
- * Exported so the consumer (index.ts) can use a single source of truth.
+ *
+ * ORAIN-0759 AC1: when a `volumeLabel` is present (non-empty after trim),
+ * the displayName becomes `"<label> (<letter>:)"` so a user with several
+ * USB sticks can tell them apart. The label is trimmed here; the
+ * upstream parser passes it through verbatim. Without a label we fall
+ * back to the ORAIN-0758 shape `"<letter>:"`.
  */
-export function formatWindowsDriveDisplayName(letter: string): string {
-  return `${letter.toUpperCase()}:`;
+export function formatWindowsDriveDisplayName(letter: string, volumeLabel?: string | null): string {
+  const drive = `${letter.toUpperCase()}:`;
+  const trimmed = typeof volumeLabel === 'string' ? volumeLabel.trim() : '';
+  if (!trimmed) return drive;
+  return `${trimmed} (${drive})`;
 }
 
 const POWERSHELL_ENUMERATE = [
   '-NoProfile',
   '-NonInteractive',
   '-Command',
-  'Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,DriveType,FileSystem | ConvertTo-Json -Compress',
+  // ORAIN-0759 AC2: add `VolumeName` to the same `Select-Object` list so the
+  // label travels alongside DriveType/FileSystem in the existing JSON
+  // enumeration. No second PowerShell call. ConvertTo-Json 5.1 escapes
+  // non-ASCII characters as `\uXXXX` in the output (verified in the VM),
+  // which `JSON.parse` decodes transparently.
+  'Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,DriveType,FileSystem,VolumeName | ConvertTo-Json -Compress',
 ];
 
 const POWERSHELL_FILESYSTEM = (letter: string) => [
@@ -183,6 +212,10 @@ export async function listWindowsDrives(
         mountPath: `${letter}:\\`,
         isRemovable,
         vendorName: isRemovable ? 'Removable' : 'Local',
+        // ORAIN-0759 AC1: thread the WMI volume label through to the
+        // formatter. The formatter decides whether to include it based on
+        // trim — absent/null/empty/whitespace renders as `<letter>:` only.
+        volumeLabel: d.volumeLabel,
       };
     });
 }

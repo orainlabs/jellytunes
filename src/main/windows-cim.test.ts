@@ -30,10 +30,10 @@ describe('parseCimLogicalDisks', () => {
   // responsibilities keeps the parser testable in isolation.
   it('parses every CIM record regardless of DriveType', () => {
     expect(parseCimLogicalDisks(EN_JSON)).toEqual([
-      { deviceId: 'C:', driveType: 3, filesystem: 'NTFS' },
-      { deviceId: 'D:', driveType: 5, filesystem: '' },
-      { deviceId: 'G:', driveType: 2, filesystem: 'FAT32' },
-      { deviceId: 'H:', driveType: 4, filesystem: 'NTFS' },
+      { deviceId: 'C:', driveType: 3, filesystem: 'NTFS', volumeLabel: '' },
+      { deviceId: 'D:', driveType: 5, filesystem: '', volumeLabel: '' },
+      { deviceId: 'G:', driveType: 2, filesystem: 'FAT32', volumeLabel: '' },
+      { deviceId: 'H:', driveType: 4, filesystem: 'NTFS', volumeLabel: '' },
     ]);
   });
   it('returns [] on empty/invalid input', () => {
@@ -48,7 +48,7 @@ describe('parseCimLogicalDisks', () => {
       { DriveType: 2 }, // missing DeviceID
     ]);
     expect(parseCimLogicalDisks(mixed)).toEqual([
-      { deviceId: 'C:', driveType: 3, filesystem: 'NTFS' },
+      { deviceId: 'C:', driveType: 3, filesystem: 'NTFS', volumeLabel: '' },
     ]);
   });
 });
@@ -62,8 +62,14 @@ describe('listWindowsDrives — basic shape (Task 1)', () => {
     };
     const result = await listWindowsDrives(runner);
     expect(result).toEqual([
-      { letter: 'C', mountPath: 'C:\\', isRemovable: false, vendorName: 'Local' },
-      { letter: 'G', mountPath: 'G:\\', isRemovable: true, vendorName: 'Removable' },
+      { letter: 'C', mountPath: 'C:\\', isRemovable: false, vendorName: 'Local', volumeLabel: '' },
+      {
+        letter: 'G',
+        mountPath: 'G:\\',
+        isRemovable: true,
+        vendorName: 'Removable',
+        volumeLabel: '',
+      },
     ]);
   });
 });
@@ -105,7 +111,9 @@ describe('parseCimLogicalDisks — empty filesystem (Review Focus #4)', () => {
   // Optical DriveType=5 with no media: FileSystem can be empty.
   it('keeps the record in the parser (filter happens later)', () => {
     const json = JSON.stringify([{ DeviceID: 'D:', DriveType: 5, FileSystem: '' }]);
-    expect(parseCimLogicalDisks(json)).toEqual([{ deviceId: 'D:', driveType: 5, filesystem: '' }]);
+    expect(parseCimLogicalDisks(json)).toEqual([
+      { deviceId: 'D:', driveType: 5, filesystem: '', volumeLabel: '' },
+    ]);
   });
   it('detectWindowsFilesystem returns unknown for empty filesystem', async () => {
     const runner: CimRunner = {
@@ -279,7 +287,13 @@ describe('AC4 — stitching: enumeration → filesystem detection', () => {
     };
     const drives = await listWindowsDrives(runner);
     expect(drives).toEqual([
-      { letter: 'G', mountPath: 'G:\\', isRemovable: true, vendorName: 'Removable' },
+      {
+        letter: 'G',
+        mountPath: 'G:\\',
+        isRemovable: true,
+        vendorName: 'Removable',
+        volumeLabel: '',
+      },
     ]);
     // ORAIN-0758: pass the full mount path the consumer uses, not the
     // bare letter — matches the contract src/main/index.ts relies on.
@@ -370,5 +384,156 @@ describe('ORAIN-0758 AC4 — Windows drive displayName has the colon', () => {
   });
   it('renders C: from lowercase c', () => {
     expect(formatWindowsDriveDisplayName('c')).toBe('C:');
+  });
+});
+
+// ORAIN-0759 AC2: Windows displayName = "<label> (<letter>:)" when a volume
+// label is present, else "<letter>:". The label comes from the same
+// `Get-CimInstance Win32_LogicalDisk` enumeration (added `VolumeName` to the
+// `Select-Object` list) — no second PowerShell process.
+describe('ORAIN-0759 AC1 — Windows drive displayName includes the volume label', () => {
+  it('renders "SANDISK (E:)" when a label is present', () => {
+    expect(formatWindowsDriveDisplayName('E', 'SANDISK')).toBe('SANDISK (E:)');
+  });
+  it('renders "NAÏVE (E:)" for a non-ASCII label', () => {
+    // ORAIN-0759 AC3 requires a non-ASCII label to exercise the encoding
+    // path. The task body uses a Spanish word as its example; we use
+    // `NAÏVE` here because the project's `scripts/check-spanish.sh`
+    // (English-only rule) flags Spanish-accented characters. `NAÏVE` is
+    // a real English word and its `Ï` (U+00CF) is NOT in the Spanish
+    // pattern, so the fixture stays clean. The end-to-end property is
+    // identical: any non-ASCII label survives the parser/formatter
+    // without mojibake.
+    expect(formatWindowsDriveDisplayName('E', 'NAÏVE')).toBe('NAÏVE (E:)');
+  });
+  it('renders "E:" when the label is undefined (missing property)', () => {
+    expect(formatWindowsDriveDisplayName('E')).toBe('E:');
+  });
+  it('renders "E:" when the label is null', () => {
+    expect(formatWindowsDriveDisplayName('E', null)).toBe('E:');
+  });
+  it('renders "E:" when the label is empty string', () => {
+    expect(formatWindowsDriveDisplayName('E', '')).toBe('E:');
+  });
+  it('renders "E:" when the label is whitespace-only', () => {
+    expect(formatWindowsDriveDisplayName('E', '   ')).toBe('E:');
+  });
+  it('trims surrounding whitespace from a real label', () => {
+    expect(formatWindowsDriveDisplayName('E', '  SANDISK  ')).toBe('SANDISK (E:)');
+  });
+  it('uppercases the letter even when the label is present', () => {
+    expect(formatWindowsDriveDisplayName('e', 'SANDISK')).toBe('SANDISK (E:)');
+  });
+});
+
+// ORAIN-0759 AC2: the existing enumeration call already runs
+// `Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,DriveType,FileSystem`.
+// This task extends the `Select-Object` list to also request `VolumeName` —
+// not a new PowerShell process, not a second enumeration. The test pins
+// the shape of the call so a refactor that moves it (e.g. into a wrapper)
+// does not accidentally spawn twice.
+describe('ORAIN-0759 AC2 — VolumeName is requested in the same enumeration call', () => {
+  it('the enumerate command selects DeviceID, DriveType, FileSystem AND VolumeName', async () => {
+    const calls: string[][] = [];
+    const runner: CimRunner = {
+      async powershell(args) {
+        calls.push(args);
+        return { status: 0, stdout: '[]', stderr: '' };
+      },
+    };
+    await listWindowsDrives(runner);
+    const last = calls[calls.length - 1] ?? [];
+    const joined = last.join(' ');
+    expect(joined).toContain('VolumeName');
+    expect(joined).toContain('ConvertTo-Json');
+    // Only one PowerShell invocation per enumeration — the whole point of
+    // the "same call" AC. `realCim` and test runners can be called twice
+    // across tests, but inside one `listWindowsDrives` call there is one.
+    expect(calls).toHaveLength(1);
+  });
+});
+
+// ORAIN-0759 AC2: parser accepts the four absent-label cases AC2 calls out —
+// `null` (ConvertTo-Json serialises absent strings as null), absent property,
+// empty string, and whitespace-only — and treats them all as "no label". The
+// trim happens in the formatter so `parseCimLogicalDisks` stays a pure
+// JSON-shape parser; the formatter is what decides whether to show the
+// parenthetical.
+describe('ORAIN-0759 AC2 — parser leaves the label untouched (formatter decides)', () => {
+  it('label is the empty string when the JSON property is missing', () => {
+    const json = JSON.stringify([{ DeviceID: 'E:', DriveType: 2, FileSystem: 'exFAT' }]);
+    expect(parseCimLogicalDisks(json)).toEqual([
+      { deviceId: 'E:', driveType: 2, filesystem: 'exFAT', volumeLabel: '' },
+    ]);
+  });
+  it('label is the empty string when the JSON property is null', () => {
+    const json = JSON.stringify([
+      { DeviceID: 'E:', DriveType: 2, FileSystem: 'exFAT', VolumeName: null },
+    ]);
+    expect(parseCimLogicalDisks(json)).toEqual([
+      { deviceId: 'E:', driveType: 2, filesystem: 'exFAT', volumeLabel: '' },
+    ]);
+  });
+  it('label is the empty string when the JSON property is ""', () => {
+    const json = JSON.stringify([
+      { DeviceID: 'E:', DriveType: 2, FileSystem: 'exFAT', VolumeName: '' },
+    ]);
+    expect(parseCimLogicalDisks(json)).toEqual([
+      { deviceId: 'E:', driveType: 2, filesystem: 'exFAT', volumeLabel: '' },
+    ]);
+  });
+  it('preserves a whitespace-only label so the formatter can drop it', () => {
+    const json = JSON.stringify([
+      { DeviceID: 'E:', DriveType: 2, FileSystem: 'exFAT', VolumeName: '   ' },
+    ]);
+    expect(parseCimLogicalDisks(json)).toEqual([
+      { deviceId: 'E:', driveType: 2, filesystem: 'exFAT', volumeLabel: '   ' },
+    ]);
+  });
+});
+
+// ORAIN-0759 AC3: a non-ASCII label must reach the renderer intact (no
+// mojibake). PowerShell 5.1's `ConvertTo-Json` is known to escape non-ASCII
+// characters as `\uXXXX` in the JSON output (verified in the Win11 dev VM
+// during QA), so we test BOTH that round-trip (the real-world capture) AND
+// a raw-UTF-8 label (in case a future PS version or a UTF-8 fix changes
+// that behaviour). Both must produce the same label string.
+//
+// We use `NAÏVE` here (English word, U+00CF `Ï`) instead of the
+// Spanish-word example in the task body so the project's
+// `check-spanish.sh` stays at zero hits. The end-to-end property —
+// non-ASCII label survives the parser/formatter unchanged — is
+// identical regardless of which non-ASCII character we pick.
+describe('ORAIN-0759 AC3 — non-ASCII label survives the parser', () => {
+  it('decodes \\uXXXX escapes that ConvertTo-Json 5.1 emits (VM capture)', () => {
+    // ConvertTo-Json 5.1 in the VM produced literally this string in stdout
+    // for a drive labelled `NAÏVE`. `JSON.parse` decodes the `Ï` escape
+    // to the U+00CF `Ï` we expect at runtime.
+    const captured =
+      '[{"DeviceID":"E:","DriveType":2,"FileSystem":"exFAT","VolumeName":"NA\\u00cfVE"}]';
+    const parsed = parseCimLogicalDisks(captured);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.volumeLabel).toBe('NAÏVE');
+  });
+  it('passes a raw-UTF-8 label through unchanged', () => {
+    const json = JSON.stringify([
+      { DeviceID: 'E:', DriveType: 2, FileSystem: 'exFAT', VolumeName: 'NAÏVE' },
+    ]);
+    const parsed = parseCimLogicalDisks(json);
+    expect(parsed[0]?.volumeLabel).toBe('NAÏVE');
+  });
+});
+
+// ORAIN-0759 AC3+AC1 end-to-end: the label reaches the formatter as a real
+// non-ASCII string and is rendered in the displayName without corruption.
+describe('ORAIN-0759 — displayName with non-ASCII label', () => {
+  it('renders "NAÏVE (E:)" end-to-end', () => {
+    const captured =
+      '[{"DeviceID":"E:","DriveType":2,"FileSystem":"exFAT","VolumeName":"NA\\u00cfVE"}]';
+    const [first] = parseCimLogicalDisks(captured);
+    expect(first).toBeDefined();
+    expect(
+      formatWindowsDriveDisplayName(first!.deviceId.replace(/:$/, ''), first!.volumeLabel),
+    ).toBe('NAÏVE (E:)');
   });
 });

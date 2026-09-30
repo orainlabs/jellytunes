@@ -281,7 +281,12 @@ async function listMountedVolumesFallback(): Promise<UsbDevice[]> {
             // ORAIN-0757 call site passed `d.letter` alone and produced
             // 'G' instead of 'G:'. Use the shared formatter so a future
             // change to the convention lives in one place.
-            displayName: formatWindowsDriveDisplayName(d.letter),
+            //
+            // ORAIN-0759 AC1: thread the WMI `VolumeName` through so a
+            // labelled drive renders as `SANDISK (E:)` instead of `E:`.
+            // Absent/null/empty/whitespace labels fall back to the bare
+            // letter inside the formatter.
+            displayName: formatWindowsDriveDisplayName(d.letter, d.volumeLabel),
             size: 0,
             mountpoints: [{ path: d.mountPath }],
             isRemovable: d.isRemovable,
