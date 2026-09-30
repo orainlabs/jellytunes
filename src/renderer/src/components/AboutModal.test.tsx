@@ -87,7 +87,7 @@ describe('AboutModal', () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     render(<AboutModal onClose={vi.fn()} />);
     await act(async () => {
-      screen.getByText('View on GitHub ↗').click();
+      screen.getByText(/View on GitHub/).click();
     });
     expect(openSpy).toHaveBeenCalledWith('https://github.com/orainlabs/jellytunes');
     openSpy.mockRestore();
@@ -97,7 +97,7 @@ describe('AboutModal', () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     render(<AboutModal onClose={vi.fn()} />);
     await act(async () => {
-      screen.getByText('Support on Ko-fi ☕').click();
+      screen.getByText(/Support on Ko-fi/).click();
     });
     expect(openSpy).toHaveBeenCalledWith('https://ko-fi.com/orainlabs');
     openSpy.mockRestore();
@@ -119,7 +119,7 @@ describe('AboutModal', () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
     render(<AboutModal onClose={vi.fn()} />);
     await act(async () => {
-      screen.getByText('Contact Us').click();
+      screen.getByText(/Contact Us/).click();
     });
     expect(openSpy).toHaveBeenCalledWith('mailto:hi@orainlabs.dev');
     openSpy.mockRestore();
@@ -265,7 +265,7 @@ describe('AboutModal', () => {
     const accessory = screen.getByTestId('about-group-accessory');
     expect(accessory).toContainElement(screen.getByText(/View on GitHub/));
     expect(accessory).toContainElement(screen.getByText(/Support on Ko-fi/));
-    expect(accessory).toContainElement(screen.getByText('Contact Us'));
+    expect(accessory).toContainElement(screen.getByText(/Contact Us/));
   });
 
   // ORAIN-0735 AC2: the full log path is exposed via tooltip (title attr)

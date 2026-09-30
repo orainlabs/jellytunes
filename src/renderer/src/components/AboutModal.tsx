@@ -195,7 +195,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           data-testid="about-group-accessory"
           role="group"
           aria-label="External links"
-          className="flex flex-row flex-wrap gap-x-4 gap-y-1 mb-4 items-baseline justify-center text-body-sm text-on_surface_variant"
+          className="flex flex-row flex-wrap gap-x-4 gap-y-1 mb-4 items-baseline justify-between text-body-sm text-on_surface_variant"
         >
           <a
             href="#"
@@ -205,7 +205,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
             }}
             className="hover:text-on_surface hover:underline transition-colors whitespace-nowrap"
           >
-            Contact Us
+            Contact Us {'✉\uFE0F'}
           </a>
           <a
             href="#"
@@ -215,7 +215,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
             }}
             className="hover:text-on_surface hover:underline transition-colors whitespace-nowrap"
           >
-            View on GitHub ↗
+            View on GitHub {'↗\uFE0F'}
           </a>
           <a
             href="#"
@@ -225,7 +225,7 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
             }}
             className="hover:text-on_surface hover:underline transition-colors whitespace-nowrap"
           >
-            Support on Ko-fi ☕
+            Support on Ko-fi {'☕\uFE0F'}
           </a>
         </nav>
 
