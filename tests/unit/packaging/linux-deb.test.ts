@@ -16,7 +16,11 @@ interface PackageManifest {
 
 const projectManifest = JSON.parse(readFileSync('package.json', 'utf8')) as PackageManifest;
 const require = createRequire(import.meta.url);
-const appBuilderLibRoot = dirname(require.resolve('app-builder-lib/package.json'));
+// app-builder-lib is only a transitive dependency, so resolve it through
+// electron-builder (a direct devDependency) instead of relying on the NODE_PATH
+// that pnpm injects into bin shims, which `pnpm rebuild` drops.
+const electronBuilderRequire = createRequire(require.resolve('electron-builder/package.json'));
+const appBuilderLibRoot = dirname(electronBuilderRequire.resolve('app-builder-lib/package.json'));
 const linuxTemplate = (name: string): string =>
   readFileSync(join(appBuilderLibRoot, 'templates', 'linux', name), 'utf8');
 
