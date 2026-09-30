@@ -13,6 +13,7 @@ import {
   detectWindowsFilesystem,
   listWindowsDrives,
   oncePerSession,
+  formatWindowsDriveDisplayName,
   type CimRunner,
 } from './windows-cim';
 
@@ -143,7 +144,9 @@ describe('AC3 — locale independence', () => {
         return { status: 0, stdout: 'FAT32', stderr: '' };
       },
     };
-    expect(await detectWindowsFilesystem(runner, 'G')).toBe('fat32');
+    // ORAIN-0758: pass the full path the consumer uses, not the bare
+    // letter — matches the contract src/main/index.ts relies on.
+    expect(await detectWindowsFilesystem(runner, 'G:\\')).toBe('fat32');
   });
 });
 
@@ -205,7 +208,10 @@ describe('AC5 — failure modes and async invocation', () => {
         return { status: 0, stdout: 'NTFS', stderr: '' };
       },
     };
-    expect(await detectWindowsFilesystem(runner, 'C')).toBe('ntfs');
+    // ORAIN-0758: the public caller in src/main/index.ts passes a full
+    // path, not a bare letter — assert the contract against 'C:\\docs'
+    // so the test exercises the same shape the renderer supplies.
+    expect(await detectWindowsFilesystem(runner, 'C:\\docs')).toBe('ntfs');
     const last = calls[calls.length - 1]!;
     expect(last.args).toContain('-NoProfile');
     expect(last.args).toContain('-NonInteractive');
@@ -275,11 +281,94 @@ describe('AC4 — stitching: enumeration → filesystem detection', () => {
     expect(drives).toEqual([
       { letter: 'G', mountPath: 'G:\\', isRemovable: true, vendorName: 'Removable' },
     ]);
-    const label = await detectWindowsFilesystem(runner, drives[0]!.letter);
+    // ORAIN-0758: pass the full mount path the consumer uses, not the
+    // bare letter — matches the contract src/main/index.ts relies on.
+    const label = await detectWindowsFilesystem(runner, drives[0]!.mountPath);
     expect(label).toBe('fat32');
     // The probe call targets DeviceID='G:' — colon-rooted, not the
     // broken G\\ form that the previous fsutil regression passed.
     const probeArgs = calls[1] ?? [];
     expect(probeArgs.some((a) => a.includes("DeviceID='G:'"))).toBe(true);
+  });
+});
+
+// ORAIN-0758 AC3: detectWindowsFilesystem is called from
+// src/main/index.ts with the FULL path (e.g. 'C:\\Users\\user\\Music'),
+// not just the letter. The v0.7.1 implementation did `devicePath.charAt(0)`;
+// ORAIN-0757 changed that to `replace(/[^A-Z]/g, '')` which strips the
+// separator and concatenates every alpha character into a wrong DeviceID.
+// Anchor the extraction on `^([A-Za-z]):` and return `unknown` for paths
+// without a drive letter (UNC, POSIX, empty) WITHOUT invoking PowerShell.
+describe('ORAIN-0758 AC3 — drive-letter extraction from full path', () => {
+  it("extracts C from C:\\Users\\user\\Music and queries DeviceID='C:'", async () => {
+    const calls: string[][] = [];
+    const runner: CimRunner = {
+      async powershell(args) {
+        calls.push(args);
+        return { status: 0, stdout: 'NTFS', stderr: '' };
+      },
+    };
+    expect(await detectWindowsFilesystem(runner, 'C:\\Users\\user\\Music')).toBe('ntfs');
+    const probe = calls[0] ?? [];
+    expect(probe.some((a) => a.includes("DeviceID='C:'"))).toBe(true);
+  });
+  it("normalises lowercase c:/Music to C and queries DeviceID='C:'", async () => {
+    const calls: string[][] = [];
+    const runner: CimRunner = {
+      async powershell(args) {
+        calls.push(args);
+        return { status: 0, stdout: 'NTFS', stderr: '' };
+      },
+    };
+    expect(await detectWindowsFilesystem(runner, 'c:/Music')).toBe('ntfs');
+    const probe = calls[0] ?? [];
+    expect(probe.some((a) => a.includes("DeviceID='C:'"))).toBe(true);
+  });
+  it('accepts the drive root alone (G:\\)', async () => {
+    const calls: string[][] = [];
+    const runner: CimRunner = {
+      async powershell(args) {
+        calls.push(args);
+        return { status: 0, stdout: 'FAT32', stderr: '' };
+      },
+    };
+    expect(await detectWindowsFilesystem(runner, 'G:\\')).toBe('fat32');
+    const probe = calls[0] ?? [];
+    expect(probe.some((a) => a.includes("DeviceID='G:'"))).toBe(true);
+  });
+  it('returns unknown without calling PowerShell for UNC paths', async () => {
+    const calls: string[][] = [];
+    const runner: CimRunner = {
+      async powershell(args) {
+        calls.push(args);
+        return { status: 0, stdout: 'NTFS', stderr: '' };
+      },
+    };
+    expect(await detectWindowsFilesystem(runner, '\\\\nas\\music\\album')).toBe('unknown');
+    expect(calls).toHaveLength(0);
+  });
+  it('returns unknown without calling PowerShell for POSIX paths', async () => {
+    const calls: string[][] = [];
+    const runner: CimRunner = {
+      async powershell(args) {
+        calls.push(args);
+        return { status: 0, stdout: 'NTFS', stderr: '' };
+      },
+    };
+    expect(await detectWindowsFilesystem(runner, '/mnt/usb/Music')).toBe('unknown');
+    expect(calls).toHaveLength(0);
+  });
+});
+
+// ORAIN-0758 AC4: the device-list displayName must keep the colon.
+// v0.7.1 produced 'G:'; the ORAIN-0757 caller used `d.letter` alone and
+// produced 'G', which made the device-list render as a bare letter and
+// the storage bar / filesystem badge / space estimate all stay hidden.
+describe('ORAIN-0758 AC4 — Windows drive displayName has the colon', () => {
+  it('renders G: from letter G', () => {
+    expect(formatWindowsDriveDisplayName('G')).toBe('G:');
+  });
+  it('renders C: from lowercase c', () => {
+    expect(formatWindowsDriveDisplayName('c')).toBe('C:');
   });
 });

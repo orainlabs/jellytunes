@@ -35,6 +35,20 @@ describe('isValidPath — Windows absolute', () => {
   it('accepts UNC \\\\server\\share form', () => {
     expect(isValidPath('\\\\nas\\music\\album')).toBe(true);
   });
+  // ORAIN-0758 AC1: v0.7.1 accepted the drive root alone ('X:\\' / 'X:/').
+  // The ORAIN-0757 hardening was meant to reject 'G\\' and 'G:' (no
+  // separator / no segment after separator), not to ban the drive root.
+  // The bug surfaced when usb:getDeviceInfo / device:getFilesystem / the
+  // sync:start2 guard refused 'E:\\' and the storage bar disappeared.
+  it('accepts X:\\ drive root', () => {
+    expect(isValidPath('G:\\')).toBe(true);
+  });
+  it('accepts X:/ drive root', () => {
+    expect(isValidPath('G:/')).toBe(true);
+  });
+  it('accepts lowercase drive root x:\\', () => {
+    expect(isValidPath('g:\\')).toBe(true);
+  });
   it('rejects bare drive letter without colon', () => {
     // The regression we are guarding against: 'G\\' (or 'G:') without
     // the trailing slash/backslash passes extractDriveLetter as
@@ -51,5 +65,21 @@ describe('isValidPath — type guards', () => {
     expect(isValidPath(123)).toBe(false);
     expect(isValidPath({})).toBe(false);
     expect(isValidPath(['/mnt/usb'])).toBe(false);
+  });
+});
+
+// ORAIN-0758 AC2: the same `isValidPath` predicate protects three IPC
+// handlers — `usb:getDeviceInfo`, `device:getFilesystem` and
+// `sync:start2` (src/main/index.ts). Before the fix, sync:start2 with
+// `destinationPath = 'G:\\'` returned `Invalid destinationPath: G:\`
+// and the user couldn't sync to the drive root. Pin the predicate
+// against the exact string the AC2 mentions so a regression of the guard
+// breaks this test, not the user's sync.
+describe('ORAIN-0758 AC2 — sync:start2 guard accepts the drive root', () => {
+  it('accepts G:\\ so the sync:start2 guard does not return Invalid destinationPath', () => {
+    expect(isValidPath('G:\\')).toBe(true);
+  });
+  it('accepts G:/ so the sync:start2 guard does not return Invalid destinationPath', () => {
+    expect(isValidPath('G:/')).toBe(true);
   });
 });

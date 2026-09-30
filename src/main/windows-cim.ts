@@ -95,6 +95,16 @@ export interface WindowsDrive {
   vendorName: string; // "Removable" for DriveType=2, "Local" for 3
 }
 
+/**
+ * Render the device-list `displayName` for a Windows drive.
+ * ORAIN-0758 AC4: v0.7.1 used `X:` (with the colon); the ORAIN-0757
+ * call site passed `d.letter` alone and produced 'G' instead of 'G:'.
+ * Exported so the consumer (index.ts) can use a single source of truth.
+ */
+export function formatWindowsDriveDisplayName(letter: string): string {
+  return `${letter.toUpperCase()}:`;
+}
+
 const POWERSHELL_ENUMERATE = [
   '-NoProfile',
   '-NonInteractive',
@@ -181,17 +191,27 @@ export async function listWindowsDrives(
  * Detect the filesystem mounted at `driveLetter` using the WMI
  * `FileSystem` property. Returns `unknown` for any failure mode:
  *
- *   - `driveLetter` is not a single ASCII letter
+ *   - `driveLetter` has no leading drive letter (UNC, POSIX, empty)
  *   - `powershell.exe` is not available (returns ENOENT)
  *   - PowerShell times out (5 s)
  *   - the returned value is not one of ntfs/fat32/exfat
+ *
+ * ORAIN-0758 AC3: the caller in src/main/index.ts passes a full path
+ * ('C:\\Users\\user\\Music' or 'G:\\'), not just the letter. The
+ * ORAIN-0757 regex `replace(/[^A-Z]/g, '')` stripped the separator and
+ * concatenated every alpha into a wrong DeviceID ('CUSERSUSERMUSIC:'),
+ * which WMI never matched and the probe returned `unknown`. Anchor the
+ * extraction to the start of the path with `^([A-Za-z]):` so 'G:\\foo'
+ * and 'g:/' both resolve to 'G', while UNC / POSIX paths return
+ * `unknown` without invoking PowerShell.
  */
 export async function detectWindowsFilesystem(
   runner: CimRunner,
   driveLetter: string,
   options: { timeoutMs?: number } = {},
 ): Promise<WindowsFilesystemLabel> {
-  const letter = driveLetter.toUpperCase().replace(/[^A-Z]/g, '');
+  const match = /^([A-Za-z]):/.exec(driveLetter);
+  const letter = match ? match[1]!.toUpperCase() : '';
   if (!letter) return 'unknown';
   const timeout = options.timeoutMs ?? 5000;
   let result;

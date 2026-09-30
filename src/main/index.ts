@@ -32,7 +32,13 @@ import {
 import { runSnapConnectionProbes, type SnapctlResult } from './snap-connections';
 import { listRemovableMountpoints } from './removable-mounts';
 import { detectLinuxFilesystem } from './filesystem-type';
-import { detectWindowsFilesystem, listWindowsDrives, oncePerSession, realCim } from './windows-cim';
+import {
+  detectWindowsFilesystem,
+  listWindowsDrives,
+  oncePerSession,
+  realCim,
+  formatWindowsDriveDisplayName,
+} from './windows-cim';
 import { detectDarwinFilesystem, realDarwinFs } from './darwin-diskutil';
 import { getOrCreateDeviceId } from './device-id';
 import { showLogFileInFolder } from './log-folder';
@@ -271,7 +277,11 @@ async function listMountedVolumesFallback(): Promise<UsbDevice[]> {
         for (const d of drives) {
           devices.push({
             device: d.mountPath,
-            displayName: d.letter,
+            // ORAIN-0758 AC4: v0.7.1 used 'X:' (with colon); the
+            // ORAIN-0757 call site passed `d.letter` alone and produced
+            // 'G' instead of 'G:'. Use the shared formatter so a future
+            // change to the convention lives in one place.
+            displayName: formatWindowsDriveDisplayName(d.letter),
             size: 0,
             mountpoints: [{ path: d.mountPath }],
             isRemovable: d.isRemovable,

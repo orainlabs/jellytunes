@@ -17,12 +17,12 @@
 export function isValidPath(p: unknown): p is string {
   if (typeof p !== 'string' || p.length === 0) return false;
   if (p.includes('\0')) return false;
-  // Bare drive letter (e.g. 'G', 'G\\', 'G:') is not a valid absolute path.
-  if (/^[A-Za-z]:?$/.test(p) || /^[A-Za-z]:[\\/]$/.test(p)) {
-    // 'X:' alone or 'X:' with separator-but-empty-trailing is still wrong.
-    // We accept 'X:' followed by another segment (e.g. 'G:\\foo').
-    if (!/^[A-Za-z]:[\\/](?!\/).+/.test(p)) return false;
-  }
+  // Bare drive letter (e.g. 'G' or 'G:') is not a valid absolute path.
+  // ORAIN-0758: the ORAIN-0757 hardening also accidentally rejected the
+  // drive root 'X:\\' / 'X:/'. Restore the v0.7.1 behaviour: the root
+  // alone IS a valid absolute path — 'X:' without a segment after the
+  // separator is fine, only 'X:' alone (no separator) is not.
+  if (/^[A-Za-z]:?$/.test(p)) return false;
   // Must be absolute: starts with / (unix), X:\ / X:/ (windows), or \\unc\share
   const isAbsolute = p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
   return isAbsolute;
