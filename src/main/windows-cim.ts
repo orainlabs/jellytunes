@@ -370,18 +370,30 @@ export async function listWindowsDrives(
       return [];
     }
     if (result.error) {
-      const cause = result.error.message.includes('ENOENT')
+      const msg = result.error.message;
+      // ORAIN-0765 AC3: preserve the cause the runner actually emitted.
+      // The runner tags `runner closed` separately from `process died`
+      // (see `windows-cim-process.ts:177` and `:317`), so the consumer
+      // must keep them distinct — `runner-closed` indicates a deliberate
+      // shutdown (`close()` was called), `process-died` indicates the
+      // child exited on its own.
+      const cause = msg.includes('ENOENT')
         ? 'spawn-enoent'
-        : result.error.message.includes('timeout')
+        : msg.includes('timeout')
           ? 'timeout'
-          : result.error.message.includes('process died') ||
-              result.error.message.includes('runner closed')
-            ? 'process-died'
-            : 'runner-error';
+          : msg.includes('runner closed')
+            ? 'runner-closed'
+            : msg.includes('process died')
+              ? 'process-died'
+              : 'runner-error';
       recordCimError(cause, Date.now() - startedAt);
       return [];
     }
     if (result.status === null || result.status !== 0) {
+      // ORAIN-0765 AC3: surface the exit code the runner delivered. `0`
+      // is the success path; non-zero or `null` (signal) round-trip as
+      // `exit-<code>` / `exit-null` to match the runner's own
+      // `ErrorCause` enum (`windows-cim-process.ts:83-91`).
       recordCimError(`exit-${result.status ?? 'null'}`, Date.now() - startedAt);
       return [];
     }

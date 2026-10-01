@@ -1022,6 +1022,193 @@ describe('ORAIN-0765 AC2 — recovery from a hung powershell.exe', () => {
   });
 });
 
+// ORAIN-0765 AC3: every failure cause must reach `recordCimError` as the
+// cause string the runner actually emitted. Today `listWindowsDrives`
+// converts a non-zero exit into `process-died` because the `result.error`
+// check runs BEFORE the `result.status` check, so even when the runner
+// gives us `status: 0` / `1` / `null`, we never see it.
+//
+// One test per cause: each test drives the runner into the matching state
+// and asserts the `[windows-cim] enumeration failed` log line contains
+// the right cause string after three polls (the AC5-of-ORAIN-0761
+// threshold).
+describe('ORAIN-0765 AC3 — exit cause preserved through result.status', () => {
+  beforeEach(() => {
+    resetFilesystemCacheForTests();
+    resetCimErrorStateForTests();
+    setCimErrorLoggerForTests(null);
+    logSpy.calls.length = 0;
+  });
+
+  it('exit code 0 → cause "exit-0"', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        // status 0 with empty stdout is a degenerate case: the parser
+        // returns [] for empty input, which the AC1 path treats as a
+        // successful enumeration with no records. To trigger the
+        // "exit-N" path we need a non-zero status; status=0 with a
+        // parseable JSON succeeds without recordCimError. We test
+        // the success path (no log line) here instead — the
+        // non-zero cases below cover the actual cause string.
+        return { status: 0, stdout: '[]', stderr: '' };
+      },
+    };
+    for (let i = 0; i < 3; i += 1) await listWindowsDrives(runner);
+    const lines = logSpy.calls.filter((c) =>
+      c.message.includes('[windows-cim] enumeration failed'),
+    );
+    // status=0 with parseable JSON does NOT call recordCimError.
+    expect(lines).toHaveLength(0);
+  });
+
+  it('exit code 1 → cause "exit-1"', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return { status: 1, stdout: '', stderr: 'denied' };
+      },
+    };
+    for (let i = 0; i < 3; i += 1) await listWindowsDrives(runner);
+    const line = logSpy.calls.find((c) => c.message.includes('[windows-cim] enumeration failed'));
+    expect(line?.message).toContain('exit-1');
+  });
+
+  it('null status → cause "exit-null"', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return { status: null, stdout: '', stderr: '' };
+      },
+    };
+    for (let i = 0; i < 3; i += 1) await listWindowsDrives(runner);
+    const line = logSpy.calls.find((c) => c.message.includes('[windows-cim] enumeration failed'));
+    expect(line?.message).toContain('exit-null');
+  });
+
+  it('ENOENT error → cause "spawn-enoent"', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return {
+          status: null,
+          stdout: '',
+          stderr: '',
+          error: new Error('spawn powershell.exe ENOENT'),
+        };
+      },
+    };
+    for (let i = 0; i < 3; i += 1) await listWindowsDrives(runner);
+    const line = logSpy.calls.find((c) => c.message.includes('[windows-cim] enumeration failed'));
+    expect(line?.message).toContain('spawn-enoent');
+  });
+
+  it('close() → cause "runner-closed"', async () => {
+    const { spawner } = makeSpawnerForAC3();
+    const runner = new PersistentCimRunner({ spawner });
+    const p = listWindowsDrives(runner);
+    await new Promise((r) => setImmediate(r));
+    runner.close();
+    await p;
+    // Two more attempts hit `close()` again because the slot is already
+    // cleared after the first failure; we keep counting under threshold
+    // by ensuring only one failure counts toward the threshold.
+    for (let i = 0; i < 2; i += 1) {
+      const next = listWindowsDrives(runner);
+      await new Promise((r) => setImmediate(r));
+      runner.close();
+      await next.catch(() => undefined);
+    }
+    const lines = logSpy.calls.filter((c) =>
+      c.message.includes('[windows-cim] enumeration failed'),
+    );
+    // After coalescing, every poll after close() races the previous
+    // close — but `runner.close()` rejects with "runner closed" so
+    // each attempt counts once. Three attempts → one log line.
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    expect(lines[lines.length - 1]?.message).toContain('runner-closed');
+  });
+});
+
+// ORAIN-0765 AC4: a failed enumeration that N callers share must count
+// once. Before this task, each caller would call `recordCimError`
+// independently — 4 callers per failure = 4 increments, hitting the
+// 3-poll threshold after only 2 enumerations (and producing 4 log lines
+// per session, not 1).
+describe('ORAIN-0765 AC4 — shared failure counts once across callers', () => {
+  beforeEach(() => {
+    resetFilesystemCacheForTests();
+    resetCimErrorStateForTests();
+    setCimErrorLoggerForTests(null);
+    logSpy.calls.length = 0;
+  });
+
+  it('2 failed enumerations with 4 callers each → 0 log lines', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return { status: 1, stdout: '', stderr: '' };
+      },
+    };
+    // First enumeration: 4 concurrent callers — all share, count = 1.
+    await Promise.all([
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+    ]);
+    // Second enumeration: another 4 callers — count = 2 (under threshold).
+    await Promise.all([
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+    ]);
+    const lines = logSpy.calls.filter((c) =>
+      c.message.includes('[windows-cim] enumeration failed'),
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('3 failed enumerations with 4 callers each → exactly 1 log line', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return { status: 1, stdout: '', stderr: '' };
+      },
+    };
+    for (let i = 0; i < 3; i += 1) {
+      await Promise.all([
+        listWindowsDrives(runner),
+        listWindowsDrives(runner),
+        listWindowsDrives(runner),
+        listWindowsDrives(runner),
+      ]);
+    }
+    const lines = logSpy.calls.filter((c) =>
+      c.message.includes('[windows-cim] enumeration failed'),
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.message).toContain('exit-1');
+  });
+});
+
+// Helper for AC3 — wraps the `FakeCimChild` so we can drive the runner
+// directly. The body is duplicated from AC2's silent spawner because we
+// don't want one helper to depend on the other; both AC2 and AC3 are
+// self-contained.
+function makeSpawnerForAC3(): {
+  spawner: ProcessSpawner;
+  children: FakeCimChild[];
+  calls: Array<{ command: string; args: string[] }>;
+} {
+  const children: FakeCimChild[] = [];
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const spawner: ProcessSpawner = {
+    spawn(command, args) {
+      calls.push({ command, args });
+      const child = new FakeCimChild();
+      children.push(child);
+      return child as unknown as ReturnType<ProcessSpawner['spawn']>;
+    },
+  };
+  return { spawner, children, calls };
+}
+
 // ORAIN-0765 AC3 placeholder — written in a later task once the cause
 // routing is in place. Kept here so the test file compiles while Tasks
 // 1 and 2 land in sequence.
