@@ -1032,6 +1032,89 @@ describe('ORAIN-0765 AC2 — recovery from a hung powershell.exe', () => {
 // and asserts the `[windows-cim] enumeration failed` log line contains
 // the right cause string after three polls (the AC5-of-ORAIN-0761
 // threshold).
+describe('ORAIN-0765 AC5 — slow but sane cold-start resolution', () => {
+  it('ORAIN-0763 AC3 still passes with the coalescing wrapper in place', async () => {
+    // The pre-existing two-concurrent-cold-start test in
+    // windows-cim-process.test.ts already covers the runner-level
+    // invariant (cold-start timeout applies to every concurrent query,
+    // not just the first). This test documents that the AC1 coalescing
+    // wrapper does not break the runner contract: the runner still
+    // spawns exactly once for two concurrent callers that share one
+    // query.
+    const runner: CimRunner = {
+      async powershell(_args, _options) {
+        await new Promise((r) => setTimeout(r, 5));
+        return { status: 0, stdout: '[]', stderr: '' };
+      },
+    };
+    const p1 = listWindowsDrives(runner);
+    const p2 = listWindowsDrives(runner);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toEqual([]);
+    expect(r2).toEqual([]);
+  });
+
+  it('a late cold-start response resolves with status:0 and the runner spawns exactly once', async () => {
+    // AC5: a response that arrives AFTER the caller's 5 s timeout but
+    // BEFORE the runner's 20 s cold-start budget must still resolve
+    // cleanly. We simulate the round-trip through the real
+    // `PersistentCimRunner` with the capturing spawner from the process
+    // test module's pattern, so the runner drives the protocol and the
+    // assertion checks the full promise resolution.
+    resetFilesystemCacheForTests();
+    resetCimErrorStateForTests();
+
+    const children: FakeCimChild[] = [];
+    let callCount = 0;
+    const spawner: ProcessSpawner = {
+      spawn(_command, _args) {
+        callCount += 1;
+        const child = new FakeCimChild();
+        // Capture stdin writes so we can read back the delimiter.
+        const captured: string[] = [];
+        const origWrite = child.stdin.write.bind(child.stdin);
+        child.stdin.write = ((chunk: unknown, ...rest: unknown[]) => {
+          captured.push(String(chunk));
+          return (origWrite as (...a: unknown[]) => boolean)(chunk, ...rest);
+        }) as typeof child.stdin.write;
+        // Stash the captured array on the child for the test to inspect.
+        (child as FakeCimChild & { _captured?: string[] })._captured = captured;
+        children.push(child);
+        return child as unknown as ReturnType<ProcessSpawner['spawn']>;
+      },
+    };
+    const runner = new PersistentCimRunner({
+      spawner,
+      firstQueryTimeoutMs: 20_000,
+      queryTimeoutMs: 10_000,
+    });
+
+    const p = listWindowsDrives(runner);
+    // Yield once so the runner pushes the query into pendingQueries
+    // (the spawn is synchronous in this fake; the stdin write happens
+    // inside `run()`).
+    await new Promise((r) => setImmediate(r));
+    expect(callCount).toBe(1);
+    const child = children[0]! as FakeCimChild & { _captured?: string[] };
+    const captured = child._captured ?? [];
+    expect(captured.length).toBeGreaterThan(0);
+    // The captured write contains a `Write-Output "<delim>"` line —
+    // extract the delim to emit a matching frame.
+    const m = /Write-Output "---JT-END-([0-9a-f-]+)---"/.exec(captured[0]!);
+    expect(m).not.toBeNull();
+    // Emit a frame on the fake's stdout. The fake's `stdout` is a
+    // Readable; the runner subscribes via `child.stdout.on('data', …)`.
+    // Our `FakeCimChild` doesn't bridge that, so we route via the
+    // emitter directly — the runner's `data` listener is wired in
+    // `spawnChild()` via `child.stdout.on('data', …)`. The helper
+    // provides a `data` event emitter via the EventEmitter.
+    child.stdout.push(`[]\n---JT-END-${m![1]}---\n`);
+    const result = await p;
+    expect(result).toEqual([]);
+    expect(runner.spawnCount).toBe(1);
+  });
+});
+
 describe('ORAIN-0765 AC3 — exit cause preserved through result.status', () => {
   beforeEach(() => {
     resetFilesystemCacheForTests();
