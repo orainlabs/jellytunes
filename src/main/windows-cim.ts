@@ -25,7 +25,10 @@
  * once per session via `oncePerSession`.
  */
 
-import { spawn } from 'child_process';
+import { PersistentCimRunner, realSpawner, type ErrorCause } from './windows-cim-process';
+// Re-export so `index.ts` can wire the runner into `before-quit` without
+// importing the process module directly.
+export { PersistentCimRunner } from './windows-cim-process';
 
 /** A single WMI `Win32_LogicalDisk` record after JSON parsing. */
 export interface CimLogicalDisk {
@@ -68,6 +71,10 @@ export interface CimRunner {
  * Pure function: same input → same output. Drops entries that don't have
  * `DeviceID` and `DriveType` (CIM sometimes returns partial records for
  * drives being mounted/unmounted mid-call).
+ *
+ * ORAIN-0761 AC4: ConvertTo-Json 5.1 serialises a single record as a
+ * JSON object (`{…}`), not as a 1-element array — wrap the non-array case
+ * so a VM with exactly one logical disk still produces a 1-row result.
  */
 export function parseCimLogicalDisks(stdout: string): CimLogicalDisk[] {
   let parsed: unknown;
@@ -76,9 +83,15 @@ export function parseCimLogicalDisks(stdout: string): CimLogicalDisk[] {
   } catch {
     return [];
   }
-  if (!Array.isArray(parsed)) return [];
+  // ORAIN-0761 AC4: `ConvertTo-Json -Compress` on a single record emits
+  // `{…}`. Normalise to an array so the rest of the pipeline is unchanged.
+  const records: unknown[] = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object'
+      ? [parsed]
+      : [];
   const out: CimLogicalDisk[] = [];
-  for (const item of parsed) {
+  for (const item of records) {
     if (
       item &&
       typeof item === 'object' &&
@@ -138,47 +151,147 @@ const POWERSHELL_ENUMERATE = [
   // enumeration. No second PowerShell call. ConvertTo-Json 5.1 escapes
   // non-ASCII characters as `\uXXXX` in the output (verified in the VM),
   // which `JSON.parse` decodes transparently.
+  //
+  // ORAIN-0761 AC3: the same enumeration also returns `FileSystem`, which
+  // powers the per-folder filesystem badge. We no longer spawn a per-letter
+  // `-Filter` query — the badge reads from `lastFilesystemByLetter`.
   'Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,DriveType,FileSystem,VolumeName | ConvertTo-Json -Compress',
 ];
 
-const POWERSHELL_FILESYSTEM = (letter: string) => [
-  '-NoProfile',
-  '-NonInteractive',
-  '-Command',
-  `(Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${letter}:'").FileSystem`,
-];
+/**
+ * Default production runner — one persistent `powershell.exe` per app
+ * session, lazily spawned on first use. The first query gets a generous
+ * timeout (`DEFAULT_FIRST_QUERY_TIMEOUT_MS`, currently 20 s) to absorb the
+ * cold-start cost on a fresh Win11 boot; subsequent queries assume the
+ * process is warm (`DEFAULT_QUERY_TIMEOUT_MS`, 10 s).
+ *
+ * AC2: replaces the previous per-call `spawn('powershell.exe', …)` so we
+ * pay the cold-start cost once, not once per poll. `close()` is wired in
+ * `index.ts` to the `before-quit` handler so the process is reaped when
+ * the app exits.
+ *
+ * AC5: every error path goes through `cimErrorState`, which logs
+ * timeout / non-zero / invalid JSON / ENOENT once per session after the
+ * third failed poll, with the cause and the duration in ms.
+ *
+ * AC7: constructing `realCim` does NOT spawn the process — it only spawns
+ * on the first `powershell()` call. The renderer only invokes
+ * `listWindowsDrives` / `detectWindowsFilesystem` from the win32 branch,
+ * so macOS / Linux never spawn `powershell.exe`.
+ */
+export const realCim: CimRunner & { close?: () => void; spawnCount?: () => number } = (() => {
+  if (process.platform !== 'win32') {
+    // AC7: darwin / linux never invoke the runner. We still expose a
+    // CimRunner-shaped object so call sites don't need a platform branch
+    // for the type — but every call resolves to an empty failure rather
+    // than ever spawning powershell.exe.
+    return {
+      async powershell() {
+        return {
+          status: null,
+          stdout: '',
+          stderr: '',
+          error: new Error('powershell runner disabled on non-win32'),
+        };
+      },
+    };
+  }
+  const runner = new PersistentCimRunner({
+    spawner: realSpawner,
+    onError: recordCimError,
+  });
+  // Expose the runner's underlying `close()` so `index.ts` can wire it
+  // into `before-quit`. Production code only ever calls `powershell()`,
+  // never `close()`, on this object.
+  const proxy: CimRunner & { close: () => void; spawnCount: () => number } = {
+    powershell: (args, options) => runner.powershell(args, options),
+    close: () => runner.close(),
+    spawnCount: () => runner.spawnCount,
+  };
+  return proxy;
+})();
 
-/** Default production runner — invokes the real `powershell.exe`. */
-export const realCim: CimRunner = {
-  powershell(args, options) {
-    return new Promise((resolve) => {
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      const child = spawn('powershell.exe', args, { windowsHide: true });
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        child.kill();
-        resolve({ status: null, stdout, stderr, error: new Error('timeout') });
-      }, options.timeout);
-      child.stdout.on('data', (chunk) => (stdout += chunk.toString('utf8')));
-      child.stderr.on('data', (chunk) => (stderr += chunk.toString('utf8')));
-      child.on('error', (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ status: null, stdout, stderr, error: err });
-      });
-      child.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ status: code, stdout, stderr });
-      });
-    });
-  },
+/**
+ * Close the persistent PowerShell process. `index.ts` wires this into the
+ * `before-quit` handler so the process is reaped when the app exits.
+ * No-op on darwin / linux (the runner never spawned).
+ */
+export function closeRealCim(): void {
+  realCim.close?.();
+}
+
+/**
+ * ORAIN-0761 AC3: filesystem cache populated by the most recent
+ * `listWindowsDrives` call. Keyed by uppercase drive letter. The per-folder
+ * filesystem badge (`detectWindowsFilesystem`) reads from this map and
+ * avoids spawning PowerShell again — that was the second cold-start cost
+ * (one PowerShell per saved folder).
+ *
+ * Tests reset this between cases via `resetFilesystemCacheForTests` so a
+ * cached value never leaks across describe blocks.
+ */
+let lastFilesystemByLetter: Map<string, WindowsFilesystemLabel> = new Map();
+
+/** Test-only — clear the in-memory filesystem cache. Production code
+ * never needs this; the cache is internal state. */
+export function resetFilesystemCacheForTests(): void {
+  lastFilesystemByLetter = new Map();
+}
+
+/**
+ * ORAIN-0761 AC5: track enumeration failures and log them once per
+ * session after the third failed poll. The device-watcher polls every
+ * 15 s; without this dedup, a missing binary would flood main.log at
+ * ~4 lines/minute. The state is a tiny counter + a logged flag — both
+ * mutable and exposed for tests to reset.
+ *
+ * Logging uses the injected `onCimError` callback rather than `electron-log`
+ * directly, so unit tests can supply a spy and assert against the call
+ * site without touching global log state.
+ */
+interface CimErrorState {
+  failures: number;
+  logged: boolean;
+}
+const cimErrorState: CimErrorState = { failures: 0, logged: false };
+
+/** Injected logger so tests can spy on AC5 output without touching
+ * electron-log. */
+export type CimErrorLogger = (cause: string, durationMs: number) => void;
+
+/** Default — write to electron-log via a dynamic import so the test
+ * runner can mock it. */
+export const defaultCimErrorLogger: CimErrorLogger = (cause, durationMs) => {
+  const logModule = require('electron-log');
+  logModule.default?.error?.(
+    `[windows-cim] enumeration failed after 3 polls: ${cause} (${durationMs}ms)`,
+  );
 };
+
+/** Test seam — reset the AC5 once-per-session state. */
+export function resetCimErrorStateForTests(): void {
+  cimErrorState.failures = 0;
+  cimErrorState.logged = false;
+}
+
+/** Test seam — override the AC5 logger. */
+export function setCimErrorLoggerForTests(logger: CimErrorLogger | null): void {
+  cimErrorLogger = logger;
+}
+let cimErrorLogger: CimErrorLogger | null = null;
+
+/** Callback the persistent runner calls for every failed query. Increments
+ * the failure counter; logs via the injected logger once the counter
+ * crosses the threshold. Also called directly from `listWindowsDrives`
+ * for failure modes the runner can't see (invalid JSON). */
+export function recordCimError(cause: ErrorCause | string, durationMs: number): void {
+  cimErrorState.failures += 1;
+  if (cimErrorState.logged) return;
+  if (cimErrorState.failures < 3) return;
+  cimErrorState.logged = true;
+  const logger: CimErrorLogger = cimErrorLogger ?? defaultCimErrorLogger;
+  logger(cause, durationMs);
+}
 
 /**
  * Enumerate Windows drives via `Get-CimInstance Win32_LogicalDisk`.
@@ -193,15 +306,53 @@ export async function listWindowsDrives(
   options: { timeoutMs?: number } = {},
 ): Promise<WindowsDrive[]> {
   const timeout = options.timeoutMs ?? 5000;
+  const startedAt = Date.now();
   let result;
   try {
     result = await runner.powershell(POWERSHELL_ENUMERATE, { timeout });
   } catch {
+    recordCimError('runner-threw', Date.now() - startedAt);
     return [];
   }
-  if (result.error) return [];
-  if (result.status === null || result.status !== 0) return [];
-  const disks = parseCimLogicalDisks(result.stdout);
+  // ORAIN-0761 AC5: timeout, ENOENT, non-zero exit, and invalid JSON each
+  // count as a failure. `recordCimError` dedups after the third poll so
+  // a single missing PowerShell doesn't flood main.log at ~4 lines/min.
+  if (result.error) {
+    const cause = result.error.message.includes('ENOENT')
+      ? 'spawn-enoent'
+      : result.error.message.includes('timeout')
+        ? 'timeout'
+        : 'runner-error';
+    recordCimError(cause, Date.now() - startedAt);
+    return [];
+  }
+  if (result.status === null || result.status !== 0) {
+    recordCimError(`exit-${result.status ?? 'null'}`, Date.now() - startedAt);
+    return [];
+  }
+  const parsed = parseCimLogicalDisks(result.stdout);
+  // `parseCimLogicalDisks` returns [] for invalid JSON. Distinguish "no
+  // records" (valid empty list) from "couldn't parse" by re-checking the
+  // raw stdout: an empty / non-JSON string is the failure mode.
+  const disks = parsed;
+  if (disks.length === 0 && result.stdout.trim() !== '' && result.stdout.trim() !== '[]') {
+    recordCimError('invalid-json', Date.now() - startedAt);
+    return [];
+  }
+  // ORAIN-0761 AC3: refresh the filesystem cache with this enumeration
+  // before filtering by DriveType. A drive we don't list (optical, RAM,
+  // etc.) doesn't update the cache either — its filesystem shouldn't
+  // appear in any badge.
+  const newCache = new Map<string, WindowsFilesystemLabel>();
+  for (const d of disks) {
+    if (d.driveType !== 2 && d.driveType !== 3) continue;
+    const letter = d.deviceId.replace(/:$/, '').toUpperCase();
+    const value = d.filesystem.trim().toLowerCase();
+    if (value === 'ntfs' || value === 'fat32' || value === 'exfat') {
+      newCache.set(letter, value);
+    }
+  }
+  lastFilesystemByLetter = newCache;
   return disks
     .filter((d) => d.driveType === 2 || d.driveType === 3)
     .map((d) => {
@@ -221,45 +372,34 @@ export async function listWindowsDrives(
 }
 
 /**
- * Detect the filesystem mounted at `driveLetter` using the WMI
- * `FileSystem` property. Returns `unknown` for any failure mode:
+ * Detect the filesystem mounted at `driveLetter`.
  *
- *   - `driveLetter` has no leading drive letter (UNC, POSIX, empty)
- *   - `powershell.exe` is not available (returns ENOENT)
- *   - PowerShell times out (5 s)
- *   - the returned value is not one of ntfs/fat32/exfat
+ * ORAIN-0761 AC3: this no longer spawns PowerShell. The `FileSystem`
+ * property travels in the same `Get-CimInstance Win32_LogicalDisk`
+ * enumeration as `DriveType` / `VolumeName` — `listWindowsDrives` caches
+ * the value in `lastFilesystemByLetter`, and this function reads it back.
+ * The renderer triggers `listWindowsDrives` first (USB polling), so by
+ * the time it asks for a badge the cache is warm. `unknown` means
+ * either no enumeration has run yet, or the letter isn't present.
  *
- * ORAIN-0758 AC3: the caller in src/main/index.ts passes a full path
- * ('C:\\Users\\user\\Music' or 'G:\\'), not just the letter. The
- * ORAIN-0757 regex `replace(/[^A-Z]/g, '')` stripped the separator and
- * concatenated every alpha into a wrong DeviceID ('CUSERSUSERMUSIC:'),
- * which WMI never matched and the probe returned `unknown`. Anchor the
- * extraction to the start of the path with `^([A-Za-z]):` so 'G:\\foo'
- * and 'g:/' both resolve to 'G', while UNC / POSIX paths return
- * `unknown` without invoking PowerShell.
+ * ORAIN-0758 AC3: the caller passes a full path ('C:\\Users\\user\\Music'
+ * or 'G:\\'), not just the letter. The previous ORAIN-0757 regex
+ * `replace(/[^A-Z]/g, '')` stripped the separator and concatenated every
+ * alpha into a wrong DeviceID ('CUSERSUSERMUSIC:'), which WMI never
+ * matched. Anchor the extraction to the start of the path with
+ * `^([A-Za-z]):` so 'G:\\foo' and 'g:/' both resolve to 'G', while UNC /
+ * POSIX paths return `unknown` without invoking PowerShell (still no
+ * spawn here either).
  */
 export async function detectWindowsFilesystem(
-  runner: CimRunner,
+  _runner: CimRunner,
   driveLetter: string,
-  options: { timeoutMs?: number } = {},
+  _options: { timeoutMs?: number } = {},
 ): Promise<WindowsFilesystemLabel> {
   const match = /^([A-Za-z]):/.exec(driveLetter);
   const letter = match ? match[1]!.toUpperCase() : '';
   if (!letter) return 'unknown';
-  const timeout = options.timeoutMs ?? 5000;
-  let result;
-  try {
-    result = await runner.powershell(POWERSHELL_FILESYSTEM(letter), { timeout });
-  } catch {
-    return 'unknown';
-  }
-  if (result.error) return 'unknown';
-  if (result.status === null || result.status !== 0) return 'unknown';
-  const value = result.stdout.trim().toLowerCase();
-  if (value === 'ntfs') return 'ntfs';
-  if (value === 'fat32') return 'fat32';
-  if (value === 'exfat') return 'exfat';
-  return 'unknown';
+  return lastFilesystemByLetter.get(letter) ?? 'unknown';
 }
 
 /**

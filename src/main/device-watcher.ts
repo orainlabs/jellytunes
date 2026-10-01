@@ -25,6 +25,21 @@ let addRetryIntervalId: ReturnType<typeof setInterval> | null = null;
 let addRetryCount = 0;
 let initialMountpointPaths = new Set<string>();
 
+// ORAIN-0761 AC6: generation counter for the race between the asynchronous
+// start path (`startDeviceWatcher`) and a concurrent `stopDeviceWatcher` or
+// a second `startDeviceWatcher`. The entry path awaits before reaching the
+// `usbDetection.startMonitoring()` / `usbDetection.on('add', ...)` calls;
+// during that await, another call can either stop monitoring or replace it.
+// Without a generation check, the original caller resumes and calls
+// `startMonitoring()` on a stale `usbDetection` reference, or registers a
+// second pair of listeners on top of the ones the new start installed.
+//
+// Each `startDeviceWatcher` captures its generation at entry and checks
+// after every await that the counter still equals what it captured.
+// `stopDeviceWatcher` also bumps it so a stop during the gap cancels the
+// in-flight start without affecting the new generation.
+let watcherGeneration = 0;
+
 // Polling backup state (runs alongside usb-detection to detect mount/unmount without disconnect)
 const POLL_INTERVAL_MS = 15000;
 // ORAIN-0591: longer polling interval under snap — the `usb-detection` native
@@ -81,6 +96,11 @@ export async function startDeviceWatcher(
   // Guard against double-start
   if (monitoringActive) stopDeviceWatcher();
 
+  // ORAIN-0761 AC6: bump the generation at entry. Capture the value we
+  // own so the post-await check below can detect a stop / restart that
+  // happened while we were suspended.
+  const myGeneration = ++watcherGeneration;
+
   monitoringActive = true;
 
   // ORAIN-0591: under snap, the `usb-detection` native addon is skipped
@@ -99,9 +119,22 @@ export async function startDeviceWatcher(
 
   const loaded = await tryLoadUsbDetection();
 
+  // AC6: a stop / second start during the await above invalidates this
+  // call. Bail out before touching `usbDetection` again so we don't call
+  // startMonitoring on a stale reference or register listeners twice.
+  if (myGeneration !== watcherGeneration) {
+    return;
+  }
+
   if (loaded && usbDetection) {
     // Start event-based watcher (primary) + polling backup (secondary)
-    await startEventBasedWatcher(win, listUsbDevices);
+    await startEventBasedWatcher(win, listUsbDevices, myGeneration);
+    // Same generation check after the second await — `startEventBasedWatcher`
+    // is responsible for its own internal check; if it bailed out, this one
+    // catches a stop that came *between* it and the polling backup start.
+    if (myGeneration !== watcherGeneration) {
+      return;
+    }
     startPollingBackupWatcher(win, listUsbDevices);
   } else {
     // Fallback: polling as primary method
@@ -112,6 +145,7 @@ export async function startDeviceWatcher(
 async function startEventBasedWatcher(
   win: BrowserWindowLike,
   listUsbDevices: () => Promise<UsbDevice[]>,
+  myGeneration: number,
 ): Promise<void> {
   if (!usbDetection) return;
 
@@ -120,6 +154,14 @@ async function startEventBasedWatcher(
   // Seed: capture current mountpoints so devices already present at startup
   // don't generate spurious usb:attach events
   const seed = await listUsbDevices();
+
+  // ORAIN-0761 AC6: a stop / second start during the seed await cancels
+  // this generation. Refuse to call `startMonitoring` on the stale
+  // `usbDetection` reference — the new generation owns it now.
+  if (myGeneration !== watcherGeneration) {
+    return;
+  }
+
   initialMountpointPaths = new Set(seed.flatMap((d) => d.mountpoints.map((mp) => mp.path)));
 
   usbDetection.startMonitoring();
@@ -282,6 +324,12 @@ function startFallbackPollingWatcher(
 }
 
 export function stopDeviceWatcher(): void {
+  // ORAIN-0761 AC6: bump the generation so any in-flight `startDeviceWatcher`
+  // that is suspended on an await (loadUsbDetection, listUsbDevices) bails
+  // out before calling startMonitoring / registering listeners on the
+  // watcher we are tearing down.
+  watcherGeneration += 1;
+
   if (addDebounceTimer !== null) {
     clearTimeout(addDebounceTimer);
     addDebounceTimer = null;

@@ -7,13 +7,16 @@
 // any human-language tool. We parse with plain JSON.parse — no string
 // matching of localized text.
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   parseCimLogicalDisks,
   detectWindowsFilesystem,
   listWindowsDrives,
   oncePerSession,
   formatWindowsDriveDisplayName,
+  resetFilesystemCacheForTests,
+  resetCimErrorStateForTests,
+  setCimErrorLoggerForTests,
   type CimRunner,
 } from './windows-cim';
 
@@ -23,6 +26,13 @@ const EN_JSON = JSON.stringify([
   { DeviceID: 'G:', DriveType: 2, FileSystem: 'FAT32' },
   { DeviceID: 'H:', DriveType: 4, FileSystem: 'NTFS' }, // network, filtered
 ]);
+
+// ORAIN-0761 AC3: `detectWindowsFilesystem` reads from the cache populated
+// by `listWindowsDrives`. The cache is module state, so reset it between
+// tests — otherwise a stale value from a previous describe block leaks.
+beforeEach(() => {
+  resetFilesystemCacheForTests();
+});
 
 describe('parseCimLogicalDisks', () => {
   // The parser preserves every disk — DriveType filtering lives in
@@ -50,6 +60,24 @@ describe('parseCimLogicalDisks', () => {
     expect(parseCimLogicalDisks(mixed)).toEqual([
       { deviceId: 'C:', driveType: 3, filesystem: 'NTFS', volumeLabel: '' },
     ]);
+  });
+  // ORAIN-0761 AC4: ConvertTo-Json -Compress serialises a single record as
+  // `{…}`, not as `[{…}]`. The parser must accept the single-object shape
+  // so a VM with exactly one logical disk still produces a 1-row result.
+  it('accepts a single JSON object as a 1-element array (ConvertTo-Json single-record shape)', () => {
+    const single = JSON.stringify({
+      DeviceID: 'C:',
+      DriveType: 3,
+      FileSystem: 'NTFS',
+      VolumeName: null,
+    });
+    expect(parseCimLogicalDisks(single)).toEqual([
+      { deviceId: 'C:', driveType: 3, filesystem: 'NTFS', volumeLabel: '' },
+    ]);
+  });
+  it('returns [] for a single object missing DeviceID/DriveType', () => {
+    const incomplete = JSON.stringify({ FileSystem: 'NTFS' });
+    expect(parseCimLogicalDisks(incomplete)).toEqual([]);
   });
 });
 
@@ -149,11 +177,15 @@ describe('AC3 — locale independence', () => {
   it('filesystem detection does not depend on locale strings', async () => {
     const runner: CimRunner = {
       async powershell() {
-        return { status: 0, stdout: 'FAT32', stderr: '' };
+        return { status: 0, stdout: EN_JSON, stderr: '' };
       },
     };
+    await listWindowsDrives(runner);
     // ORAIN-0758: pass the full path the consumer uses, not the bare
     // letter — matches the contract src/main/index.ts relies on.
+    // ORAIN-0761 AC3: the filesystem is read from the enumeration cache
+    // populated by `listWindowsDrives` — `FileSystem` is part of the same
+    // record, so the value reaches the renderer without a second spawn.
     expect(await detectWindowsFilesystem(runner, 'G:\\')).toBe('fat32');
   });
 });
@@ -208,22 +240,79 @@ describe('AC5 — failure modes and async invocation', () => {
     await listWindowsDrives(runner, { timeoutMs: 1234 });
     expect(calls[calls.length - 1]!.options.timeout).toBe(1234);
   });
-  it('detectWindowsFilesystem uses the same async + timeout contract', async () => {
-    const calls: Array<{ args: string[]; options: { timeout: number } }> = [];
+  it('detectWindowsFilesystem reads from the enumeration cache (AC3)', async () => {
+    const calls: Array<{ args: string[] }> = [];
     const runner: CimRunner = {
-      async powershell(args, options) {
-        calls.push({ args, options });
-        return { status: 0, stdout: 'NTFS', stderr: '' };
+      async powershell(args) {
+        calls.push({ args });
+        // First call: enumeration (with VolumeName). Second and later
+        // calls: NOT made — detectWindowsFilesystem must read from cache.
+        if (args.some((a) => a.includes('ConvertTo-Json'))) {
+          return {
+            status: 0,
+            stdout: JSON.stringify([
+              { DeviceID: 'C:', DriveType: 3, FileSystem: 'NTFS' },
+              { DeviceID: 'E:', DriveType: 2, FileSystem: 'exFAT' },
+              { DeviceID: 'F:', DriveType: 2, FileSystem: 'FAT32' },
+            ]),
+            stderr: '',
+          };
+        }
+        return { status: 0, stdout: 'UNKNOWN', stderr: '' };
       },
     };
-    // ORAIN-0758: the public caller in src/main/index.ts passes a full
-    // path, not a bare letter — assert the contract against 'C:\\docs'
-    // so the test exercises the same shape the renderer supplies.
-    expect(await detectWindowsFilesystem(runner, 'C:\\docs')).toBe('ntfs');
-    const last = calls[calls.length - 1]!;
-    expect(last.args).toContain('-NoProfile');
-    expect(last.args).toContain('-NonInteractive');
-    expect(last.options.timeout).toBe(5000);
+    await listWindowsDrives(runner);
+    expect(await detectWindowsFilesystem(runner, 'C:\\Users\\me\\Music')).toBe('ntfs');
+    expect(await detectWindowsFilesystem(runner, 'E:\\Music')).toBe('exfat');
+    expect(await detectWindowsFilesystem(runner, 'F:\\Music')).toBe('fat32');
+    // Only ONE call to PowerShell across the 3 detections + 1 enumeration.
+    expect(calls).toHaveLength(1);
+  });
+  it('detectWindowsFilesystem returns unknown before enumeration runs', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return { status: 0, stdout: '[]', stderr: '' };
+      },
+    };
+    // AC3: with no enumeration yet the cache is empty → unknown.
+    expect(await detectWindowsFilesystem(runner, 'C:\\foo')).toBe('unknown');
+  });
+  it('detectWindowsFilesystem returns unknown for a letter not in the enumeration', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ DeviceID: 'C:', DriveType: 3, FileSystem: 'NTFS' }]),
+          stderr: '',
+        };
+      },
+    };
+    await listWindowsDrives(runner);
+    expect(await detectWindowsFilesystem(runner, 'G:\\Music')).toBe('unknown');
+  });
+  it('detectWindowsFilesystem updates its cache after a fresh enumeration (no leftover stale data)', async () => {
+    let n = 0;
+    const runner: CimRunner = {
+      async powershell() {
+        n += 1;
+        if (n === 1) {
+          return {
+            status: 0,
+            stdout: JSON.stringify([{ DeviceID: 'C:', DriveType: 3, FileSystem: 'NTFS' }]),
+            stderr: '',
+          };
+        }
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ DeviceID: 'C:', DriveType: 3, FileSystem: 'exFAT' }]),
+          stderr: '',
+        };
+      },
+    };
+    await listWindowsDrives(runner);
+    expect(await detectWindowsFilesystem(runner, 'C:\\')).toBe('ntfs');
+    await listWindowsDrives(runner);
+    expect(await detectWindowsFilesystem(runner, 'C:\\')).toBe('exfat');
   });
 });
 
@@ -274,15 +363,11 @@ describe('AC4 — stitching: enumeration → filesystem detection', () => {
     const runner: CimRunner = {
       async powershell(args) {
         calls.push(args);
-        // Enumeration uses ConvertTo-Json; the probe does not.
-        if (args.some((a) => a.includes('ConvertTo-Json'))) {
-          return {
-            status: 0,
-            stdout: JSON.stringify([{ DeviceID: 'G:', DriveType: 2, FileSystem: 'FAT32' }]),
-            stderr: '',
-          };
-        }
-        return { status: 0, stdout: 'FAT32', stderr: '' };
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ DeviceID: 'G:', DriveType: 2, FileSystem: 'FAT32' }]),
+          stderr: '',
+        };
       },
     };
     const drives = await listWindowsDrives(runner);
@@ -297,58 +382,61 @@ describe('AC4 — stitching: enumeration → filesystem detection', () => {
     ]);
     // ORAIN-0758: pass the full mount path the consumer uses, not the
     // bare letter — matches the contract src/main/index.ts relies on.
+    // ORAIN-0761 AC3: filesystem comes from the enumeration cache; only
+    // ONE PowerShell call across the two operations.
     const label = await detectWindowsFilesystem(runner, drives[0]!.mountPath);
     expect(label).toBe('fat32');
-    // The probe call targets DeviceID='G:' — colon-rooted, not the
-    // broken G\\ form that the previous fsutil regression passed.
-    const probeArgs = calls[1] ?? [];
-    expect(probeArgs.some((a) => a.includes("DeviceID='G:'"))).toBe(true);
+    expect(calls).toHaveLength(1);
   });
 });
 
-// ORAIN-0758 AC3: detectWindowsFilesystem is called from
-// src/main/index.ts with the FULL path (e.g. 'C:\\Users\\user\\Music'),
-// not just the letter. The v0.7.1 implementation did `devicePath.charAt(0)`;
-// ORAIN-0757 changed that to `replace(/[^A-Z]/g, '')` which strips the
-// separator and concatenates every alpha character into a wrong DeviceID.
-// Anchor the extraction on `^([A-Za-z]):` and return `unknown` for paths
-// without a drive letter (UNC, POSIX, empty) WITHOUT invoking PowerShell.
+// ORAIN-0758 AC3 + ORAIN-0761 AC3: detectWindowsFilesystem extracts the
+// drive letter from a full path with `^([A-Za-z]):` and looks up the
+// filesystem in the enumeration cache (no PowerShell spawn for the
+// detection itself).
 describe('ORAIN-0758 AC3 — drive-letter extraction from full path', () => {
-  it("extracts C from C:\\Users\\user\\Music and queries DeviceID='C:'", async () => {
+  it('extracts C from C:\\Users\\user\\Music and returns the cached filesystem', async () => {
     const calls: string[][] = [];
     const runner: CimRunner = {
       async powershell(args) {
         calls.push(args);
-        return { status: 0, stdout: 'NTFS', stderr: '' };
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ DeviceID: 'C:', DriveType: 3, FileSystem: 'NTFS' }]),
+          stderr: '',
+        };
       },
     };
+    await listWindowsDrives(runner);
     expect(await detectWindowsFilesystem(runner, 'C:\\Users\\user\\Music')).toBe('ntfs');
-    const probe = calls[0] ?? [];
-    expect(probe.some((a) => a.includes("DeviceID='C:'"))).toBe(true);
+    // Only the enumeration call — no second PowerShell for the detection.
+    expect(calls).toHaveLength(1);
   });
-  it("normalises lowercase c:/Music to C and queries DeviceID='C:'", async () => {
-    const calls: string[][] = [];
+  it('normalises lowercase c:/Music to C', async () => {
     const runner: CimRunner = {
-      async powershell(args) {
-        calls.push(args);
-        return { status: 0, stdout: 'NTFS', stderr: '' };
+      async powershell() {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ DeviceID: 'C:', DriveType: 3, FileSystem: 'NTFS' }]),
+          stderr: '',
+        };
       },
     };
+    await listWindowsDrives(runner);
     expect(await detectWindowsFilesystem(runner, 'c:/Music')).toBe('ntfs');
-    const probe = calls[0] ?? [];
-    expect(probe.some((a) => a.includes("DeviceID='C:'"))).toBe(true);
   });
   it('accepts the drive root alone (G:\\)', async () => {
-    const calls: string[][] = [];
     const runner: CimRunner = {
-      async powershell(args) {
-        calls.push(args);
-        return { status: 0, stdout: 'FAT32', stderr: '' };
+      async powershell() {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ DeviceID: 'G:', DriveType: 2, FileSystem: 'FAT32' }]),
+          stderr: '',
+        };
       },
     };
+    await listWindowsDrives(runner);
     expect(await detectWindowsFilesystem(runner, 'G:\\')).toBe('fat32');
-    const probe = calls[0] ?? [];
-    expect(probe.some((a) => a.includes("DeviceID='G:'"))).toBe(true);
   });
   it('returns unknown without calling PowerShell for UNC paths', async () => {
     const calls: string[][] = [];
@@ -535,5 +623,118 @@ describe('ORAIN-0759 — displayName with non-ASCII label', () => {
     expect(
       formatWindowsDriveDisplayName(first!.deviceId.replace(/:$/, ''), first!.volumeLabel),
     ).toBe('NAÏVE (E:)');
+  });
+});
+
+// ORAIN-0761 AC5: timeout, non-zero exit code, invalid JSON, and ENOENT
+// each count as a failure. After the third failed poll we log ONE line
+// (cause + duration in ms) and stop — a missing powershell.exe shouldn't
+// flood main.log at ~4 lines/min. One test per failure mode, asserting a
+// single log line after three polls.
+describe('ORAIN-0761 AC5 — once-per-session logging after 3 failed polls', () => {
+  it('logs once for timeout, dedup-ing subsequent timeouts', async () => {
+    resetCimErrorStateForTests();
+    const logger = vi.fn();
+    setCimErrorLoggerForTests(logger);
+    try {
+      const runner: CimRunner = {
+        async powershell() {
+          return {
+            status: null,
+            stdout: '',
+            stderr: '',
+            error: new Error('query timeout'),
+          };
+        },
+      };
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      // After the 3rd failure, logger must be invoked once with cause=timeout.
+      expect(logger).toHaveBeenCalledTimes(1);
+      expect(logger.mock.calls[0]?.[0]).toBe('timeout');
+      expect(typeof logger.mock.calls[0]?.[1]).toBe('number');
+      // Subsequent polls do NOT re-log.
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      expect(logger).toHaveBeenCalledTimes(1);
+    } finally {
+      setCimErrorLoggerForTests(null);
+    }
+  });
+
+  it('logs once for non-zero exit code, dedup-ing subsequent exits', async () => {
+    resetCimErrorStateForTests();
+    const logger = vi.fn();
+    setCimErrorLoggerForTests(logger);
+    try {
+      const runner: CimRunner = {
+        async powershell() {
+          return { status: 1, stdout: '', stderr: 'access denied' };
+        },
+      };
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      expect(logger).toHaveBeenCalledTimes(1);
+      // status=1 → cause "exit-1".
+      expect(logger.mock.calls[0]?.[0]).toBe('exit-1');
+      expect(typeof logger.mock.calls[0]?.[1]).toBe('number');
+      await listWindowsDrives(runner);
+      expect(logger).toHaveBeenCalledTimes(1);
+    } finally {
+      setCimErrorLoggerForTests(null);
+    }
+  });
+
+  it('logs once for invalid JSON in stdout, dedup-ing subsequent polls', async () => {
+    resetCimErrorStateForTests();
+    const logger = vi.fn();
+    setCimErrorLoggerForTests(logger);
+    try {
+      const runner: CimRunner = {
+        async powershell() {
+          return { status: 0, stdout: 'this is not JSON', stderr: '' };
+        },
+      };
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      expect(logger).toHaveBeenCalledTimes(1);
+      expect(logger.mock.calls[0]?.[0]).toBe('invalid-json');
+      expect(typeof logger.mock.calls[0]?.[1]).toBe('number');
+      await listWindowsDrives(runner);
+      expect(logger).toHaveBeenCalledTimes(1);
+    } finally {
+      setCimErrorLoggerForTests(null);
+    }
+  });
+
+  it('logs once for spawn ENOENT (powershell.exe missing), dedup-ing subsequent polls', async () => {
+    resetCimErrorStateForTests();
+    const logger = vi.fn();
+    setCimErrorLoggerForTests(logger);
+    try {
+      const runner: CimRunner = {
+        async powershell() {
+          return {
+            status: null,
+            stdout: '',
+            stderr: '',
+            error: new Error('spawn powershell.exe ENOENT'),
+          };
+        },
+      };
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      expect(logger).toHaveBeenCalledTimes(1);
+      expect(logger.mock.calls[0]?.[0]).toBe('spawn-enoent');
+      expect(typeof logger.mock.calls[0]?.[1]).toBe('number');
+      await listWindowsDrives(runner);
+      expect(logger).toHaveBeenCalledTimes(1);
+    } finally {
+      setCimErrorLoggerForTests(null);
+    }
   });
 });

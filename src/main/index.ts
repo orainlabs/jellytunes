@@ -39,6 +39,7 @@ import {
   listWindowsDrives,
   oncePerSession,
   realCim,
+  closeRealCim,
   formatWindowsDriveDisplayName,
 } from './windows-cim';
 import { detectDarwinFilesystem, realDarwinFs } from './darwin-diskutil';
@@ -1695,5 +1696,9 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => {
   stopDeviceWatcher();
+  // ORAIN-0761 AC2: reap the persistent PowerShell process on app exit so
+  // we don't leak a powershell.exe after the app shuts down. No-op on
+  // darwin / linux (the runner never spawned there).
+  closeRealCim();
 });
 log.info('Main process initialized');
