@@ -26,6 +26,8 @@ import { createElectronLogger } from './logger-types';
 import { getAppMenuTemplate } from './app-menu';
 // ORAIN-0762: single-instance lock — see ./single-instance.ts.
 import { acquireSingleInstanceLock } from './single-instance';
+// ORAIN-0764: show the window even when ready-to-show does not fire.
+import { showWindowWithFallback } from './window-show';
 import {
   buildSnapPermissionsReport,
   type SnapPermissionsReport,
@@ -635,6 +637,9 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     show: false,
+    // ORAIN-0764: an early fallback show() must reveal the app's dark
+    // background (styles/index.css body), not Electron's default white.
+    backgroundColor: '#111827',
     // ORAIN-0708: hide the menu bar on Linux too. The native GTK menu bar in
     // the snap build does not follow the system theme, leaving a light menu
     // under a dark titlebar. Parity with the Windows build. DevTools
@@ -666,9 +671,11 @@ function createWindow(): void {
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow?.show();
-    log.info('Window ready');
+  // ORAIN-0764: ready-to-show never fires on Electron 44 + native Wayland.
+  showWindowWithFallback({
+    window: mainWindow,
+    timers: { setTimeout, clearTimeout },
+    log,
   });
   mainWindow.webContents.on('did-finish-load', async () => {
     // ORAIN-0591: pass IS_SNAP so the watcher can skip the `usb-detection`
