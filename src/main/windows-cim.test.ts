@@ -845,6 +845,58 @@ describe('ORAIN-0763 AC4 — recordCimError is invoked exactly once per failed q
   });
 });
 
+// ORAIN-0765 AC1: while one `listWindowsDrives` call is in flight, every
+// additional concurrent call must share the same underlying `runner.powershell`
+// promise instead of pushing another query into the runner. This is the
+// coalescing rule that lets `PersistentCimRunner`'s "kill only when every
+// query is abandoned" rule (`src/main/windows-cim-process.ts:252`) recover
+// the child process — if every concurrent caller shares one live promise, the
+// maximum number of pending queries at the runner level is exactly 1.
+describe('ORAIN-0765 AC1 — coalescing concurrent listWindowsDrives calls', () => {
+  beforeEach(() => {
+    resetFilesystemCacheForTests();
+    resetCimErrorStateForTests();
+  });
+
+  it('5 concurrent calls produce exactly 1 powershell invocation and all 5 receive the same result', async () => {
+    let callCount = 0;
+    let concurrentCount = 0;
+    let maxConcurrent = 0;
+    const runner: CimRunner = {
+      async powershell(_args, _options) {
+        callCount += 1;
+        concurrentCount += 1;
+        maxConcurrent = Math.max(maxConcurrent, concurrentCount);
+        // Brief delay so all 5 callers race to enter `listWindowsDrives`
+        // before this resolves.
+        await new Promise((r) => setTimeout(r, 5));
+        concurrentCount -= 1;
+        return { status: 0, stdout: EN_JSON, stderr: '' };
+      },
+    };
+    const results = await Promise.all([
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+      listWindowsDrives(runner),
+    ]);
+    // Coalescing: 5 concurrent callers share a single powershell invocation.
+    expect(callCount).toBe(1);
+    // And at most one in-flight call at the runner level.
+    expect(maxConcurrent).toBe(1);
+    // All 5 callers receive the same parsed result.
+    expect(results).toHaveLength(5);
+    for (const r of results) {
+      expect(r.map((d) => d.letter)).toEqual(['C', 'G']);
+    }
+  });
+});
+
+// ORAIN-0765 AC3 placeholder — written in a later task once the cause
+// routing is in place. Kept here so the test file compiles while Tasks
+// 1 and 2 land in sequence.
+
 // ORAIN-0763 AC5: ORAIN-0761 AC5 wired the logger through a test seam
 // (`setCimErrorLoggerForTests`). This test connects the REAL production
 // logger (which delegates to electron-log via a static import) and asserts

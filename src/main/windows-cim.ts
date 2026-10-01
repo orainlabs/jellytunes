@@ -238,6 +238,29 @@ export function closeRealCim(): void {
  */
 let lastFilesystemByLetter: Map<string, WindowsFilesystemLabel> = new Map();
 
+/**
+ * ORAIN-0765 AC1: coalescing slot for concurrent `listWindowsDrives` calls.
+ *
+ * While one enumeration is in flight, every additional concurrent caller
+ * attaches to the same promise instead of pushing another query into
+ * `runner.powershell`. The slot is cleared in the `.finally` so the next
+ * enumeration starts fresh.
+ *
+ * Why this lives in `listWindowsDrives` and not in the runner: the runner's
+ * own "kill the child when every query is abandoned" rule already
+ * (`src/main/windows-cim-process.ts:252`) recovers from a hung
+ * `powershell.exe` cold-start — but only if there is at most ONE pending
+ * query at any time. The coalescing guarantees that invariant.
+ *
+ * Without coalescing, the four overlapping production call sites (the
+ * device-watcher backup poll, the fallback poll, the attach retry, and the
+ * `usb:list` IPC) can each push a query into the runner before the previous
+ * one resolves. If `powershell.exe` is hung in the cold-start, the first
+ * caller never resolves, the child is never killed, and every later
+ * enumeration piles up in `pendingQueries` for the rest of the session.
+ */
+let inFlightEnumeration: Promise<WindowsDrive[]> | null = null;
+
 /** Test-only — clear the in-memory filesystem cache. Production code
  * never needs this; the cache is internal state. */
 export function resetFilesystemCacheForTests(): void {
@@ -326,70 +349,79 @@ export async function listWindowsDrives(
   runner: CimRunner,
   options: { timeoutMs?: number } = {},
 ): Promise<WindowsDrive[]> {
-  const timeout = options.timeoutMs ?? 5000;
-  const startedAt = Date.now();
-  let result;
-  try {
-    result = await runner.powershell(POWERSHELL_ENUMERATE, { timeout });
-  } catch {
-    recordCimError('runner-threw', Date.now() - startedAt);
-    return [];
-  }
-  if (result.error) {
-    const cause = result.error.message.includes('ENOENT')
-      ? 'spawn-enoent'
-      : result.error.message.includes('timeout')
-        ? 'timeout'
-        : result.error.message.includes('process died') ||
-            result.error.message.includes('runner closed')
-          ? 'process-died'
-          : 'runner-error';
-    recordCimError(cause, Date.now() - startedAt);
-    return [];
-  }
-  if (result.status === null || result.status !== 0) {
-    recordCimError(`exit-${result.status ?? 'null'}`, Date.now() - startedAt);
-    return [];
-  }
-  const parsed = parseCimLogicalDisks(result.stdout);
-  // `parseCimLogicalDisks` returns [] for invalid JSON. Distinguish "no
-  // records" (valid empty list) from "couldn't parse" by re-checking the
-  // raw stdout: an empty / non-JSON string is the failure mode.
-  const disks = parsed;
-  if (disks.length === 0 && result.stdout.trim() !== '' && result.stdout.trim() !== '[]') {
-    recordCimError('invalid-json', Date.now() - startedAt);
-    return [];
-  }
-  // ORAIN-0761 AC3: refresh the filesystem cache with this enumeration
-  // before filtering by DriveType. A drive we don't list (optical, RAM,
-  // etc.) doesn't update the cache either — its filesystem shouldn't
-  // appear in any badge.
-  const newCache = new Map<string, WindowsFilesystemLabel>();
-  for (const d of disks) {
-    if (d.driveType !== 2 && d.driveType !== 3) continue;
-    const letter = d.deviceId.replace(/:$/, '').toUpperCase();
-    const value = d.filesystem.trim().toLowerCase();
-    if (value === 'ntfs' || value === 'fat32' || value === 'exfat') {
-      newCache.set(letter, value);
+  // ORAIN-0765 AC1: coalesce concurrent callers onto a single in-flight
+  // enumeration. The slot is cleared in `.finally` so a failed/coalesced
+  // call does not block the next enumeration.
+  if (inFlightEnumeration) return inFlightEnumeration;
+  inFlightEnumeration = (async () => {
+    const timeout = options.timeoutMs ?? 5000;
+    const startedAt = Date.now();
+    let result;
+    try {
+      result = await runner.powershell(POWERSHELL_ENUMERATE, { timeout });
+    } catch {
+      recordCimError('runner-threw', Date.now() - startedAt);
+      return [];
     }
-  }
-  lastFilesystemByLetter = newCache;
-  return disks
-    .filter((d) => d.driveType === 2 || d.driveType === 3)
-    .map((d) => {
+    if (result.error) {
+      const cause = result.error.message.includes('ENOENT')
+        ? 'spawn-enoent'
+        : result.error.message.includes('timeout')
+          ? 'timeout'
+          : result.error.message.includes('process died') ||
+              result.error.message.includes('runner closed')
+            ? 'process-died'
+            : 'runner-error';
+      recordCimError(cause, Date.now() - startedAt);
+      return [];
+    }
+    if (result.status === null || result.status !== 0) {
+      recordCimError(`exit-${result.status ?? 'null'}`, Date.now() - startedAt);
+      return [];
+    }
+    const parsed = parseCimLogicalDisks(result.stdout);
+    // `parseCimLogicalDisks` returns [] for invalid JSON. Distinguish "no
+    // records" (valid empty list) from "couldn't parse" by re-checking the
+    // raw stdout: an empty / non-JSON string is the failure mode.
+    const disks = parsed;
+    if (disks.length === 0 && result.stdout.trim() !== '' && result.stdout.trim() !== '[]') {
+      recordCimError('invalid-json', Date.now() - startedAt);
+      return [];
+    }
+    // ORAIN-0761 AC3: refresh the filesystem cache with this enumeration
+    // before filtering by DriveType. A drive we don't list (optical, RAM,
+    // etc.) doesn't update the cache either — its filesystem shouldn't
+    // appear in any badge.
+    const newCache = new Map<string, WindowsFilesystemLabel>();
+    for (const d of disks) {
+      if (d.driveType !== 2 && d.driveType !== 3) continue;
       const letter = d.deviceId.replace(/:$/, '').toUpperCase();
-      const isRemovable = d.driveType === 2;
-      return {
-        letter,
-        mountPath: `${letter}:\\`,
-        isRemovable,
-        vendorName: isRemovable ? 'Removable' : 'Local',
-        // ORAIN-0759 AC1: thread the WMI volume label through to the
-        // formatter. The formatter decides whether to include it based on
-        // trim — absent/null/empty/whitespace renders as `<letter>:` only.
-        volumeLabel: d.volumeLabel,
-      };
-    });
+      const value = d.filesystem.trim().toLowerCase();
+      if (value === 'ntfs' || value === 'fat32' || value === 'exfat') {
+        newCache.set(letter, value);
+      }
+    }
+    lastFilesystemByLetter = newCache;
+    return disks
+      .filter((d) => d.driveType === 2 || d.driveType === 3)
+      .map((d) => {
+        const letter = d.deviceId.replace(/:$/, '').toUpperCase();
+        const isRemovable = d.driveType === 2;
+        return {
+          letter,
+          mountPath: `${letter}:\\`,
+          isRemovable,
+          vendorName: isRemovable ? 'Removable' : 'Local',
+          // ORAIN-0759 AC1: thread the WMI volume label through to the
+          // formatter. The formatter decides whether to include it based on
+          // trim — absent/null/empty/whitespace renders as `<letter>:` only.
+          volumeLabel: d.volumeLabel,
+        };
+      });
+  })().finally(() => {
+    inFlightEnumeration = null;
+  });
+  return inFlightEnumeration;
 }
 
 /**
