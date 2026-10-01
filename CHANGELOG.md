@@ -1,10 +1,39 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.2] — 2026-10-01
+
+### Added
+
+- **Only one JellyTunes runs at a time.** Launching it while it is already open brings the existing window to the front, restoring it if it was minimised, and the second launch exits. Two instances used to open the same database and interleave lines in the same log; on a slow Windows start it was easy to double-click into that.
+- **Windows shows the volume label** next to the drive letter in the device list.
+- **Open log folder in About.** A settings row, next to the analytics toggle, opens the folder that holds `main.log`. The issue template already asked for that file; now there is a way to find it.
+
+### Changed
+
+- **Downloads are checked before they reach FFmpeg or your device** ([#23](https://github.com/orainlabs/jellytunes/issues/23)). Every track, copied or converted, now downloads to a temporary file in the system temp directory and only moves to the device after its first bytes are confirmed to be audio. A server that answers `200` with an HTML page, JSON, text or an empty body fails that track with a message saying what came back, instead of an opaque `FFmpeg exited with code 1`, and nothing is written to the destination. Network and validation failures retry up to three times with backoff, a download that stalls is aborted instead of hanging the sync, and a track larger than 2 GiB is refused before streaming starts.
+- **FFmpeg reads the downloaded file by path instead of from stdin**, and its temporary file lives in the system temp directory rather than on the device. Only the finished MP3 is written to the USB drive or SD card. This fixes conversions that failed on Windows in 0.7.1.
+- **Embedded cover art is a baseline JPEG of at most 500 px.** FFmpeg used to re-encode the cover as PNG when converting, so a 106 KB JPEG from Jellyfin became roughly 880 KB inside every MP3. Covers are now requested at 500 px as JPEG; a baseline JPEG is embedded byte for byte, and a progressive JPEG or a PNG is re-encoded to baseline. The same applies to copied and re-tagged tracks and to the companion `cover.jpg`. Tracks already on the device are not re-downloaded just for this; the new cover arrives the next time a track is re-synced for another reason or you change the cover mode.
+- **The "Sync failed" dialog shows every error**, one row per track in a scrollable list, with the track name highlighted in red. Each row gives the cause FFmpeg reported (for example `Invalid data found when processing input`) instead of only its exit code, absolute paths are removed from the messages, and long paths no longer push the layout out of shape.
+- **`main.log` now tells the story of a sync.** Each sync opens with one `[sync-start]` line (app version, OS and architecture, destination filesystem, item and track counts, conversion, cover, lyrics and metadata settings), writes one `[track-failed]` line per failed track, network errors included, and closes with one `[sync-end]` line (copied, converted, re-tagged, skipped, failed and removed counts, duration, bytes written, and whether it was cancelled). When a conversion fails, the log records what FFmpeg actually received. Paths under your home folder are written as `~`, tokens and API keys never appear, and an idle app no longer grows the log every 15 seconds: volume detection only writes when the set of volumes changes.
+- **Report a Bug includes your last sync.** The GitHub issue it opens used to carry the last 25 lines of the log, which were usually startup or volume-detection noise. It now carries a _Last sync_ section with that sync's start line, its failed tracks and its end line, trimmed to fit the URL GitHub accepts with an exact count of what was left out, plus up to ten other recent errors.
+- **Electron 44.** Electron 33 is end-of-life and no longer receives Chromium security fixes. JellyTunes now runs on the supported 44 line with the renderer sandbox enabled. On Linux, Electron 44 talks to Wayland natively; if the compositor never reports the window as ready, JellyTunes shows it anyway after a short fallback instead of running with no window.
+- The About dialog is regrouped into main links, secondary links and app settings, and stays intact at narrow widths.
 
 ### Fixed
 
-- Sync no longer silently skips tracks when the synced DB record points at an audio file that no longer exists on the device. A formatted, swapped, or partially wiped device used to mark every missing track as "already synced" from the database alone, so the sync completed in seconds with the UI still claiming success while the device stayed empty; `.lrc` and ReplayGain sidecars were even written next to non-existent audio files. The truly-unchanged branch now verifies the file is on disk before short-circuiting, the path-changed branch now renames in place when the file is at the old path and falls back to a real re-download when neither path has the audio, and the Sync Preview now treats a synced record whose audio file is missing on disk as a new track that needs work. (#ORAIN-0705)
+- **Windows 11 24H2 and later.** Microsoft removed `wmic`, which JellyTunes used to list drives, read free space and detect the filesystem. Without it the destination filesystem came back as unknown, so artist, album and track names containing `< > : " | ? *` were not sanitised and those tracks failed. Drives are now read from `Win32_LogicalDisk` through a single PowerShell session that lives for the whole app session, the result does not depend on the Windows display language, and free space comes from the filesystem directly. Only removable and fixed drives are listed, as in 0.7.1, drive roots such as `E:\` are accepted as destinations, and the drive list no longer comes up empty when PowerShell is slow on a cold start. If detection does fail, the log says so once per session rather than on every poll. Even when the filesystem cannot be determined, names are sanitised for Windows.
+- **macOS: syncing to a subfolder of a FAT32 or exFAT stick skipped name sanitisation.** Filesystem detection only worked for the root of a volume, so `~/Music` or `/Volumes/STICK/Music` came back as unknown, the filesystem badge disappeared, and characters such as `:` and `?` reached a filesystem that rejects them. The mount point is now resolved first.
+- Sync no longer silently skips tracks when the synced DB record points at an audio file that no longer exists on the device. A formatted, swapped, or partially wiped device used to mark every missing track as "already synced" from the database alone, so the sync completed in seconds with the UI still claiming success while the device stayed empty; `.lrc` and ReplayGain sidecars were even written next to non-existent audio files. The truly-unchanged branch now verifies the file is on disk before short-circuiting, the path-changed branch now renames in place when the file is at the old path and falls back to a real re-download when neither path has the audio, and the Sync Preview now treats a synced record whose audio file is missing on disk as a new track that needs work.
+- The estimated size no longer counts tracks twice when the selection overlaps, and the two storage bars use the same estimate of what the sync will write instead of disagreeing with each other. Album checkmarks now show when their artist is selected.
+
+### Internal
+
+- Track deduplication lives in one shared module used by the preview, the size estimate and the sync engine, instead of a local `Set` at each call site.
+- CI: every job declares `timeout-minutes`, with a test that fails if one is missing; snapcraft pinned to 8.x after 9.1 broke the Linux build; native modules build on Node 24 to match Electron 44; the repo installs with pnpm 11; the flaky E2E cancel scenario synchronises on DOM state instead of timing.
+- ffprobe stays a development dependency and is not shipped in the app.
+- Dependency updates, including tailwind-merge 3.
+- English only across the repo, with `scripts/check-spanish.sh` as the guard.
+- 1721 unit tests green, plus typecheck, lint, format and build.
 
 ## [0.7.1] — 2026-09-13
 

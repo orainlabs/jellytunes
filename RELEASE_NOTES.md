@@ -1,14 +1,26 @@
-## JellyTunes 0.7.1: HTTP is your call again, and the sync counters tell the truth
+## JellyTunes 0.7.2: failed tracks tell you why, and Windows 11 24H2 works properly
 
-Three changes over 0.7.0. If 0.7.0 refused to talk to your server, this one asks first and then does as you say.
+Mostly fixes. If a sync failed on you with nothing but an FFmpeg exit code, or JellyTunes stopped making sense of your drives after a recent Windows 11 update, this release is for you.
 
 ### What's new
 
-**Plain HTTP asks instead of refusing.** 0.7.0 flatly blocked login to a server reached over `http://`, and for anyone running Jellyfin on a home LAN with no TLS in front of it, that was the end of the road. The release notes told you to stay on 0.6.0. Now JellyTunes explains the risk and lets you decide: before a single credential leaves the app you get a dialog saying the connection is not encrypted and that anyone on the same wifi can read what you send, with a checkbox you have to tick before Continue does anything. Accept once and that server stops asking, on this launch and every one after it, including automatic reconnects. A different address asks again, and `localhost` never asks at all. The reasoning behind the 0.7.0 block hasn't changed, an API key sent in the clear is still an admin-capable credential that never expires, but the choice is yours now.
+**A bad download now says what went wrong** ([#23](https://github.com/orainlabs/jellytunes/issues/23)). When a server answered with something that wasn't audio, a converted track failed with nothing but `FFmpeg exited with code 1`. Now the track fails with a message saying what the server sent back, and no junk lands on your device. Network errors are retried, and a stalled download no longer hangs the sync. Conversions that failed on Windows in 0.7.1 now work. If this still happens to you, Report a Bug now attaches your last sync, so the issue already holds what we need to look into it.
 
-**The sync counters were lying.** If you selected an artist and its album artist, or an album and a playlist that share tracks, JellyTunes counted those tracks once per thing you selected. Ten tracks on the server could show as 23 already on the device before a sync, and "Copied: 32 tracks" after one. The files on your device were always correct, because a track already there is detected and skipped. Only the counting was wrong, in two separate places, and both now count each track once.
+**Windows 11 24H2 and later.** Microsoft removed a tool JellyTunes relied on, so recent Windows 11 lost track of drives, free space and filesystem, and names containing `< > : " | ? *` made tracks fail. Drives, free space and filesystem show up again, those names are made safe for Windows, and you can pick a drive root such as `E:\` as your destination.
 
-**Linux: no more half-dark window.** In the snap build the titlebar followed your system theme but the menu bar below it did not, so a dark desktop got a dark title with a light menu glued underneath, and the build from CI didn't even match the one from the Snap Store. The menu bar is now hidden on Linux, the way it has been on Windows all along. Copy, cut and paste keep working as before.
+**"Sync failed" shows every error, with the real cause.** Every failed track gets its own row with the reason FFmpeg actually reported, for example `Invalid data found when processing input`, not just an exit code.
+
+**Converted MP3s are smaller, so more of them fit.** Converting used to turn the cover into a PNG, so a 106 KB cover from Jellyfin took up about 880 KB inside every MP3. Covers now go in as a compact JPEG, which saves roughly three quarters of a megabyte per track in that case. Tracks already on your device aren't downloaded again just for this. They get the new cover the next time they're re-synced for some other reason, or when you change the cover mode.
+
+**A wiped or swapped device gets synced again.** After you formatted, swapped or partly cleared a card, JellyTunes could mark the missing tracks as already synced. The sync then reported success in seconds and left the device empty. Now it checks that each file is really there, and the Sync Preview counts any missing tracks as work still to do.
+
+**And a few smaller ones:**
+
+- **Only one JellyTunes at a time:** launching it again brings the open window to the front instead of starting a second copy.
+- **Windows shows the volume label** next to the drive letter in the device list.
+- **Open log folder** in About takes you straight to `main.log` when a bug report asks for it.
+- **macOS: subfolders on FAT32 and exFAT sticks** now get safe names, so characters like `:` and `?` no longer reach a filesystem that rejects them.
+- **The size estimate adds up:** overlapping selections aren't counted twice, both storage bars agree, and album checkmarks show when their artist is selected.
 
 ---
 
