@@ -68,6 +68,10 @@ interface PendingQuery {
     error?: Error;
   }) => void;
   timer: ReturnType<typeof setTimeout> | null;
+  /** The caller already got a timeout. The entry stays queued so its
+   * late frame is consumed in order instead of leaking into the next
+   * query's output; it is never resolved or reported a second time. */
+  abandoned?: boolean;
 }
 
 /** Default timeouts (ms). The first query allows for cold-start; later
@@ -117,6 +121,11 @@ export class PersistentCimRunner implements CimRunner {
   /** Generation increments every time we respawn; lets tests verify
    * "5 queries → 1 spawn" and "process dies → next call respawns". */
   private generation = 0;
+  /** Wall-clock time of the most recently resolved query on the current
+   * generation. Undefined before the first query ever resolves. While
+   * undefined, every queued query is treated as cold-start (gets
+   * `firstQueryTimeoutMs`) — see ORAIN-0763 AC3. */
+  private lastResolvedAt: number | undefined = undefined;
 
   constructor(options: PersistentCimRunnerOptions) {
     this.spawner = options.spawner;
@@ -163,6 +172,7 @@ export class PersistentCimRunner implements CimRunner {
     this.pendingQueries = [];
     for (const q of outstanding) {
       if (q.timer !== null) clearTimeout(q.timer);
+      if (q.abandoned) continue;
       this.onError('runner-closed', Date.now() - q.startedAt);
       q.resolve({ status: null, stdout: '', stderr: '', error: new Error('runner closed') });
     }
@@ -188,12 +198,19 @@ export class PersistentCimRunner implements CimRunner {
     }
     const script = args[args.length - 1]!;
     const requestStartedAt = Date.now();
-    const isFirstQuery = this.pendingQueries.length === 0 && this.generation === 0;
-    // First query gets the cold-start allowance (`firstQueryTimeoutMs`).
-    // Subsequent queries are capped at `queryTimeoutMs` so the operator
-    // can dial in the warm-process ceiling via AC1. The caller's
-    // `timeoutMs` shrinks the cap, never grows it.
-    const effectiveTimeout = isFirstQuery
+    // ORAIN-0763 AC3: cold-start is "no query has yet resolved on this
+    // generation", not "this query is the first one I have ever seen".
+    // The bug fixed here: when the device-watcher fires `listUsbDevices`
+    // and the renderer fires `usb:list` back-to-back at boot, both
+    // queries land in `pendingQueries` simultaneously. The ORAIN-0761
+    // condition (`pendingQueries.length === 0 && generation === 0`)
+    // applied only to the very first one — the second received the
+    // caller's 5 s cap, timed out before the PowerShell cold-start
+    // finished, killed the child, and tore down the first query with
+    // it. Now: every query in flight during cold-start gets the full
+    // cold-start allowance.
+    const isColdStart = this.lastResolvedAt === undefined;
+    const effectiveTimeout = isColdStart
       ? this.firstQueryTimeoutMs
       : Math.min(timeoutMs, this.queryTimeoutMs);
 
@@ -212,8 +229,7 @@ export class PersistentCimRunner implements CimRunner {
         timer: null,
       };
       const onTimeout = (): void => {
-        const idx = this.pendingQueries.indexOf(query);
-        if (idx >= 0) this.pendingQueries.splice(idx, 1);
+        query.abandoned = true;
         const durationMs = Date.now() - requestStartedAt;
         this.onError('timeout', durationMs);
         resolve({
@@ -222,12 +238,24 @@ export class PersistentCimRunner implements CimRunner {
           stderr: '',
           error: new Error('timeout'),
         });
-        // Kill the child so subsequent calls respawn fresh — a hung PS
-        // will keep producing no output for every following query.
-        try {
-          child.kill();
-        } catch {
-          /* swallow */
+        // ORAIN-0763 AC3: only kill the child when no live query is left
+        // in flight. Killing a shared process tears down every other
+        // pending query, even ones whose own deadline hasn't expired.
+        // Today, a slow first query (cold-start) and a tight caller cap
+        // (e.g. `usb:list` races the device-watcher) compound: the
+        // tight-capped query times out first, kills the child, and the
+        // cold-start query fails with `process died` even though it
+        // would have succeeded given enough time. When other queries are
+        // still in flight, let them either succeed on the same child or
+        // fail on their own deadline — the child is reused, the spawn
+        // count stays at 1.
+        if (this.pendingQueries.every((q) => q.abandoned)) {
+          this.pendingQueries = [];
+          try {
+            child.kill();
+          } catch {
+            /* swallow */
+          }
         }
       };
       query.timer = setTimeout(onTimeout, effectiveTimeout);
@@ -255,6 +283,10 @@ export class PersistentCimRunner implements CimRunner {
     this.child = child;
     this.stdoutBuffer = '';
     this.generation += 1;
+    // ORAIN-0763 AC3: a fresh child means a fresh cold-start. Until the
+    // first query resolves on this generation, every pending query gets
+    // `firstQueryTimeoutMs` regardless of arrival order.
+    this.lastResolvedAt = undefined;
 
     child.stdout.on('data', (chunk: Buffer | string) => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
@@ -276,6 +308,7 @@ export class PersistentCimRunner implements CimRunner {
       const cause: ErrorCause = code === 0 ? 'exit-0' : code === 1 ? 'exit-1' : 'exit-null';
       for (const q of outstanding) {
         if (q.timer !== null) clearTimeout(q.timer);
+        if (q.abandoned) continue;
         this.onError(cause, Date.now() - q.startedAt);
         q.resolve({
           status: code,
@@ -296,6 +329,7 @@ export class PersistentCimRunner implements CimRunner {
       const cause: ErrorCause = err.message.includes('ENOENT') ? 'spawn-enoent' : 'process-died';
       for (const q of outstanding) {
         if (q.timer !== null) clearTimeout(q.timer);
+        if (q.abandoned) continue;
         this.onError(cause, Date.now() - q.startedAt);
         q.resolve({ status: null, stdout: '', stderr: '', error: err });
       }
@@ -326,6 +360,12 @@ export class PersistentCimRunner implements CimRunner {
 
       this.pendingQueries.shift();
       if (pending.timer !== null) clearTimeout(pending.timer);
+      if (pending.abandoned) continue;
+      // ORAIN-0763 AC3: a successful response on this generation marks
+      // cold-start as over. Subsequent queries in the same generation
+      // receive `queryTimeoutMs` (capped by the caller's timeout), not
+      // the cold-start allowance.
+      this.lastResolvedAt = Date.now();
       pending.resolve({
         status: 0,
         stdout: frame,

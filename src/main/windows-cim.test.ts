@@ -17,8 +17,31 @@ import {
   resetFilesystemCacheForTests,
   resetCimErrorStateForTests,
   setCimErrorLoggerForTests,
+  defaultCimErrorLogger,
   type CimRunner,
 } from './windows-cim';
+
+// ORAIN-0763 AC1 + AC5: route electron-log through a spy so the default
+// logger's calls land in `logSpy.calls`. The factory below mirrors the
+// real `./logger.ts` export shape so `vi.mock` matches.
+const logSpy = {
+  calls: [] as Array<{ level: string; message: string; context?: unknown }>,
+};
+
+vi.mock('./logger', () => {
+  const record = (level: string) => (message: string, context?: unknown) => {
+    logSpy.calls.push({ level, message, context });
+  };
+  return {
+    log: {
+      error: record('error'),
+      warn: record('warn'),
+      info: record('info'),
+      debug: record('debug'),
+    },
+    configureLogger: () => undefined,
+  };
+});
 
 const EN_JSON = JSON.stringify([
   { DeviceID: 'C:', DriveType: 3, FileSystem: 'NTFS' },
@@ -736,5 +759,128 @@ describe('ORAIN-0761 AC5 — once-per-session logging after 3 failed polls', () 
     } finally {
       setCimErrorLoggerForTests(null);
     }
+  });
+});
+
+// ORAIN-0763 AC1: the default logger must write a single `error` line with
+// the cause and the duration in ms — no dynamic `require('electron-log')`.
+// We connect the production logger to a spy of the electron-log module via
+// `vi.mock` so the assertion reflects what main.log will actually receive,
+// not just the injected test seam (which AC5 already covers).
+describe('ORAIN-0763 AC1 — default CimErrorLogger routes to electron-log.error', () => {
+  // The spy replaces the electron-log default export that windows-cim.ts
+  // imports statically. The factory wires the spy into `default.error`;
+  // tests assert what the production logger actually wrote.
+  beforeEach(() => {
+    resetCimErrorStateForTests();
+    setCimErrorLoggerForTests(null);
+    logSpy.calls.length = 0;
+  });
+
+  it('writes an error line with the cause and a numeric duration when the threshold is crossed', async () => {
+    const logger = defaultCimErrorLogger;
+    // Three failures → logger fires once.
+    const runner: CimRunner = {
+      async powershell() {
+        return {
+          status: null,
+          stdout: '',
+          stderr: '',
+          error: new Error('query timeout'),
+        };
+      },
+    };
+    await listWindowsDrives(runner);
+    await listWindowsDrives(runner);
+    await listWindowsDrives(runner);
+    // `logSpy.calls` is populated by the mock ./logger module; the default
+    // logger in production calls `log.error(...)` (no `log.default?.error`).
+    expect(logSpy.calls.length).toBeGreaterThanOrEqual(1);
+    // Find the line emitted by the default logger — not the earlier
+    // `Logger configured` notice from `configureLogger()`.
+    const windowsCimLine = logSpy.calls.find((c) =>
+      c.message.includes('[windows-cim] enumeration failed'),
+    );
+    expect(windowsCimLine).toBeDefined();
+    expect(windowsCimLine!.level).toBe('error');
+    expect(windowsCimLine!.message).toContain('timeout');
+    expect(windowsCimLine!.message).toMatch(/\(\d+ms\)$/);
+    expect(typeof logger).toBe('function');
+  });
+});
+
+// ORAIN-0763 AC4: each failed query must call `recordCimError` EXACTLY
+// once. Today both the runner's `onError` and `listWindowsDrives`'s own
+// failure paths increment the counter, so two failures already cross the
+// 3-poll threshold. The fix routes errors through one channel; the test
+// pins "3 failures → 1 log line, 2 failures → 0 log lines" with the
+// runner fully wired (no test seam override of the logger).
+describe('ORAIN-0763 AC4 — recordCimError is invoked exactly once per failed query', () => {
+  it('two failed polls do not log; three log exactly once', async () => {
+    resetCimErrorStateForTests();
+    const logger = vi.fn();
+    setCimErrorLoggerForTests(logger);
+    try {
+      const runner: CimRunner = {
+        async powershell() {
+          return {
+            status: null,
+            stdout: '',
+            stderr: '',
+            error: new Error('spawn powershell.exe ENOENT'),
+          };
+        },
+      };
+      await listWindowsDrives(runner);
+      await listWindowsDrives(runner);
+      // Two failures → still under the threshold.
+      expect(logger).toHaveBeenCalledTimes(0);
+      await listWindowsDrives(runner);
+      // Third failure crosses the threshold → exactly one log line.
+      expect(logger).toHaveBeenCalledTimes(1);
+      expect(logger.mock.calls[0]?.[0]).toBe('spawn-enoent');
+    } finally {
+      setCimErrorLoggerForTests(null);
+    }
+  });
+});
+
+// ORAIN-0763 AC5: ORAIN-0761 AC5 wired the logger through a test seam
+// (`setCimErrorLoggerForTests`). This test connects the REAL production
+// logger (which delegates to electron-log via a static import) and asserts
+// that the spy received the expected line — confirming no regression in
+// the wiring when the logger is the default factory, not the injected spy.
+describe('ORAIN-0763 AC5 — ORAIN-0761 AC5 wiring still passes with the real default logger', () => {
+  beforeEach(() => {
+    resetCimErrorStateForTests();
+    setCimErrorLoggerForTests(null);
+    logSpy.calls.length = 0;
+  });
+
+  it('emits exactly one [windows-cim] error line per session after 3 failed polls', async () => {
+    const runner: CimRunner = {
+      async powershell() {
+        return {
+          status: null,
+          stdout: '',
+          stderr: '',
+          error: new Error('query timeout'),
+        };
+      },
+    };
+    await listWindowsDrives(runner);
+    await listWindowsDrives(runner);
+    await listWindowsDrives(runner);
+    const lines = logSpy.calls.filter((c) =>
+      c.message.includes('[windows-cim] enumeration failed'),
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.level).toBe('error');
+    // A fourth poll must not produce a second line.
+    await listWindowsDrives(runner);
+    const linesAfter = logSpy.calls.filter((c) =>
+      c.message.includes('[windows-cim] enumeration failed'),
+    );
+    expect(linesAfter).toHaveLength(1);
   });
 });

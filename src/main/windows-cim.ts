@@ -26,6 +26,7 @@
  */
 
 import { PersistentCimRunner, realSpawner, type ErrorCause } from './windows-cim-process';
+import { log } from './logger';
 // Re-export so `index.ts` can wire the runner into `before-quit` without
 // importing the process module directly.
 export { PersistentCimRunner } from './windows-cim-process';
@@ -198,7 +199,12 @@ export const realCim: CimRunner & { close?: () => void; spawnCount?: () => numbe
   }
   const runner = new PersistentCimRunner({
     spawner: realSpawner,
-    onError: recordCimError,
+    // ORAIN-0763 AC4: the runner's `onError` is no longer wired to
+    // `recordCimError`. Failure reporting is the responsibility of
+    // `listWindowsDrives`, which inspects the result and counts each
+    // query once. The runner still accepts an `onError` callback so
+    // tests can spy on the per-failure signal, but production does not.
+    onError: () => {},
   });
   // Expose the runner's underlying `close()` so `index.ts` can wire it
   // into `before-quit`. Production code only ever calls `powershell()`,
@@ -259,13 +265,18 @@ const cimErrorState: CimErrorState = { failures: 0, logged: false };
  * electron-log. */
 export type CimErrorLogger = (cause: string, durationMs: number) => void;
 
-/** Default — write to electron-log via a dynamic import so the test
- * runner can mock it. */
+/** Default — write to electron-log via a static import. ORAIN-0763 AC1
+ * replaces the previous dynamic `require('electron-log')`, which loaded a
+ * second copy of the package from `node_modules` when the main process
+ * was already bundled into `dist/main/index.js` by electron-vite.
+ * `electron-log`'s default export wires an IPC handler the first time
+ * it's loaded — a second load throws `Attempted to register a second
+ * handler for '__ELECTRON_LOG__'`, killing the watcher before its first
+ * poll could complete. In CJS the dynamic `default` wrapper would also
+ * never have written anything, so the cause of the failure never made
+ * it to `main.log`. */
 export const defaultCimErrorLogger: CimErrorLogger = (cause, durationMs) => {
-  const logModule = require('electron-log');
-  logModule.default?.error?.(
-    `[windows-cim] enumeration failed after 3 polls: ${cause} (${durationMs}ms)`,
-  );
+  log.error(`[windows-cim] enumeration failed after 3 polls: ${cause} (${durationMs}ms)`);
 };
 
 /** Test seam — reset the AC5 once-per-session state. */
@@ -300,6 +311,16 @@ export function recordCimError(cause: ErrorCause | string, durationMs: number): 
  * Filters `DriveType` to 2 (removable) and 3 (local) only — matches the
  * v0.7.1 behaviour and excludes network (4), optical (5), RAM disk (6),
  * no-root (1) and unknown (0).
+ *
+ * ORAIN-0763 AC4: this function is the SOLE caller of `recordCimError`
+ * for the failure modes it can detect from the result. The persistent
+ * runner used to also call `onError: recordCimError`, which fired once
+ * per failed query — and so did we, doubling the count and tripping the
+ * 3-poll threshold after only 2 failed queries. The runner is no longer
+ * wired with `recordCimError`; it still emits an `onError` callback for
+ * callers that want a separate signal, but the production wiring passes
+ * a no-op there. Every error path below goes through `recordCimError`
+ * exactly once.
  */
 export async function listWindowsDrives(
   runner: CimRunner,
@@ -314,15 +335,15 @@ export async function listWindowsDrives(
     recordCimError('runner-threw', Date.now() - startedAt);
     return [];
   }
-  // ORAIN-0761 AC5: timeout, ENOENT, non-zero exit, and invalid JSON each
-  // count as a failure. `recordCimError` dedups after the third poll so
-  // a single missing PowerShell doesn't flood main.log at ~4 lines/min.
   if (result.error) {
     const cause = result.error.message.includes('ENOENT')
       ? 'spawn-enoent'
       : result.error.message.includes('timeout')
         ? 'timeout'
-        : 'runner-error';
+        : result.error.message.includes('process died') ||
+            result.error.message.includes('runner closed')
+          ? 'process-died'
+          : 'runner-error';
     recordCimError(cause, Date.now() - startedAt);
     return [];
   }

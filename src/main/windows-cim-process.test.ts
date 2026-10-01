@@ -245,8 +245,14 @@ describe('PersistentCimRunner — basic protocol (AC2)', () => {
     expect(children[0]!.killed).toBe(true);
   });
 
-  it('uses firstQueryTimeoutMs only for the very first query after construction', async () => {
-    const { spawner } = makeSpawner();
+  it('uses firstQueryTimeoutMs for every query until one resolves successfully', async () => {
+    // ORAIN-0763 AC3: the cold-start window is "no query has resolved
+    // on this generation yet", not "this is the first query I've
+    // seen". A query that times out never resolves successfully, so the
+    // next query on the respawned child still gets `firstQueryTimeoutMs`
+    // — otherwise the cold-start budget shrinks race-by-race until it
+    // can't cover the actual PS warm-up.
+    const { spawner, children } = makeSpawner();
     const runner = new PersistentCimRunner({
       spawner,
       firstQueryTimeoutMs: 50,
@@ -262,16 +268,40 @@ describe('PersistentCimRunner — basic protocol (AC2)', () => {
     await new Promise((r) => setTimeout(r, 80));
     const r1 = await p1;
     expect(r1.error?.message).toBe('timeout');
-    // After death, respawn and run a query that does NOT use the
-    // firstQueryTimeoutMs — it should sit there longer than 50ms.
+    // After p1 times out the child is killed but `lastResolvedAt` stays
+    // undefined — p1 never produced a successful frame. The next call
+    // respawns, increments `generation`, and STILL uses `firstQueryTimeoutMs`
+    // because cold-start is keyed off resolution, not arrival.
     const p2 = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'q'], {
       timeout: 5000,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setTimeout(r, 80));
-    // Still pending → not timed out yet.
+    const r2 = await p2;
+    expect(r2.error?.message).toBe('timeout');
+    // Now resolve a query successfully: cold-start ends, the next query
+    // gets the warm `queryTimeoutMs`. children[2] is the third spawn
+    // (p1 → child 0, p2 → child 1, p3 below → child 2 — but p3 is what
+    // we resolve here, so spawn p3 first and then resolve it).
+    const p3 = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'q'], {
+      timeout: 5000,
+    });
+    await new Promise((r) => setImmediate(r));
+    const child = children[2]! as CapturingFakeChild;
+    const m = /Write-Output "---JT-END-([0-9a-f-]+)---"/.exec(child.stdinChunks[0]!);
+    expect(m).not.toBeNull();
+    child.emitStdout(`"ok"\n---JT-END-${m![1]}---\n`);
+    const r3 = await p3;
+    expect(r3.status).toBe(0);
+    expect(r3.stdout).toBe('"ok"');
+    // p4 arrives AFTER the first successful resolve → uses warm timeout.
+    const p4 = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'q'], {
+      timeout: 5000,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setTimeout(r, 80));
     let resolved = false;
-    p2.then(() => (resolved = true));
+    p4.then(() => (resolved = true));
     await new Promise((r) => setImmediate(r));
     expect(resolved).toBe(false);
   });
@@ -349,5 +379,189 @@ describe('PersistentCimRunner — once-per-session error semantics (AC5 wiring)'
     expect(causes).toContain('timeout');
     expect(causes).toContain('exit-1');
     expect(causes).toContain('spawn-enoent');
+  });
+});
+
+// ORAIN-0763 AC3: while the persistent PowerShell process has not yet
+// answered its first query, every queued query is in cold-start territory
+// and gets `firstQueryTimeoutMs` — NOT the caller's `timeoutMs`. The
+// caller's timeout was already capped at `min(callerTimeout, warmTimeout)`
+// in ORAIN-0761; the bug is that this cap applied only to the very first
+// query in the buffer, not to subsequent concurrent ones.
+//
+// The regression scenario: the device-watcher polls at boot, and the
+// renderer immediately fires `usb:list`. Both queries land in
+// `pendingQueries` simultaneously. With `firstQueryTimeoutMs = 20_000`,
+// `queryTimeoutMs = 10_000`, and `callerTimeout = 5_000` the second query
+// received `min(5000, 10000) = 5000` ms and timed out before the PS
+// cold-start finished, killing the child and tearing down the first query
+// with it.
+//
+// Expected behaviour (AC3): two concurrent queries with the cold-start
+// timeout in flight must both resolve with `status: 0` and the runner
+// must have spawned exactly ONE child process.
+describe('ORAIN-0763 AC3 — concurrent queries share the cold-start timeout', () => {
+  it('two concurrent queries during cold-start both succeed with one spawn', async () => {
+    // Simulate a 6 s cold-start: the child doesn't emit stdout for 6 s,
+    // matching the "Win11 dev" VM's observed powershell.exe warm-up.
+    const COLD_START_MS = 6_000;
+    // The caller-side cap mirrors `listWindowsDrives`'s default of 5 s
+    // (see windows-cim.ts `timeoutMs ?? 5000`). This is the cap that
+    // used to kill the in-flight child.
+    const CALLER_TIMEOUT_MS = 5_000;
+    // The cold-start allowance — generous enough to cover the simulated
+    // cold-start plus headroom for the test runner.
+    const FIRST_QUERY_TIMEOUT_MS = 20_000;
+
+    const { spawner, children, calls } = makeSpawner();
+    const runner = new PersistentCimRunner({
+      spawner,
+      firstQueryTimeoutMs: FIRST_QUERY_TIMEOUT_MS,
+      queryTimeoutMs: 10_000,
+    });
+
+    const p1 = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'q1'], {
+      timeout: CALLER_TIMEOUT_MS,
+    });
+    const p2 = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'q2'], {
+      timeout: CALLER_TIMEOUT_MS,
+    });
+    // Let the runner push both queries into the buffer + spawn the child.
+    await new Promise((r) => setImmediate(r));
+
+    // Only ONE child was spawned — no respawn from the timeout-induced
+    // kill that AC3 is fixing.
+    expect(calls).toHaveLength(1);
+    expect(runner.spawnCount).toBe(1);
+
+    const child = children[0]! as CapturingFakeChild;
+    // Capture both delimiters.
+    const m1 = /Write-Output "---JT-END-([0-9a-f-]+)---"/.exec(child.stdinChunks[0]!);
+    const m2 = /Write-Output "---JT-END-([0-9a-f-]+)---"/.exec(child.stdinChunks[1]!);
+    expect(m1).not.toBeNull();
+    expect(m2).not.toBeNull();
+
+    // Simulate the cold-start: emit no stdout for the full COLD_START_MS
+    // window, then emit both frames in order. The test waits the full
+    // window — using a shorter value here would also satisfy the timeout
+    // cap, so the assertion that matters is `status: 0` for BOTH queries.
+    await new Promise((r) => setTimeout(r, COLD_START_MS + 500));
+    child.emitStdout(`"r1"\n---JT-END-${m1![1]}---\n`);
+    child.emitStdout(`"r2"\n---JT-END-${m2![1]}---\n`);
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.status).toBe(0);
+    expect(r1.error).toBeUndefined();
+    expect(r1.stdout).toBe('"r1"');
+    expect(r2.status).toBe(0);
+    expect(r2.error).toBeUndefined();
+    expect(r2.stdout).toBe('"r2"');
+    // Spawn count must still be one — neither timeout fired, no respawn.
+    expect(runner.spawnCount).toBe(1);
+  });
+
+  // Cold start ignores the caller's timeout (AC3), so tests that need a
+  // per-query deadline first warm the runner with one resolved query.
+  async function warmRunner(): Promise<{
+    runner: PersistentCimRunner;
+    child: CapturingFakeChild;
+  }> {
+    const { spawner, children } = makeSpawner();
+    const runner = new PersistentCimRunner({
+      spawner,
+      firstQueryTimeoutMs: 1000,
+      queryTimeoutMs: 1000,
+    });
+    const warm = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'warm'], {
+      timeout: 1000,
+    });
+    await new Promise((r) => setImmediate(r));
+    const child = children[0]! as CapturingFakeChild;
+    const m = /Write-Output "---JT-END-([0-9a-f-]+)---"/.exec(child.stdinChunks[0]!);
+    child.emitStdout(`"warm"\n---JT-END-${m![1]}---\n`);
+    expect((await warm).status).toBe(0);
+    return { runner, child };
+  }
+
+  const delimOf = (child: CapturingFakeChild, n: number): string =>
+    /Write-Output "---JT-END-([0-9a-f-]+)---"/.exec(child.stdinChunks[n]!)![1]!;
+
+  it('a query whose own timeout expires does NOT kill the child while other queries are still in flight', async () => {
+    const { runner, child } = await warmRunner();
+    const pShort = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'q1'], {
+      timeout: 30,
+    });
+    const pLong = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'q2'], {
+      timeout: 1000,
+    });
+    expect((await pShort).error?.message).toBe('timeout');
+    expect(child.killed).toBe(false);
+    // The real process still answers the timed-out query, then the live one.
+    child.emitStdout(
+      `"late"\n---JT-END-${delimOf(child, 1)}---\n"ok"\n---JT-END-${delimOf(child, 2)}---\n`,
+    );
+    const rLong = await pLong;
+    expect(rLong.status).toBe(0);
+    expect(rLong.stdout).toBe('"ok"');
+  });
+
+  it('a late frame from a timed-out query does not leak into the next query', async () => {
+    // The stream is FIFO by delimiter. When query A times out but the
+    // child survives (B is still in flight), PowerShell still emits A's
+    // output and A's delimiter. B's frame must not swallow them.
+    const { runner, child } = await warmRunner();
+    const pA = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'qa'], {
+      timeout: 30,
+    });
+    const pB = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'qb'], {
+      timeout: 1000,
+    });
+    expect((await pA).error?.message).toBe('timeout');
+    child.emitStdout(
+      `"late-a"\n---JT-END-${delimOf(child, 1)}---\n"b"\n---JT-END-${delimOf(child, 2)}---\n`,
+    );
+    const rB = await pB;
+    expect(rB.status).toBe(0);
+    expect(rB.stdout).toBe('"b"');
+  });
+
+  it('kills the child once only abandoned queries remain in flight', async () => {
+    const { runner, child } = await warmRunner();
+    const pA = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'qa'], {
+      timeout: 30,
+    });
+    const pB = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'qb'], {
+      timeout: 60,
+    });
+    expect((await pA).error?.message).toBe('timeout');
+    expect(child.killed).toBe(false);
+    expect((await pB).error?.message).toBe('timeout');
+    expect(child.killed).toBe(true);
+  });
+
+  it('reports each timed-out query to onError exactly once', async () => {
+    const { spawner, children } = makeSpawner();
+    const causes: string[] = [];
+    const runner = new PersistentCimRunner({
+      spawner,
+      firstQueryTimeoutMs: 1000,
+      queryTimeoutMs: 1000,
+      onError: (c) => causes.push(c),
+    });
+    const warm = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'w'], {
+      timeout: 1000,
+    });
+    await new Promise((r) => setImmediate(r));
+    const child = children[0]! as CapturingFakeChild;
+    child.emitStdout(`"w"\n---JT-END-${delimOf(child, 0)}---\n`);
+    await warm;
+    const pA = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'qa'], {
+      timeout: 30,
+    });
+    const pB = runner.powershell(['-NoProfile', '-NonInteractive', '-Command', 'qb'], {
+      timeout: 60,
+    });
+    await Promise.all([pA, pB]);
+    expect(causes).toEqual(['timeout', 'timeout']);
   });
 });
