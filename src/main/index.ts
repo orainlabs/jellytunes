@@ -24,6 +24,8 @@ import { createSecretStore } from './secret-store';
 import { createSecretToolRunner } from './secret-tool.adapter';
 import { createElectronLogger } from './logger-types';
 import { getAppMenuTemplate } from './app-menu';
+// ORAIN-0762: single-instance lock — see ./single-instance.ts.
+import { acquireSingleInstanceLock } from './single-instance';
 import {
   buildSnapPermissionsReport,
   type SnapPermissionsReport,
@@ -1641,6 +1643,22 @@ ipcMain.handle('snap:checkPermissions', (): SnapPermissionsReport => {
 });
 
 void app.whenReady().then(() => {
+  // ORAIN-0762: acquire the single-instance lock FIRST. If a second
+  // instance tried to launch while we were alive, Electron routes the
+  // user gesture to us via the 'second-instance' event registered inside
+  // acquireSingleInstanceLock, and the loser quits immediately. Doing
+  // this before log.info / initDatabase / createWindow prevents two
+  // processes from racing on jellytunes.db and main.log.
+  const lockResult = acquireSingleInstanceLock({
+    app,
+    getMainWindow: () => mainWindow,
+    quit: () => app.quit(),
+  });
+  if (!lockResult.acquired) {
+    // The secondary process is exiting. Do nothing else.
+    return;
+  }
+
   log.info('App ready');
   if (IS_SNAP) {
     log.info(
