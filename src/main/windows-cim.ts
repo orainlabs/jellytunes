@@ -208,11 +208,17 @@ export const realCim: CimRunner & { close?: () => void; spawnCount?: () => numbe
   });
   // Expose the runner's underlying `close()` so `index.ts` can wire it
   // into `before-quit`. Production code only ever calls `powershell()`,
-  // never `close()`, on this object.
-  const proxy: CimRunner & { close: () => void; spawnCount: () => number } = {
+  // never `close()`, on this object. `pendingQueriesCount` is the AC2
+  // test-only surface — production never reads it.
+  const proxy: CimRunner & {
+    close: () => void;
+    spawnCount: () => number;
+    pendingQueriesCount: () => number;
+  } = {
     powershell: (args, options) => runner.powershell(args, options),
     close: () => runner.close(),
     spawnCount: () => runner.spawnCount,
+    pendingQueriesCount: () => runner.pendingQueriesCount,
   };
   return proxy;
 })();

@@ -153,6 +153,13 @@ export class PersistentCimRunner implements CimRunner {
     return this.generation;
   }
 
+  /** Number of queries currently in flight on the child. ORAIN-0765 AC2
+   * exposes this so tests can assert that coalescing keeps the live-query
+   * count bounded under hung-process scenarios. */
+  get pendingQueriesCount(): number {
+    return this.pendingQueries.length;
+  }
+
   /** True when a child is currently alive. */
   get isRunning(): boolean {
     return this.child !== null;

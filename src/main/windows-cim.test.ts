@@ -8,6 +8,8 @@
 // matching of localized text.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'events';
+import { Readable, Writable } from 'stream';
 import {
   parseCimLogicalDisks,
   detectWindowsFilesystem,
@@ -20,6 +22,39 @@ import {
   defaultCimErrorLogger,
   type CimRunner,
 } from './windows-cim';
+import { PersistentCimRunner, type ProcessSpawner } from './windows-cim-process';
+
+/**
+ * Minimal stand-in for `ChildProcessWithoutNullStreams`, scoped to AC2
+ * tests. The spawner returns one of these per `spawn()` call. This is a
+ * copy of the helper in `windows-cim-process.test.ts` — we keep it
+ * local so AC2 tests are self-contained.
+ */
+class FakeCimChild {
+  stdin: Writable;
+  stdout: Readable;
+  stderr: Readable;
+  killed = false;
+  exitCode: number | null = null;
+  emitter = new EventEmitter();
+  constructor() {
+    this.stdin = new Writable({ write: (_c, _e, cb) => cb() });
+    this.stdout = new Readable({ read: () => {} });
+    this.stderr = new Readable({ read: () => {} });
+  }
+  on(event: string, listener: (...args: unknown[]) => void): FakeCimChild {
+    this.emitter.on(event, listener as (...args: unknown[]) => void);
+    return this;
+  }
+  kill(): boolean {
+    if (this.killed) return false;
+    this.killed = true;
+    setImmediate(() => {
+      if (this.exitCode === null) this.emitter.emit('exit', null);
+    });
+    return true;
+  }
+}
 
 // ORAIN-0763 AC1 + AC5: route electron-log through a spy so the default
 // logger's calls land in `logSpy.calls`. The factory below mirrors the
@@ -889,6 +924,100 @@ describe('ORAIN-0765 AC1 — coalescing concurrent listWindowsDrives calls', () 
     expect(results).toHaveLength(5);
     for (const r of results) {
       expect(r.map((d) => d.letter)).toEqual(['C', 'G']);
+    }
+  });
+});
+
+// ORAIN-0765 AC2: the persistent runner must recover from a hung
+// `powershell.exe` cold-start. With coalescing in place, only one query
+// is ever pending at the runner level, so the "kill the child when every
+// pending query is abandoned" rule (`windows-cim-process.ts:252`) fires
+// after the cold-start timeout, and the next enumeration respawns.
+//
+// Tests use Vitest fake timers so the timeout fires deterministically.
+// The 5-minute / 2-second stress test ensures the queue stays bounded
+// even when the underlying process never produces a frame — without
+// coalescing, `pendingQueries` would grow by one every 2 s and the child
+// would never be killed because the first query never resolves.
+describe('ORAIN-0765 AC2 — recovery from a hung powershell.exe', () => {
+  // Local copy of the spawner helper from `windows-cim-process.test.ts`,
+  // so this describe block is self-contained. The fake never responds —
+  // every `runner.powershell()` call times out.
+  function makeSilentSpawner(): {
+    spawner: ProcessSpawner;
+    children: FakeCimChild[];
+    calls: Array<{ command: string; args: string[] }>;
+  } {
+    const children: FakeCimChild[] = [];
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const spawner: ProcessSpawner = {
+      spawn(command, args) {
+        calls.push({ command, args });
+        const child = new FakeCimChild();
+        children.push(child);
+        return child as unknown as ReturnType<ProcessSpawner['spawn']>;
+      },
+    };
+    return { spawner, children, calls };
+  }
+
+  it('a hung enumeration causes respawn on the next call', async () => {
+    vi.useFakeTimers();
+    try {
+      resetFilesystemCacheForTests();
+      resetCimErrorStateForTests();
+
+      const { spawner } = makeSilentSpawner();
+      const runner = new PersistentCimRunner({
+        spawner,
+        firstQueryTimeoutMs: 1000,
+        queryTimeoutMs: 500,
+      });
+
+      // First enumeration: powershell never responds; timeout fires,
+      // child is killed (last-abandoned rule), next call respawns.
+      const p1 = listWindowsDrives(runner);
+      await vi.advanceTimersByTimeAsync(1100);
+      await p1;
+      expect(runner.spawnCount).toBe(1);
+
+      // Second enumeration arrives: must respawn (generation 2).
+      const p2 = listWindowsDrives(runner);
+      await vi.advanceTimersByTimeAsync(1100);
+      await p2;
+      expect(runner.spawnCount).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('150 polls spaced 2 s never let pendingQueriesCount exceed 1', async () => {
+    vi.useFakeTimers();
+    try {
+      resetFilesystemCacheForTests();
+      resetCimErrorStateForTests();
+
+      const { spawner } = makeSilentSpawner();
+      const runner = new PersistentCimRunner({
+        spawner,
+        firstQueryTimeoutMs: 1000,
+        queryTimeoutMs: 500,
+      });
+
+      // 150 polls × 2 s = 5 min simulated.
+      let maxObserved = 0;
+      for (let i = 0; i < 150; i += 1) {
+        const p = listWindowsDrives(runner);
+        // While the promise is in flight, the in-flight slot is populated.
+        maxObserved = Math.max(maxObserved, runner.pendingQueriesCount);
+        await vi.advanceTimersByTimeAsync(2000);
+        await p;
+        // After the timeout fires and the slot clears, the count drops.
+        maxObserved = Math.max(maxObserved, runner.pendingQueriesCount);
+      }
+      expect(maxObserved).toBeLessThanOrEqual(1);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
