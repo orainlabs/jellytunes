@@ -289,7 +289,7 @@ export function buildTrackBasename(
 
 /**
  * Pick a basename whose `dir + sep + basename` length is `<= WINDOWS_MAX_PATH`.
- * Strategy (matches the spec's "conservando número de pista y extensión"):
+ * Strategy:
  *   1. Always keep the file extension (`.mp3`).
  *   2. Always keep the trailing "track-number + title" segment when the
  *      filename contains ` - NN ` anywhere — that pattern matches the
@@ -843,6 +843,7 @@ class SyncCoreImpl {
         arch: process.arch,
         destinationPath: input.destinationPath,
         destinationFilesystem: input.destinationFilesystem ?? 'unknown',
+        serverRootPath: this.serverRootPath,
         itemCount: input.itemIds.length,
         trackCount: totalTracks,
         options: {
@@ -3037,7 +3038,7 @@ class SyncCoreImpl {
           const { relativePath } = resolveTrackDestinationPath({
             track,
             outputDir,
-            serverRootPath: this.serverRootPath,
+            serverRootPath: this.serverRootPath ?? '',
             options,
             platform: this.platform,
             filesystemType: options.filesystemType ?? 'unknown',
