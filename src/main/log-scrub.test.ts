@@ -180,6 +180,40 @@ describe('formatSyncStart', () => {
     expect(a).toContain('syncId=aaa');
     expect(b).toContain('syncId=bbb');
   });
+
+  // ORAIN-0501 AC7: include the detected server root in [sync-start] so
+  // the bug-report excerpt (src/main/bug-report-excerpt.ts) carries
+  // `serverRoot=<path>` or `serverRoot=none`. The value is scrubbed via
+  // the same `scrubPath` helper that scrubs `dest=`.
+  it('ORAIN-0501 AC7 — includes serverRoot=<path> when provided', () => {
+    const out = formatSyncStart({ ...baseArgs, serverRootPath: '/media/music/' });
+    expect(out).toContain('serverRoot=/media/music/');
+  });
+
+  it('ORAIN-0501 AC7 — emits serverRoot=none when no root was detected', () => {
+    const out = formatSyncStart({ ...baseArgs });
+    // Omitting serverRootPath must emit `serverRoot=none` so support can
+    // distinguish "didn't detect" from "no tracks in this sync".
+    expect(out).toContain('serverRoot=none');
+  });
+
+  it('ORAIN-0501 AC7 — serverRoot goes through the same scrubPath as dest', () => {
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const out = formatSyncStart({
+      ...baseArgs,
+      serverRootPath: '/Users/alice/jellyfin/lib/',
+      destinationPath: '/Users/alice/Music/USB',
+    });
+    expect(out).toContain('serverRoot=~/jellyfin/lib/');
+    expect(out).not.toContain('/Users/alice');
+  });
+
+  it('ORAIN-0501 AC7 — empty string is rendered as serverRoot=none', () => {
+    // Empty serverRootPath comes from SyncCore when detectServerRootPath
+    // returned `''`; surface that explicitly so support can read the line.
+    const out = formatSyncStart({ ...baseArgs, serverRootPath: '' });
+    expect(out).toContain('serverRoot=none');
+  });
 });
 
 describe('formatSyncEnd', () => {

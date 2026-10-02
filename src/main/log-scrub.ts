@@ -83,8 +83,20 @@ export function formatSyncStart(input: {
   trackCount: number;
   options: FormatOptions;
   syncId: string;
+  /**
+   * ORAIN-0501 AC7: detected server root path. Rendered as
+   * `serverRoot=<scrubbed>` when present (after the same `scrubPath`
+   * pass as `dest=`), or `serverRoot=none` when empty/missing — so
+   * support can read the bug-report excerpt and tell a real
+   * `/media/music/` from a `''` returned when the batch had no tracks.
+   */
+  serverRootPath?: string;
 }): string {
   const dest = scrubPath(input.destinationPath);
+  const serverRoot =
+    input.serverRootPath && input.serverRootPath.length > 0
+      ? scrubPath(input.serverRootPath)
+      : 'none';
   const parts: string[] = [
     `[sync-start] syncId=${input.syncId}`,
     `appVersion=${input.appVersion}`,
@@ -92,6 +104,7 @@ export function formatSyncStart(input: {
     `arch=${input.arch}`,
     `dest=${dest}`,
     `destFs=${input.destinationFilesystem}`,
+    `serverRoot=${serverRoot}`,
     `items=${input.itemCount}`,
     `tracks=${input.trackCount}`,
     `convert=${input.options.convertToMp3}`,

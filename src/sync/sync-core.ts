@@ -42,6 +42,7 @@ import {
   getFilenameFromPath,
   sanitizePathComponent,
   hasTraversalSegment,
+  CONVERTIBLE_FORMATS,
 } from './sync-config';
 import { deduplicateTracks } from './track-dedup';
 import {
@@ -210,6 +211,264 @@ function parseBitrateKbps(bitrate: string): number {
  * (cover bytes vary, bitrate-ratio is a coarse estimator); the real
  * destination size is reported separately at `[sync-end]` (ORAIN-0740).
  */
+// =============================================================================
+// ORAIN-0501 — github#27 / MAX_PATH handling
+// =============================================================================
+
+/** Windows MAX_PATH: usable characters = 260 minus the trailing NUL. */
+export const WINDOWS_MAX_PATH = 259;
+
+/**
+ * Platform/filesystem combinations that trigger MAX_PATH truncation. Matches
+ * the same gate `sanitizePathComponent` uses for character sanitization
+ * (ORAIN-0725 — Win11 24H2+ can return `'unknown'` so we must gate on
+ * `platform === 'win32'` directly when `filesystemType === 'unknown'`).
+ */
+function isMaxPathTarget(platform: NodeJS.Platform, filesystemType: FilesystemType): boolean {
+  if (platform === 'win32') return true;
+  return filesystemType === 'fat32' || filesystemType === 'exfat' || filesystemType === 'ntfs';
+}
+
+/**
+ * Compute the final basename for `track` against the given sync options.
+ * Pure: no fs, no network, no globals. Behaviour order:
+ *
+ *   1. Take `getFilenameFromPath(track.path)` if available (preserves the
+ *      server's folder structure; this is the same shape
+ *      `resolveCanonicalFilename` / `resolveFilenameFromPath` produce).
+ *   2. Apply per-component sanitization when the target platform/filesystem
+ *      requires it (matches `sanitizePathComponent`'s gate).
+ *   3. Swap the extension to `.mp3` when `convertToMp3` is on and the
+ *      source is in `CONVERTIBLE_FORMATS` — same predicate as
+ *      `needsConversion`.
+ *   4. If the resulting basename + the on-disk parent directory still
+ *      overflows `WINDOWS_MAX_PATH`, shrink the basename in 8-char steps,
+ *      always keeping the extension and the leading track-number prefix
+ *      (`01 `, `02 `, …) when present so the player's track-number sort
+ *      keeps working. Stops when the basename is 16 chars + extension.
+ *
+ * Pure helper; exported so `generateM3u8Files` and the file write paths
+ * share one source of truth (AC6).
+ */
+export function buildTrackBasename(
+  track: { name: string; path: string; format: string; trackNumber?: number },
+  options: {
+    convertToMp3: boolean;
+    platform: NodeJS.Platform;
+    filesystemType: FilesystemType;
+  },
+): string {
+  // Step 1: seed the basename from the server-side path. We only fall
+  // back to `name` when the path is missing (legacy callers / metadata-only
+  // tracks).
+  let base = track.path ? getFilenameFromPath(track.path) : track.name;
+  if (!base) return base;
+
+  // Step 2: per-component sanitization for windows-y targets. Platform is
+  // injected so win32 sanitizes even when filesystemType is 'unknown'
+  // (ORAIN-0725). On non-windows targets, this is a no-op.
+  const sanitize = (s: string): string =>
+    sanitizePathComponent(s, { platform: options.platform, filesystem: options.filesystemType });
+
+  base = sanitize(base);
+
+  // Step 3: extension swap for conversion. The predicate mirrors
+  // `needsConversion` (config-driven, options.convertToMp3 + format check).
+  if (
+    options.convertToMp3 &&
+    CONVERTIBLE_FORMATS.includes(
+      track.format.toLowerCase() as (typeof CONVERTIBLE_FORMATS)[number],
+    ) &&
+    !base.toLowerCase().endsWith('.mp3')
+  ) {
+    base = base.replace(/\.[^.]+$/, '.mp3');
+  }
+
+  return base;
+}
+
+/**
+ * Pick a basename whose `dir + sep + basename` length is `<= WINDOWS_MAX_PATH`.
+ * Strategy (matches the spec's "conservando número de pista y extensión"):
+ *   1. Always keep the file extension (`.mp3`).
+ *   2. Always keep the trailing "track-number + title" segment when the
+ *      filename contains ` - NN ` anywhere — that pattern matches the
+ *      Jellyfin library filename shape (`Album - NN Title.flac`). The
+ *      NN is what the player sorts by, so it must survive.
+ *   3. Truncate from the START of the stem in 8-char steps, snapping to
+ *      multiples of 8 so successive shrinks of sibling tracks look
+ *      consistent (e.g. `01 Motor Spirit.mp3` and `02 Flamethrower.mp3`
+ *      share the same stem prefix).
+ *
+ * If the directory alone already exceeds the budget, returns the basename
+ * unchanged — the caller surfaces a `path > MAX_PATH` error rather than
+ * silently producing a half-broken filename.
+ */
+export function shrinkBasenameToMaxPath(basename: string, dirWithSep: string): string {
+  const fullPathLength = dirWithSep.length + basename.length;
+  if (fullPathLength <= WINDOWS_MAX_PATH) return basename;
+
+  const extMatch = basename.match(/(\.[^.]+)$/);
+  const ext = extMatch ? extMatch[1] : '';
+
+  // Look for the Jellyfin-style " - NN " track-number anchor anywhere in
+  // the stem. The stem may legitimately begin with the album name; what
+  // the player needs is the trailing " - NN Title" tail.
+  const stem = extMatch ? basename.slice(0, basename.length - ext.length) : basename;
+  const trackNumMatch = stem.match(/(?:^|\s-\s)(\d{1,3} [^/\\]+)$/);
+  const trackNumTail = trackNumMatch ? trackNumMatch[1] : '';
+
+  const available = WINDOWS_MAX_PATH - dirWithSep.length - ext.length;
+  if (available <= 1) return basename; // dir is already too long; bail.
+
+  if (trackNumTail && trackNumTail.length <= available) {
+    // The track-number tail fits — keep it verbatim, and prepend as much
+    // of the album prefix as the budget has room for. The album prefix is
+    // a multiple of 8 chars so we snap successive shrinks.
+    const prefixBudget = available - trackNumTail.length;
+    const prefixSnapped = Math.max(
+      0,
+      prefixBudget - (prefixBudget % 8 === 0 ? 0 : prefixBudget % 8),
+    );
+    const albumPrefix = stem.slice(0, prefixSnapped).trimEnd();
+    const candidate =
+      albumPrefix.length > 0 ? `${albumPrefix} ${trackNumTail}${ext}` : `${trackNumTail}${ext}`;
+    if (dirWithSep.length + candidate.length <= WINDOWS_MAX_PATH) {
+      return candidate;
+    }
+  }
+
+  // Fallback shrink when the track-number tail didn't match the regex or
+  // overflowed. Keep the trailing stem in 8-char steps down to a 16-char
+  // floor — enough room for a meaningful filename, short enough to fit
+  // even on a deep tree.
+  const stemFloor = 16;
+  const stemAvailable = available;
+  const stemLength = Math.max(stemFloor, Math.min(stemAvailable, stem.length));
+  const stemSnapped = stemLength - (stemLength % 8 === 0 ? 0 : stemLength % 8);
+  const truncated = `${stem.slice(stem.length - stemSnapped)}${ext}`;
+
+  if (dirWithSep.length + truncated.length > WINDOWS_MAX_PATH) {
+    const overrun = dirWithSep.length + truncated.length - WINDOWS_MAX_PATH;
+    return `${truncated.slice(0, Math.max(1, truncated.length - overrun - ext.length))}${ext}`;
+  }
+
+  return truncated;
+}
+
+export interface ResolveTrackDestinationPathInput {
+  track: {
+    id: string;
+    name: string;
+    path: string;
+    format: string;
+    trackNumber?: number;
+  };
+  /** Destination root (e.g. `W:\Music MP3s`). Pre-sanitized by `getOutputDir`. */
+  outputDir: string;
+  /** Server-side root to strip when computing the relative path. */
+  serverRootPath: string;
+  options: {
+    convertToMp3: boolean;
+    bitrate: '128k' | '192k' | '320k';
+    filesystemType: FilesystemType;
+    coverArtMode: CoverArtMode;
+    lyricsMode: LyricsMode;
+    embedMetadata: boolean;
+    preserveStructure: boolean;
+    platform: NodeJS.Platform;
+    skipExisting: boolean;
+  };
+  /** Per-track segment root. When omitted, falls back to `options.platform`. */
+  platform?: NodeJS.Platform;
+  /** Per-track filesystem. When omitted, falls back to `options.filesystemType`. */
+  filesystemType?: FilesystemType;
+}
+
+export interface ResolveTrackDestinationPathResult {
+  /** Absolute path the file is written to. */
+  outputPath: string;
+  /** Final basename (already sanitized, extension swapped if needed). */
+  outputFilename: string;
+  /**
+   * Path the m3u8 file writes — relative to `outputDir` so portable across
+   * mounts. Empty string when the track has no serverRootPath (m3u8
+   * generation already skips those entries).
+   */
+  relativePath: string;
+  /**
+   * `true` when `shrinkBasenameToMaxPath` actually shortened the basename.
+   * AC3's "did not re-download" path is keyed off the rename logic in
+   * `handleSyncedRecord`, which compares `synced.destinationPath` against
+   * `outputPath` — no special-casing needed.
+   */
+  shortened: boolean;
+}
+
+/**
+ * Single source of truth for "where does this track go?". Used by:
+ *   - the file write path (`processTrack` → `copyOrConvertTrack`)
+ *   - the rename path (`handleSyncedRecord` — same call, then diff against
+ *     the previously-stored `syncedRecord.destinationPath`)
+ *   - the diff preview (`analyzeDiff` — same call, then diff against DB)
+ *   - the m3u8 entry path (`generateM3u8Files` — uses `relativePath`)
+ *
+ * All five callers MUST go through here, so the on-disk filename and the
+ * m3u8 entry always agree (AC2 / AC6).
+ */
+export function resolveTrackDestinationPath(
+  input: ResolveTrackDestinationPathInput,
+): ResolveTrackDestinationPathResult {
+  const platform = input.platform ?? input.options.platform;
+  const filesystemType = input.filesystemType ?? input.options.filesystemType;
+  const options = { ...input.options, platform, filesystemType };
+
+  const basename = buildTrackBasename(input.track, {
+    convertToMp3: options.convertToMp3,
+    platform,
+    filesystemType,
+  });
+
+  const isMaxPath = isMaxPathTarget(platform, filesystemType);
+  const dirWithSep = input.outputDir.endsWith('/') ? input.outputDir : `${input.outputDir}/`;
+  const finalBasename = isMaxPath ? shrinkBasenameToMaxPath(basename, dirWithSep) : basename;
+  const shortened = finalBasename !== basename;
+
+  const outputPath = `${dirWithSep}${finalBasename}`;
+
+  // relativePath mirrors the on-disk filename inside the same directory
+  // tree the file write uses. Re-derive the tree from `track.path` and
+  // `serverRootPath`, then swap the LAST segment (the basename) for the
+  // (possibly shortened) one above. The m3u8 generation MUST consume
+  // this verbatim — no extension swap, no per-component sanitize of its
+  // own — so AC2 "m3u8 entry points at an existing file" holds.
+  //
+  // Empty `serverRootPath` matches the `generateM3u8Files` skip-the-entry
+  // behaviour: legacy records with `serverRootPath = NULL` cannot produce
+  // a meaningful m3u8 entry.
+  let computedRelative = '';
+  if (input.serverRootPath && input.track.path) {
+    const rawRelative = getRelativePath(input.track.path, input.serverRootPath);
+    if (rawRelative) {
+      const segments = rawRelative.split('/');
+      // Per-component sanitization is already inside buildTrackBasename, so
+      // the directory segments only need `name`-level cleanup to stay
+      // matching `getOutputDir`'s output.
+      const dirSegments = segments
+        .slice(0, -1)
+        .map((s) => sanitizePathComponent(s, { platform, filesystem: filesystemType }));
+      computedRelative = [...dirSegments, finalBasename].join('/');
+    }
+  }
+
+  return {
+    outputPath,
+    outputFilename: finalBasename,
+    relativePath: computedRelative,
+    shortened,
+  };
+}
+
 export function estimateOutputBytes(
   track: { format: string; size?: number; bitrate?: number },
   options: {
@@ -1022,8 +1281,17 @@ class SyncCoreImpl {
 
     const willConvert = options.convertToMp3 === true && needsConversion(track, targetBitrateKbps);
     const coverArtMode = options.coverArtMode ?? 'embed';
-    const outputFilename = this.resolveCanonicalFilename(track, options);
-    const outputPath = `${outputDir}/${outputFilename}`;
+    // ORAIN-0501: route the file write + the m3u8 entry through one
+    // function so MAX_PATH truncation and per-component sanitization
+    // cannot drift between them (AC2 / AC6).
+    const { outputFilename, outputPath } = resolveTrackDestinationPath({
+      track,
+      outputDir,
+      serverRootPath: this.serverRootPath ?? '',
+      options,
+      platform: this.platform,
+      filesystemType: options.filesystemType ?? 'unknown',
+    });
     const trackMeta = this.buildMetadata(track);
     const currentHash = computeMetadataHash(trackMeta);
     const encodedBitrate = willConvert ? (options.bitrate ?? '192k') : null;
@@ -2497,11 +2765,18 @@ class SyncCoreImpl {
               filesystemType,
               rootPathForDiff,
             );
-            const outputFilename = this.resolveCanonicalFilename(
-              { ...track, path: serverPathForDiff },
-              resolvedOptions,
-            );
-            const expectedPath = `${outputDir}/${outputFilename}`;
+            // ORAIN-0501: route through the same single function the
+            // file write uses, so the diff stays coherent with the
+            // on-disk file after MAX_PATH truncation (AC3 — the rename
+            // path picks up the diff rather than re-downloading).
+            const { outputPath: expectedPath } = resolveTrackDestinationPath({
+              track: { ...track, path: serverPathForDiff },
+              outputDir,
+              serverRootPath: rootPathForDiff,
+              options: resolvedOptions,
+              platform: this.platform,
+              filesystemType,
+            });
             if (synced.destinationPath !== expectedPath) {
               changes.push({
                 trackId: track.id,
@@ -2744,27 +3019,30 @@ class SyncCoreImpl {
         const lines = ['#EXTM3U'];
         for (const track of tracks) {
           if (!track.path || !this.serverRootPath) continue;
-          let relativePath = getRelativePath(track.path, this.serverRootPath);
+
+          // ORAIN-0501 AC6: route the m3u8 entry through the SAME function
+          // the file write uses (`resolveTrackDestinationPath`). The m3u8
+          // code MUST NOT call `sanitizePathComponent` or do its own
+          // extension swap — that was the source of the AC2 drift (long
+          // filename in file, long path in m3u8). Compute the per-track
+          // outputDir the same way the file write does (`getOutputDir`),
+          // then defer filename + sanitization + truncation to the shared
+          // helper. The `relativePath` field is what the m3u8 line writes.
+          const outputDir = this.getOutputDir(
+            track,
+            destinationPath,
+            options.preserveStructure ?? true,
+            options.filesystemType ?? 'unknown',
+          );
+          const { relativePath } = resolveTrackDestinationPath({
+            track,
+            outputDir,
+            serverRootPath: this.serverRootPath,
+            options,
+            platform: this.platform,
+            filesystemType: options.filesystemType ?? 'unknown',
+          });
           if (!relativePath) continue;
-
-          // Adjust extension if tracks were converted to MP3
-          if (options.convertToMp3 && !relativePath.toLowerCase().endsWith('.mp3')) {
-            relativePath = relativePath.replace(/\.[^.]+$/, '.mp3');
-          }
-
-          // Apply the same per-component sanitization used when writing files, so
-          // M3U8 entries match the actual paths on disk (critical for FAT32/exFAT/NTFS).
-          // Platform injection is required by ORAIN-0725 so win32 sanitizes even
-          // when filesystemType is 'unknown'.
-          const fs = options.filesystemType ?? 'unknown';
-          if (fs !== 'unknown' || this.platform === 'win32') {
-            relativePath = relativePath
-              .split('/')
-              .map((segment) =>
-                sanitizePathComponent(segment, { platform: this.platform, filesystem: fs }),
-              )
-              .join('/');
-          }
 
           const artistLabel = track.artists?.join(', ') ?? track.albumArtist ?? '';
           const displayName = artistLabel ? `${artistLabel} - ${track.name}` : track.name;
