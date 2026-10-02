@@ -43,7 +43,18 @@ export function SyncSuccessModal({
   onClose,
 }: SyncSuccessModalProps): JSX.Element {
   const [cta] = useState(() => CTAS[Math.floor(Date.now() / (24 * 60 * 60 * 1000)) % CTAS.length]);
-  const success = errors.length === 0 || tracksCopied > 0;
+  // ORAIN-0766 AC2: a third state — "completed with errors" — sits
+  // between the existing two. Without it, a sync that ended with a few
+  // failures but mostly succeeded (GitHub #27: 535 copied, 22.647
+  // up-to-date, 13 failed) was shown as "Sync failed", so the user
+  // assumed nothing synced.
+  //
+  //   - success         = no errors AND no failures → "Sync complete"
+  //   - partialSuccess  = at least one error AND (some copied OR up-to-date) → "Sync completed with errors"
+  //   - failed          = at least one error AND nothing copied nor up-to-date → "Sync failed"
+  const hasProgress = tracksCopied > 0 || tracksSkipped > 0;
+  const success = errors.length === 0;
+  const partialSuccess = errors.length > 0 && hasProgress;
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -87,15 +98,27 @@ export function SyncSuccessModal({
                 ? 'text-headline-md'
                 : // ORAIN-0752 AC1: red title so the failure state is
                   // unambiguous at a glance (contrast ≈ 4.8:1 on
-                  // surface_container_low #1a1a27).
+                  // surface_container_low #1a1a27). Shared by both
+                  // "completed with errors" and "failed" — both have
+                  // errors to acknowledge.
                   'text-headline-md text-error'
             }
           >
-            {success ? 'Sync complete' : 'Sync failed'}
+            {success
+              ? 'Sync complete'
+              : partialSuccess
+                ? // ORAIN-0766 AC1: third title for the partial-success state.
+                  'Sync completed with errors'
+                : 'Sync failed'}
           </h2>
         </div>
 
-        {success ? (
+        {success || partialSuccess ? (
+          // ORAIN-0766 AC1: counters block is shared between "Sync
+          // complete" (success) and "Sync completed with errors"
+          // (partialSuccess). The Failed count is always shown when
+          // errors is non-empty, so the user can read at a glance how
+          // many tracks failed alongside how many synced.
           <div className="text-body-md text-on_surface_variant space-y-1 mb-5">
             {tracksCopied > 0 && (
               <p>
@@ -137,10 +160,14 @@ export function SyncSuccessModal({
               </p>
             )}
           </div>
-        ) : (
-          // ORAIN-0734: full scrollable list with per-track header + wrapped
-          // message. The container is constrained to max-h-80 + overflow-y-auto
-          // so the modal never grows past the viewport's 90% cap.
+        ) : null}
+
+        {(partialSuccess || (!success && errors.length > 0)) && (
+          // ORAIN-0766 AC1: in partial-success the error list is shown
+          // BELOW the counters. In the pure-failed state, it is the only
+          // content (no counters). The container is constrained to
+          // max-h-80 + overflow-y-auto so the modal never grows past
+          // the viewport's 90% cap (ORAIN-0734).
           <div
             data-testid="sync-errors-list"
             className="text-body-md text-error max-h-80 overflow-y-auto mb-5 pr-1"

@@ -277,14 +277,49 @@ export function useSync({
         // Pass current coverArtMode to avoid stale ref in revalidateDevice
         void revalidateDevice({ coverArtMode });
       } else {
-        setSyncSuccessData({
-          tracksCopied: 0,
-          tracksSkipped: 0,
-          tracksRetagged: 0,
-          lyricsAdded: 0,
-          removed: 0,
-          errors: result.errors,
-        });
+        // ORAIN-0766 AC4: sync-core sets `success=false` whenever ANY track
+        // errored (sync-core.ts:654 — `success: errors.length === 0`). The
+        // pre-fix code zeroed all counters here, so a sync that ended with
+        // "535 copied, 22.647 up-to-date, 13 failed" (GitHub #27) was
+        // reported as a total failure. Distinguish three failure modes:
+        //
+        //   - partialSuccess: success=false BUT some progress was made
+        //     (copied OR up-to-date > 0). Surface the real counters, refresh
+        //     the synced-items cache so library indicators update, and
+        //     revalidate out-of-sync badges. The popup will render the
+        //     "Sync completed with errors" state (modal:46).
+        //   - pure failure with a per-track error: some track errored but
+        //     none copied AND none up-to-date. Counts are zero, refresh is
+        //     pointless — but show the modal so the user can read the error.
+        //   - global error (trackName=''): no per-track progress possible,
+        //     keep the existing pure-failure shape (zero counters, no
+        //     refresh) so a "destination unreachable" doesn't silently
+        //     overwrite the cache.
+        const hasProgress = (result.tracksCopied ?? 0) > 0 || (result.tracksSkipped ?? 0) > 0;
+
+        if (hasProgress) {
+          const updatedItems = await window.api.getSyncedItems(syncFolder);
+          setPreviouslySyncedItems(updatedItems);
+          setSyncSuccessData({
+            tracksCopied: result.tracksCopied,
+            tracksSkipped: result.tracksSkipped ?? 0,
+            tracksRetagged: result.tracksRetagged ?? 0,
+            lyricsAdded: result.lyricsAdded,
+            removed: toDeleteIds.length,
+            errors: result.errors,
+            lyricsMode,
+          });
+          void revalidateDevice({ coverArtMode });
+        } else {
+          setSyncSuccessData({
+            tracksCopied: 0,
+            tracksSkipped: 0,
+            tracksRetagged: 0,
+            lyricsAdded: 0,
+            removed: 0,
+            errors: result.errors,
+          });
+        }
       }
     } catch (error: unknown) {
       unsubscribe?.();

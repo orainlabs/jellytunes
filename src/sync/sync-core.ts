@@ -871,6 +871,16 @@ class SyncCoreImpl {
         if (result.processed) {
           stats.itemsProcessed++;
         }
+        // ORAIN-0766 AC3: bump itemsSkipped whenever processTrack reports
+        // the track was up-to-date (existing file matched size/metadata, or
+        // synced record already pointed at the destination). Without this
+        // line `stats.itemsSkipped` stayed at zero forever, which made the
+        // renderer always show "Skipped (up-to-date): 0" — even when the
+        // sync was almost entirely an up-to-date pass (ORAIN-0766 scenario:
+        // 22.647 up-to-date, 535 copied, 13 failed).
+        if (result.skipped) {
+          stats.itemsSkipped++;
+        }
         statsRetagged += result.retagged ? 1 : 0;
         statsMoved += result.moved ? 1 : 0;
         lyricsAdded += result.lyricsAdded ?? 0;

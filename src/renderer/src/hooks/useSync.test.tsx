@@ -360,6 +360,170 @@ describe('useSync', () => {
     });
   });
 
+  // ===========================================================================
+  // ORAIN-0766 — partial-success sync (GitHub issue #27):
+  // sync-core sets `success=false` whenever ANY track errored (line 654:
+  // `success: errors.length === 0`). Without the AC4 fix the !result.success
+  // branch in useSync.ts zeros the counter and skips getSyncedItems /
+  // revalidateDevice, so:
+  //   - The popup shows "Sync completed with errors" but ALL counters are 0
+  //     (the GitHub #27 confusion, end-state).
+  //   - Library indicators stay stale because the synced-items cache is
+  //     never refreshed after a partial sync.
+  // ===========================================================================
+  describe('ORAIN-0766 — partial-success sync', () => {
+    it('AC4 — partial-success (some tracks copied, some failed) keeps real counts in syncSuccessData', async () => {
+      // success=false but tracksCopied=535 + tracksSkipped=22647 (GitHub #27)
+      const errorApi = createMockApi({
+        startSync2: vi.fn().mockResolvedValue({
+          success: false,
+          tracksCopied: 535,
+          tracksSkipped: 22647,
+          tracksRetagged: 0,
+          tracksFailed: ['track-failing'],
+          errors: [
+            { trackName: 'Track A', message: 'permission denied' },
+            { trackName: 'Track B', message: 'disk full' },
+          ],
+        }),
+      });
+      Object.defineProperty(window, 'api', { value: errorApi, writable: true });
+
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1']),
+        selectedArtists: new Set(['artist-1']),
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+      await act(async () => {
+        await result.current.executeSyncNow();
+      });
+
+      // AC4: real counts preserved, NOT zeroed by the !success branch.
+      expect(result.current.syncSuccessData).not.toBeNull();
+      expect(result.current.syncSuccessData?.tracksCopied).toBe(535);
+      expect(result.current.syncSuccessData?.tracksSkipped).toBe(22647);
+      expect(result.current.syncSuccessData?.errors).toHaveLength(2);
+    });
+
+    it('AC4 — partial-success refreshes the synced-items cache so library indicators update', async () => {
+      // setPreviouslySyncedItems receives the post-sync list, mirroring the
+      // success-branch behaviour at useSync.ts:265.
+      const refreshed = [{ id: 'artist-1', name: 'The Beatles', type: 'artist' as const }];
+      const errorApi = createMockApi({
+        startSync2: vi.fn().mockResolvedValue({
+          success: false,
+          tracksCopied: 535,
+          tracksSkipped: 22647,
+          tracksFailed: ['t'],
+          errors: [{ trackName: 'Track A', message: 'permission denied' }],
+        }),
+        getSyncedItems: vi.fn().mockResolvedValue(refreshed),
+      });
+      Object.defineProperty(window, 'api', { value: errorApi, writable: true });
+
+      const setPreviouslySyncedItems = vi.fn();
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1']),
+        selectedArtists: new Set(['artist-1']),
+        setPreviouslySyncedItems,
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+      await act(async () => {
+        await result.current.executeSyncNow();
+      });
+
+      // AC4: getSyncedItems was queried and its result pushed into the
+      // parent state, so the library view re-renders the synced indicators.
+      expect(errorApi.getSyncedItems).toHaveBeenCalledWith('/Volumes/USB');
+      expect(setPreviouslySyncedItems).toHaveBeenCalledWith(refreshed);
+    });
+
+    it('AC4 — partial-success revalidates out-of-sync indicators in the background', async () => {
+      // Without revalidateDevice the out-of-sync badges stay stale after a
+      // partial sync (same risk as the success branch, which already calls
+      // it on line 278).
+      const revalidateDevice = vi.fn().mockResolvedValue(undefined);
+      const errorApi = createMockApi({
+        startSync2: vi.fn().mockResolvedValue({
+          success: false,
+          tracksCopied: 535,
+          tracksSkipped: 22647,
+          tracksFailed: ['t'],
+          errors: [{ trackName: 'Track A', message: 'permission denied' }],
+        }),
+      });
+      Object.defineProperty(window, 'api', { value: errorApi, writable: true });
+
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1']),
+        selectedArtists: new Set(['artist-1']),
+        revalidateDevice,
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+      await act(async () => {
+        await result.current.executeSyncNow();
+      });
+
+      expect(revalidateDevice).toHaveBeenCalled();
+    });
+
+    it('AC4 — pure-failure (global error, no progress) still zeros counters and skips cache refresh', async () => {
+      // A global error (trackName='', e.g. "destination unreachable") with
+      // zero progress must NOT trigger getSyncedItems: there is nothing to
+      // record on the device, so refreshing the cache would silently lie.
+      const errorApi = createMockApi({
+        startSync2: vi.fn().mockResolvedValue({
+          success: false,
+          tracksCopied: 0,
+          tracksSkipped: 0,
+          tracksFailed: [],
+          errors: [{ trackName: '', message: 'Sync was cancelled by user' }],
+        }),
+      });
+      Object.defineProperty(window, 'api', { value: errorApi, writable: true });
+
+      const setPreviouslySyncedItems = vi.fn();
+      const revalidateDevice = vi.fn().mockResolvedValue(undefined);
+      const props = {
+        ...defaultProps,
+        selectedTracks: new Set(['artist-1']),
+        selectedArtists: new Set(['artist-1']),
+        setPreviouslySyncedItems,
+        revalidateDevice,
+      };
+      const { result } = renderHook(() => useSync(props));
+
+      await act(async () => {
+        await result.current.handleSelectSyncFolder('/Volumes/USB');
+      });
+      await act(async () => {
+        await result.current.executeSyncNow();
+      });
+
+      // Pure failure path: counts zero, no cache refresh, no revalidate.
+      expect(result.current.syncSuccessData?.tracksCopied).toBe(0);
+      expect(result.current.syncSuccessData?.tracksSkipped).toBe(0);
+      expect(errorApi.getSyncedItems).not.toHaveBeenCalled();
+      expect(setPreviouslySyncedItems).not.toHaveBeenCalled();
+      expect(revalidateDevice).not.toHaveBeenCalled();
+    });
+  });
+
   describe('overlapping-selection deduplication', () => {
     /**
      * Regression test for ORAIN-0707.

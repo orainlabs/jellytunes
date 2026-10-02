@@ -163,7 +163,12 @@ describe('SyncSuccessModal', () => {
     render(
       <SyncSuccessModal
         {...defaultProps}
+        // ORAIN-0766: a "pure failed" sync has no progress (neither copied
+        // nor up-to-date). With tracksSkipped=0 here, the modal renders
+        // the "Sync failed" title (not the partial-success one).
         tracksCopied={0}
+        tracksSkipped={0}
+        tracksRetagged={0}
         errors={[{ trackName: 'T', message: 'oops' }]}
       />,
     );
@@ -206,5 +211,114 @@ describe('SyncSuccessModal', () => {
       expect(m.className).toMatch(/text-on_surface_variant/);
       expect(m.className).not.toMatch(/text-error/);
     }
+  });
+});
+
+// =============================================================================
+// ORAIN-0766 — partial-success modal state
+// AC1: when a sync ends with at least one track copied OR up-to-date AND
+//      at least one failure, the popup title is "Sync completed with errors"
+//      and it surfaces BOTH the counters (Copied, Up to date, Failed) AND
+//      the error list. Without this state, the user reads "Sync failed"
+//      and assumes nothing synced (the GitHub #27 confusion).
+// AC2: "Sync failed" only when no track copied nor up-to-date, OR a global
+//      error (destination unreachable, server fetch failure).
+// =============================================================================
+describe('ORAIN-0766 — partial-success state', () => {
+  it('AC1 — partial sync (some tracks copied, some failed) shows "Sync completed with errors" title AND counters AND errors', () => {
+    render(
+      <SyncSuccessModal
+        {...defaultProps}
+        tracksCopied={535}
+        tracksSkipped={22647}
+        tracksRetagged={0}
+        lyricsAdded={0}
+        removed={0}
+        errors={[
+          { trackName: 'Track A', message: 'permission denied' },
+          { trackName: 'Track B', message: 'disk full' },
+        ]}
+      />,
+    );
+
+    // AC1: the title is the new "completed with errors" string, NOT
+    // "Sync complete" or "Sync failed".
+    expect(
+      screen.getByRole('heading', { name: /sync completed with errors/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^sync complete$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^sync failed$/i })).not.toBeInTheDocument();
+
+    // AC1: the counters are visible (Copied, Up to date, Failed)
+    expect(screen.getByText(/copied:/i)).toBeInTheDocument();
+    expect(screen.getByText('535 tracks')).toBeInTheDocument();
+    expect(screen.getByText(/skipped \(up-to-date\):/i)).toBeInTheDocument();
+    expect(screen.getByText('22647')).toBeInTheDocument();
+    expect(screen.getByText(/errors:/i)).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument();
+
+    // AC1: the error list is also visible below the counters
+    expect(screen.getByText('Track A')).toBeInTheDocument();
+    expect(screen.getByText('permission denied')).toBeInTheDocument();
+    expect(screen.getByText('Track B')).toBeInTheDocument();
+    expect(screen.getByText('disk full')).toBeInTheDocument();
+  });
+
+  it('AC1 — partial sync (some tracks up-to-date, some failed, none copied) also shows "Sync completed with errors"', () => {
+    // Edge: tracksCopied=0 but tracksSkipped>0 → still a partial sync.
+    render(
+      <SyncSuccessModal
+        {...defaultProps}
+        tracksCopied={0}
+        tracksSkipped={100}
+        tracksRetagged={0}
+        lyricsAdded={0}
+        removed={0}
+        errors={[{ trackName: 'Track X', message: 'oops' }]}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { name: /sync completed with errors/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('AC2 — "Sync failed" stays when no track copied AND no track up-to-date (pure failure)', () => {
+    render(
+      <SyncSuccessModal
+        {...defaultProps}
+        tracksCopied={0}
+        tracksSkipped={0}
+        tracksRetagged={0}
+        lyricsAdded={0}
+        removed={0}
+        errors={[
+          { trackName: 'Track A', message: 'permission denied' },
+          { trackName: 'Track B', message: 'disk full' },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: /sync failed/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: /sync completed with errors/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC2 — "Sync failed" stays on a global error (trackName="" with no counter progress)', () => {
+    // Global sync failure: destination unreachable, server fetch error.
+    render(
+      <SyncSuccessModal
+        {...defaultProps}
+        tracksCopied={0}
+        tracksSkipped={0}
+        tracksRetagged={0}
+        lyricsAdded={0}
+        removed={0}
+        errors={[{ trackName: '', message: 'Sync was cancelled by user' }]}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: /sync failed/i })).toBeInTheDocument();
   });
 });
