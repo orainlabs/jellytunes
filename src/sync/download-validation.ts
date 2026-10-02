@@ -189,7 +189,17 @@ export function validateDownloadSize(input: DownloadSizeInput): DownloadSizeResu
   // AC2(a): Content-Length + identity encoding → strict equality.
   if (typeof contentLength === 'number' && Number.isFinite(contentLength)) {
     if (contentLength === 0) {
-      return { ok: false, reason: 'Incomplete download (0 of 0 bytes)' };
+      // ORAIN-0767 AC3: zero-byte is the case the reporter saw on the
+      // `Bomb (1)` track. The previous wording (`Incomplete download (0
+      // of 0 bytes)`) was true but useless — the user cannot act on
+      // it. Jellyfin returns Content-Length: 0 when the file is gone
+      // server-side but the metadata index still serves the track id.
+      // JellyTunes cannot fix the server side; we explain what to do.
+      return {
+        ok: false,
+        reason:
+          "Server returned an empty file. The file may have been removed from the Jellyfin library — try rescanning the library in Jellyfin, or check the file's status on the server.",
+      };
     }
     if (receivedBytes !== contentLength) {
       return {

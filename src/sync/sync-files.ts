@@ -491,8 +491,70 @@ export function lastFFmpegError(stderr: string, maxLength = 200): string | undef
  */
 export function ffmpegErrorMessage(code: number, stderr: string): string {
   const rawTail = lastFFmpegError(stderr);
-  const tail = rawTail?.replace(/(?:[a-zA-Z]:)?[\\/](?:[^\\/:"']*[\\/])*[^\\/:"']*/g, '<path>');
-  return tail ? `FFmpeg exited with code ${code}: ${tail}` : `FFmpeg exited with code ${code}`;
+  // ORAIN-0767 AC2: the previous scrub anchored at any `/` or `\` and
+  // greedily consumed bracketed-hex prefixes like `[out#0/mp3 @ 0x…]`
+  // because the `/` inside `[out#0/mp3 @ 0x...]` was treated as a path
+  // start. Rewrite the scrub so it only matches a path-start that is
+  // either:
+  //   - at the start of the string, OR
+  //   - preceded by whitespace, OR
+  //   - a Windows drive letter (`C:` immediately before).
+  // The old "match anywhere `/` or `\`" semantics is what produced the
+  // regression: `[out#0/mp3` contained `/` and the scrub ate the prefix.
+  //
+  // We then KEEP the ORAIN-0752 AC4 segment character class
+  // (`[^\\/:"']` + whitespace tolerated) so `C:\Program Files\…` still
+  // collapses to a single `<path>`.
+  //
+  // Implementation: split into two passes. First pass replaces drive-
+  // letter paths (`C:\…`, `C:/…`, `\\server\share\…`). Second pass
+  // replaces POSIX-style `/…` paths but only at start-of-string or
+  // after whitespace. We anchor the second pass with a regex that
+  // consumes the boundary character into the match so the substitution
+  // preserves any trailing whitespace that follows.
+  if (!rawTail) {
+    return `FFmpeg exited with code ${code}`;
+  }
+  let scrubbed = rawTail;
+  // Drive-letter or UNC path: matches anywhere in the string because
+  // the `C:` / `\\` prefix is itself a path signal that cannot occur in
+  // the middle of a token like `[out#0/mp3`. `C:` (Windows) and `\\`
+  // (UNC) are unambiguous path starts.
+  scrubbed = scrubbed.replace(
+    /(?:[A-Za-z]:[\\/][^\\/:"']*(?:[\\/][^\\/:"']*)*|\\\\[^\\/:"']*(?:[\\/][^\\/:"']*)*)/g,
+    '<path>',
+  );
+  // POSIX absolute path: anchor at start-of-string OR after whitespace.
+  // We rebuild the boundary character back so we don't lose it. The
+  // trailing segment matcher consumes whitespace via `[^\\/:"']` so
+  // `Program Files`-style paths collapse to one `<path>`.
+  scrubbed = scrubbed.replace(
+    /(^|\s)(\/[^\\/:"']*(?:[\\/][^\\/:"']*)*)/g,
+    (_match, boundary) => `${boundary}<path>`,
+  );
+  // ORAIN-0767 AC2 explicit: the user-facing message must never be ONLY
+  // `<path>` (the spec is explicit on this point). If the scrub
+  // collapsed the tail to just `<path>` we fall back to a generic
+  // message that names FFmpeg but does not pretend to know more than we
+  // do.
+  // If the scrub collapsed the tail to just `<path>`, fall back to a
+  // generic message that names FFmpeg but does not pretend we know
+  // more than we do.
+  if (!scrubbed || scrubbed.trim() === '<path>') {
+    return `FFmpeg exited with code ${code}`;
+  }
+  return `FFmpeg exited with code ${code}: ${scrubbed}`;
+}
+
+/**
+ * Strip a leading `Download failed:` prefix from a message that was
+ * already prefixed by the throw site (e.g. `sync-api.ts:670`). The catch
+ * site in `sync-core.ts` then prepends the prefix exactly once, no
+ * matter who threw. Used by ORAIN-0767 AC1 to fix the
+ * "Download failed: Download failed: 404 Not Found" double-prefix.
+ */
+export function syncErrorMessage(message: string): string {
+  return message.replace(/^Download failed:\s*/, '');
 }
 
 export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {

@@ -167,14 +167,22 @@ describe('validateDownloadSize — AC2(a) Content-Length + identity', () => {
     expect(r.ok).toBe(false);
     expect((r as { reason: string }).reason).toBe('Incomplete download (800 of 1024 bytes)');
   });
-  it('fails when contentLength is 0 (zero-length is not audio)', () => {
+  it('fails when contentLength is 0 with an actionable, non-"0 of 0" message (ORAIN-0767 AC3)', () => {
     const r = validateDownloadSize({
       contentLength: 0,
       contentEncoding: 'identity',
       receivedBytes: 0,
     });
     expect(r.ok).toBe(false);
-    expect((r as { reason: string }).reason).toMatch(/incomplete|0 of 0/i);
+    const reason = (r as { reason: string }).reason;
+    // ORAIN-0767 AC3: the previous "Incomplete download (0 of 0 bytes)"
+    // wording was technically correct but gave the user no clue about
+    // what to do. The new message says the server returned an empty file
+    // AND suggests rescanning the Jellyfin library. The literal "0 of 0"
+    // is gone — replaced by "empty file".
+    expect(reason.toLowerCase()).toContain('empty');
+    expect(reason.toLowerCase()).toMatch(/rescan|library|jellyfin/);
+    expect(reason).not.toMatch(/0 of 0/);
   });
   it('treats missing contentEncoding as identity (proxy default)', () => {
     expect(validateDownloadSize({ contentLength: 1024, receivedBytes: 1024 })).toEqual({

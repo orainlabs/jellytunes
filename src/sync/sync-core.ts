@@ -62,6 +62,7 @@ import {
   type FileSystem,
   type AudioConverter,
   mergeMetadata,
+  syncErrorMessage,
 } from './sync-files';
 
 import {
@@ -1835,7 +1836,19 @@ class SyncCoreImpl {
             const sanitizedMessage = rawMessage
               .replace(/(?:[a-zA-Z]:)?[\\/](?:[^\\/:"']*[\\/])*[^\\/:"']*/g, '<path>')
               .slice(0, 200);
-            phaseError = new SyncPhaseError('download', `Download failed: ${sanitizedMessage}`);
+            // ORAIN-0767 AC1: a single "Download failed:" prefix regardless
+            // of source. The ApiError thrown at sync-api.ts:670 already
+            // starts with that prefix; `syncErrorMessage` strips it before
+            // we prepend it back. For ApiError with statusCode === 404,
+            // append an actionable Jellyfin-rescan hint: the file was
+            // renamed/removed server-side without Jellyfin having
+            // rescanned, and JellyTunes cannot fix it — only explain it.
+            const deduped = syncErrorMessage(sanitizedMessage);
+            const hint =
+              error instanceof ApiError && error.statusCode === 404
+                ? ' The file is no longer on the Jellyfin server — rescan your Jellyfin library to refresh its file index.'
+                : '';
+            phaseError = new SyncPhaseError('download', `Download failed: ${deduped}${hint}`);
           }
         }
       }
