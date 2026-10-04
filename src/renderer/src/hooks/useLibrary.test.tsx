@@ -14,6 +14,10 @@ const mockWindowApi = {
   logError: vi.fn(),
   logWarn: vi.fn(),
   logInfo: vi.fn(),
+  // ORAIN-0770 AC2: useLibrary.loadStats calls window.api.reportServerInfo
+  // after every load. Mock it here so the test does not throw on the
+  // missing method.
+  reportServerInfo: vi.fn(async () => undefined),
 };
 Object.defineProperty(window, 'api', { value: mockWindowApi, writable: true });
 

@@ -115,6 +115,29 @@ export interface SyncApi {
   /** Fetch ReplayGain normalization data for a track (returns data or null if unavailable) */
   fetchReplayGain(itemId: string): Promise<{ trackGain: string; trackPeak: string } | null>;
   fetchLyrics(itemId: string): Promise<string | null>;
+
+  /**
+   * ORAIN-0770 AC2: fetch the Jellyfin server version from
+   * `/System/Info/Public`. Returns the version string when present,
+   * or `null` when the field is missing or the endpoint is unreachable
+   * (AC3 graceful degradation — must never throw).
+   */
+  getServerVersion(): Promise<string | null>;
+
+  /**
+   * ORAIN-0770 AC2: fetch the global library totals (Artists, Album
+   * Artists, Albums, audio tracks) from `/Users/{userId}/Items/Counts`.
+   * Returns `null` for individual fields when the server omits them
+   * (so the [server-info] line renders `unknown` rather than `0`).
+   * Returns the all-null payload when the endpoint is unreachable
+   * (AC3 must not break library load).
+   */
+  getServerLibraryStats(): Promise<{
+    artists: number | null;
+    albumArtists: number | null;
+    albums: number | null;
+    audioTracks: number | null;
+  }>;
 }
 
 /**
@@ -648,6 +671,83 @@ class SyncApiImpl implements SyncApi {
   }
 
   /**
+   * ORAIN-0770 AC2: server version from `/System/Info/Public`.
+   * The endpoint is unauthenticated, so we deliberately do not pass
+   * the auth header — that matches Jellyfin's contract and lets
+   * servers with restrictive auth still answer the version probe.
+   *
+   * AC3: any thrown error (network, 4xx, 5xx, JSON parse) is caught
+   * and converted to `null` so the caller (main/index.ts) can emit
+   * the [server-info] line with `jellyfinVersion=unknown` and keep
+   * going. Throwing here would break the library load and the sync.
+   */
+  async getServerVersion(): Promise<string | null> {
+    try {
+      const url = `${this.baseUrl}/System/Info/Public`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+      try {
+        // No Authorization header — the public endpoint intentionally
+        // does not require it. Sending the token would still work but
+        // it would log a token-bearing request on the server side.
+        const response = await this.fetchFn(url, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (!response.ok) return null;
+        const data = (await response.json()) as { Version?: unknown };
+        return typeof data.Version === 'string' && data.Version.length > 0 ? data.Version : null;
+      } catch (_e) {
+        clearTimeout(timeoutId);
+        return null;
+      }
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  /**
+   * ORAIN-0770 AC2: library totals from `/Users/{userId}/Items/Counts`.
+   * Differs from the existing `getLibraryStats()` in two ways:
+   *   1. Returns `null` for missing fields (instead of 0) so the
+   *      [server-info] line renders `unknown` for a partial response
+   *      rather than masking the gap as zero.
+   *   2. Includes the `AlbumArtistCount` field, which the existing
+   *      `getLibraryStats()` does not surface.
+   *
+   * AC3: any thrown error (network, 4xx, 5xx, JSON parse) is caught
+   * and converted to an all-null payload so the library load keeps
+   * going. The renderer needs to be able to call `getLibrary`
+   * even when the counts endpoint is flaky.
+   */
+  async getServerLibraryStats(): Promise<{
+    artists: number | null;
+    albumArtists: number | null;
+    albums: number | null;
+    audioTracks: number | null;
+  }> {
+    const fallback = { artists: null, albumArtists: null, albums: null, audioTracks: null };
+    try {
+      const endpoint = `/Users/${this.userId}/Items/Counts`;
+      const data = await this.request<{
+        ArtistCount?: unknown;
+        AlbumArtistCount?: unknown;
+        AlbumCount?: unknown;
+        SongCount?: unknown;
+      }>(endpoint);
+      return {
+        artists: typeof data.ArtistCount === 'number' ? data.ArtistCount : null,
+        albumArtists: typeof data.AlbumArtistCount === 'number' ? data.AlbumArtistCount : null,
+        albums: typeof data.AlbumCount === 'number' ? data.AlbumCount : null,
+        audioTracks: typeof data.SongCount === 'number' ? data.SongCount : null,
+      };
+    } catch (_e) {
+      return fallback;
+    }
+  }
+
+  /**
    * Shared logic for downloading an item — fetches the raw HTTP response.
    * Handles URL construction, auth headers, timeout, and error normalization.
    */
@@ -1083,6 +1183,16 @@ export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
     getCoverArt: async () => Buffer.from(''),
     fetchLyrics: async () => null,
     fetchReplayGain: async () => null,
+    // ORAIN-0770: default mock returns null for everything. Tests that
+    // exercise the [server-info] emission pass overrides that pin the
+    // exact payload they want surfaced.
+    getServerVersion: async () => null,
+    getServerLibraryStats: async () => ({
+      artists: null,
+      albumArtists: null,
+      albums: null,
+      audioTracks: null,
+    }),
   };
 
   return { ...defaultMock, ...overrides };

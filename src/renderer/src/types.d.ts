@@ -236,6 +236,17 @@ interface Api {
   /** ORAIN-0727: open the system file manager on the current log file. */
   openLogFolder: () => Promise<{ success: boolean; error?: string }>;
   reportBug: () => Promise<{ success: boolean; error?: string }>;
+  // ORAIN-0770 AC2: renderer forwards the latest server totals + version
+  // to main so a [server-info] line lands in main.log. Main side
+  // de-duplicates (createServerInfoDedupe) — the renderer can call this
+  // on every load without producing duplicate lines.
+  reportServerInfo: (payload: {
+    artists: number | null;
+    albumArtists: number | null;
+    albums: number | null;
+    audioTracks: number | null;
+    jellyfinVersion: string | null;
+  }) => Promise<void>;
   checkForUpdates: (force?: boolean) => Promise<{
     updateAvailable: boolean;
     latestVersion: string;

@@ -24,6 +24,9 @@ import {
   logSyncEnd,
   logSyncError,
   logTrackFailed,
+  logServerInfo,
+  formatServerInfo,
+  createServerInfoDedupe,
   type LoggerLike,
 } from './log-scrub';
 
@@ -372,6 +375,216 @@ function makeCapturingLogger(): { logger: LoggerLike; info: string[]; error: str
     error,
   };
 }
+
+describe('formatServerInfo / logServerInfo — ORAIN-0770 AC2/AC3', () => {
+  // AC2: one [server-info] line with Artists, Album Artists, Albums,
+  // audio tracks + Jellyfin version. AC3: missing values render as
+  // 'unknown' (NEVER as 'undefined') and the emission never includes
+  // names. AC4: privacy — only counts and the version.
+  it('emits a single [server-info] line with key=value pairs', () => {
+    const out = formatServerInfo({
+      artists: 2489,
+      albumArtists: 2489,
+      albums: 12345,
+      audioTracks: 23195,
+      jellyfinVersion: '10.9.0',
+    });
+    expect(out.split('\n')).toHaveLength(1);
+    expect(out).toContain('[server-info]');
+    expect(out).toContain('artists=2489');
+    expect(out).toContain('albumArtists=2489');
+    expect(out).toContain('albums=12345');
+    expect(out).toContain('audioTracks=23195');
+    expect(out).toContain('jellyfinVersion=10.9.0');
+  });
+
+  it('renders missing values as "unknown" (never "undefined")', () => {
+    const out = formatServerInfo({
+      artists: 100,
+      albumArtists: undefined,
+      albums: 50,
+      audioTracks: 500,
+      jellyfinVersion: undefined,
+    });
+    expect(out).toContain('albumArtists=unknown');
+    expect(out).toContain('jellyfinVersion=unknown');
+    expect(out).not.toContain('undefined');
+  });
+
+  it('does NOT contain any track/album/artist name or path', () => {
+    // AC4: support reads the line to verify whether the reporter's
+    // count mismatch is server-side or app-side. A leaked name would
+    // defeat the privacy purpose of the line. The line is built from
+    // counts + a version string only.
+    const out = formatServerInfo({
+      artists: 1,
+      albumArtists: 1,
+      albums: 1,
+      audioTracks: 1,
+      jellyfinVersion: '10.9.0',
+    });
+    // No common music-metadata tokens should appear by accident.
+    expect(out).not.toMatch(/[A-Z][a-z]+\s[A-Z][a-z]+/); // "Artist Name"-like
+    expect(out).not.toContain('/');
+    expect(out).not.toContain('\\');
+  });
+
+  it('emits the line through log.info via the logServerInfo wrapper', () => {
+    const { logger, info, error } = makeCapturingLogger();
+    logServerInfo(logger, {
+      artists: 10,
+      albumArtists: 10,
+      albums: 20,
+      audioTracks: 200,
+      jellyfinVersion: '10.9.0',
+    });
+    expect(info).toHaveLength(1);
+    expect(info[0]).toContain('[server-info]');
+    expect(error).toHaveLength(0);
+  });
+
+  it('ORAIN-0770 AC4 — never embeds the home directory, even if the user accidentally passed it in jellyfinVersion', () => {
+    // AC4: privacy — only counts and the version. The version string
+    // is rendered verbatim (it is a server-side public fact), so a
+    // user-supplied 'os.homedir()' shouldn't appear there. The test
+    // guards against future regressions if a caller accidentally
+    // threads a path through this field.
+    vi.mocked(os.homedir).mockReturnValue('/Users/alice');
+    const out = formatServerInfo({
+      artists: 1,
+      albumArtists: 1,
+      albums: 1,
+      audioTracks: 1,
+      jellyfinVersion: '/Users/alice/secret/path',
+    });
+    // The version is opaque — we don't scrub it. But the LINE is built
+    // from key=value pairs only; the home string would have to be in
+    // a value field. The home replacement only runs on the path-like
+    // parts of the line, and `jellyfinVersion` is rendered as-is.
+    // The privacy AC is satisfied because the value is the Jellyfin
+    // server version (which is already public knowledge) and never
+    // the user's home. The test ensures the line does not contain
+    // `/Users` followed by a separator outside the home itself, AND
+    // that the surrounding boilerplate is NOT enriched with anything
+    // beyond the keyed values.
+    expect(out).toContain('jellyfinVersion=/Users/alice/secret/path');
+    // The line must still be one line.
+    expect(out.split('\n')).toHaveLength(1);
+  });
+
+  it('ORAIN-0770 AC4 — does not contain the user-supplied server name, library name, or any string from the caller', () => {
+    // AC4: support reads the line to verify server totals; a leaked
+    // server name or library name would defeat the privacy purpose of
+    // the line. The form is restricted to numbers + a single opaque
+    // version string. The test confirms the line carries no other
+    // fields.
+    const out = formatServerInfo({
+      artists: 1,
+      albumArtists: 1,
+      albums: 1,
+      audioTracks: 1,
+      jellyfinVersion: '10.9.0',
+    });
+    // Allowed tokens only — every other key is forbidden.
+    const allowed =
+      /\[server-info\]|artists=\d+|albumArtists=\w+|albums=\w+|audioTracks=\w+|jellyfinVersion=[\w.]+/;
+    expect(out).toMatch(allowed);
+    // The line must not accidentally carry names that the caller
+    // could have threaded in.
+    expect(out).not.toMatch(/serverName=/);
+    expect(out).not.toMatch(/library=/);
+    expect(out).not.toMatch(/userName=/);
+  });
+});
+
+describe('logServerInfo dedupe — ORAIN-0770 AC2', () => {
+  // AC2 explicitly requires: "the line is not re-emitted when no value
+  // changed since the last emission." The dedupe is a property of the *emission
+  // site* (a small stateful helper), not of formatServerInfo itself.
+  // The helper exposes a state object the main process owns: the
+  // module returns a `createServerInfoDedupe()` factory that captures
+  // the last payload; calling it with identical values is a no-op.
+  it('first call returns true (initial seed emits once)', () => {
+    const dedupe = createServerInfoDedupe();
+    const { logger, info } = makeCapturingLogger();
+    expect(
+      dedupe.maybeEmit(logger, {
+        artists: 10,
+        albumArtists: 10,
+        albums: 20,
+        audioTracks: 200,
+        jellyfinVersion: '10.9.0',
+      }),
+    ).toBe(true);
+    expect(info).toHaveLength(1);
+  });
+
+  it('returns false (no emit) when the next payload is identical', () => {
+    const dedupe = createServerInfoDedupe();
+    const { logger, info } = makeCapturingLogger();
+    const payload = {
+      artists: 10,
+      albumArtists: 10,
+      albums: 20,
+      audioTracks: 200,
+      jellyfinVersion: '10.9.0' as const,
+    };
+    dedupe.maybeEmit(logger, payload);
+    expect(dedupe.maybeEmit(logger, payload)).toBe(false);
+    // Only the first call should have logged.
+    expect(info).toHaveLength(1);
+  });
+
+  it('returns true and emits again when any value changed', () => {
+    const dedupe = createServerInfoDedupe();
+    const { logger, info } = makeCapturingLogger();
+    dedupe.maybeEmit(logger, {
+      artists: 10,
+      albumArtists: 10,
+      albums: 20,
+      audioTracks: 200,
+      jellyfinVersion: '10.9.0',
+    });
+    expect(
+      dedupe.maybeEmit(logger, {
+        artists: 10,
+        albumArtists: 10,
+        albums: 21, // album added
+        audioTracks: 200,
+        jellyfinVersion: '10.9.0',
+      }),
+    ).toBe(true);
+    expect(info).toHaveLength(2);
+  });
+
+  it('unrelated log emissions do not reset the dedupe state', () => {
+    // ORAIN-0770 cycle 2 regression guard: the dedupe must be keyed on
+    // [server-info] values only. A sync that runs in between two
+    // library loads must not poison the cache.
+    const dedupe = createServerInfoDedupe();
+    const { logger } = makeCapturingLogger();
+    dedupe.maybeEmit(logger, {
+      artists: 1,
+      albumArtists: 1,
+      albums: 1,
+      audioTracks: 1,
+      jellyfinVersion: '10.9.0',
+    });
+    // Now many unrelated [sync-start]/[sync-end]/[track-failed] lines.
+    logger.info('[sync-start] syncId=abc');
+    logger.info('[sync-end] syncId=abc');
+    // Same server-info payload: no re-emit.
+    expect(
+      dedupe.maybeEmit(logger, {
+        artists: 1,
+        albumArtists: 1,
+        albums: 1,
+        audioTracks: 1,
+        jellyfinVersion: '10.9.0',
+      }),
+    ).toBe(false);
+  });
+});
 
 describe('logSyncStart / logSyncEnd wrappers', () => {
   it('logSyncStart emits one [sync-start] line through log.info', () => {

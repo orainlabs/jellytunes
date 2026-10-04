@@ -26,6 +26,14 @@ export const URL_BUDGET = 6300;
 const SYNC_START_TAG = '[sync-start]';
 const SYNC_END_TAG = '[sync-end]';
 const TRACK_FAILED_TAG = '[track-failed]';
+// ORAIN-0770 AC5: the [server-info] line is captured into the
+// "Last sync" block right above the [sync-start] line, so support
+// reads the server totals immediately before the sync they describe.
+const SERVER_INFO_TAG = '[server-info]';
+// ORAIN-0770 AC5: when no [server-info] line precedes the chosen
+// [sync-start], the body shows this literal so support can tell a
+// missing-line from a successful empty payload.
+const SERVER_INFO_UNKNOWN = 'server-info: unknown';
 
 /**
  * Scrub the user's home directory out of ANY occurrence inside a full log
@@ -62,11 +70,24 @@ function scrubLine(line: string): string {
  * Each collected line is scrubbed via scrubLine so a legacy line that
  * still contains the user's home directory lands as `~` in the body.
  *
- * Returns `{ lines, hasEnd }`. `hasEnd` is `true` iff a [sync-end] for
- * the chosen syncId was found inside the slice; the body builder uses
- * it to decide whether to append `(sync did not finish)`.
+ * Returns `{ lines, hasEnd, serverInfoLine }`. `hasEnd` is `true` iff
+ * a [sync-end] for the chosen syncId was found inside the slice; the
+ * body builder uses it to decide whether to append `(sync did not
+ * finish)`. `serverInfoLine` is either the most recent [server-info]
+ * line that PRECEDED the chosen [sync-start], or `null` when no such
+ * line exists in the log (log rotated out, never emitted, etc.).
+ *
+ * ORAIN-0770 AC5: the [server-info] line is the only sync-context
+ * line we look for BEFORE the [sync-start] (everything before is
+ * historical noise). We walk backwards from the [sync-start] position
+ * and stop at the first [server-info] we see — that is, by
+ * construction, the most recent one.
  */
-export function extractLastSyncBlock(logLines: string[]): { lines: string[]; hasEnd: boolean } {
+export function extractLastSyncBlock(logLines: string[]): {
+  lines: string[];
+  hasEnd: boolean;
+  serverInfoLine: string | null;
+} {
   // Find the last line that contains the [sync-start] tag. The body of
   // the line (after the tag) starts with `syncId=<value>` — extract it
   // before scrubLine rewrites the path parts.
@@ -81,7 +102,21 @@ export function extractLastSyncBlock(logLines: string[]): { lines: string[]; has
     startSyncId = id;
     break;
   }
-  if (startIdx === -1) return { lines: [], hasEnd: false };
+  if (startIdx === -1) {
+    return { lines: [], hasEnd: false, serverInfoLine: null };
+  }
+
+  // ORAIN-0770 AC5: walk backwards from startIdx-1 and pick the FIRST
+  // [server-info] line we see. The first hit is the most recent one
+  // because we are walking towards the start of the log.
+  let serverInfoLine: string | null = null;
+  for (let i = startIdx - 1; i >= 0; i--) {
+    const line = logLines[i];
+    if (line.includes(SERVER_INFO_TAG)) {
+      serverInfoLine = scrubLine(line);
+      break;
+    }
+  }
 
   const collected: string[] = [];
   let hasEnd = false;
@@ -117,7 +152,17 @@ export function extractLastSyncBlock(logLines: string[]): { lines: string[]; has
     }
   }
 
-  return { lines: collected, hasEnd };
+  // ORAIN-0770 AC5: surface the captured [server-info] line as the
+  // FIRST entry of `lines` (when present) so `buildBugReportBody` can
+  // iterate `lines` and preserve the natural order: server-info,
+  // sync-start, ..., sync-end. The line is scrubbed via scrubLine
+  // already (see above) so legacy home-directory leaks are
+  // automatically redacted.
+  if (serverInfoLine !== null) {
+    collected.unshift(serverInfoLine);
+  }
+
+  return { lines: collected, hasEnd, serverInfoLine };
 }
 
 /**
@@ -227,7 +272,7 @@ export function buildBugReportBody(
   options: { logMissing?: boolean } = {},
 ): string {
   const logLines = logContent.split('\n').filter((l) => l.length > 0);
-  const { lines: syncLines, hasEnd } = extractLastSyncBlock(logLines);
+  const { lines: syncLines, hasEnd, serverInfoLine } = extractLastSyncBlock(logLines);
   const otherLines = pickRecentOtherErrors(logLines, syncLines);
 
   const excerptBudget = URL_BUDGET - BOILERPLATE.length - HANDLER_RESERVE;
@@ -235,6 +280,7 @@ export function buildBugReportBody(
   const excerpt = renderExcerpt({
     syncLines,
     hasEnd,
+    serverInfoLine,
     otherLines,
     logMissing: options.logMissing === true,
     budget: excerptBudget,
@@ -246,6 +292,13 @@ export function buildBugReportBody(
 interface RenderArgs {
   syncLines: string[];
   hasEnd: boolean;
+  // ORAIN-0770 AC5: most recent [server-info] line that preceded the
+  // chosen [sync-start], or null when no such line was found in the
+  // log. When present, the body builder prepends it to the "Last sync"
+  // section so support reads the server totals immediately before the
+  // sync they describe. When null, the body shows
+  // `server-info: unknown` so the gap is visible rather than silent.
+  serverInfoLine: string | null;
   otherLines: string[];
   logMissing: boolean;
   budget: number;
@@ -254,7 +307,14 @@ interface RenderArgs {
 const LOG_MISSING_NOTE =
   '(log file not found — please attach main.log from About > Log files > Open folder)';
 
-function renderExcerpt({ syncLines, hasEnd, otherLines, logMissing, budget }: RenderArgs): string {
+function renderExcerpt({
+  syncLines,
+  hasEnd,
+  serverInfoLine,
+  otherLines,
+  logMissing,
+  budget,
+}: RenderArgs): string {
   const sections: string[] = [];
 
   // ORAIN-0747 cycle 2 (HIGH): surface the missing-log condition INSIDE
@@ -268,12 +328,19 @@ function renderExcerpt({ syncLines, hasEnd, otherLines, logMissing, budget }: Re
   if (syncLines.length > 0) {
     const header = '**Last sync**';
     const tail = hasEnd ? '' : `\n${SYNC_DID_NOT_FINISH_NOTE}`;
+    // ORAIN-0770 AC5: `extractLastSyncBlock` already places the
+    // [server-info] line at index 0 of `syncLines` when it was found
+    // in the log. When no [server-info] precedes the [sync-start], we
+    // surface the literal `server-info: unknown` so support sees the
+    // gap rather than reading silence and assuming it is OK.
+    const syncBodyLines = serverInfoLine !== null ? syncLines : [SERVER_INFO_UNKNOWN, ...syncLines];
     // The excerpt budget is for the WHOLE excerpt (both sections). We
     // reserve a minimum for the "Other recent errors" section so it is
-    // never silently dropped, then split the rest.
+    // never silently dropped, then split the rest. The [server-info]
+    // line is part of the "Last sync" section and consumes syncBudget.
     const otherReserve = otherLines.length > 0 ? Math.min(budget / 4, otherLines.length * 200) : 0;
     const syncBudget = Math.max(50, budget - otherReserve - tail.length - header.length - 2);
-    const syncBody = trimSyncBlock(syncLines, syncBudget);
+    const syncBody = trimSyncBlock(syncBodyLines, syncBudget);
     sections.push(`${header}\n${syncBody}${tail}`);
   } else {
     sections.push(NO_SYNC_NOTE);

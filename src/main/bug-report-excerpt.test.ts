@@ -32,7 +32,11 @@ describe('extractLastSyncBlock', () => {
 
   it('returns empty block when log has no [sync-start]', () => {
     const lines = [wrap('[warn] something else'), wrap('[error] another')];
-    expect(extractLastSyncBlock(lines)).toEqual({ lines: [], hasEnd: false });
+    expect(extractLastSyncBlock(lines)).toEqual({
+      lines: [],
+      hasEnd: false,
+      serverInfoLine: null,
+    });
   });
 
   it('extracts start + [track-failed] + end for the most recent sync', () => {
@@ -315,5 +319,97 @@ describe('buildBugReportBody', () => {
     const log = '[2026-09-28T10:00:00.000Z] [warn] something\n';
     const body = buildBugReportBody(log, { logMissing: false });
     expect(body).not.toContain('(log file not found');
+  });
+});
+
+describe('ORAIN-0770 AC5 — last [server-info] before [sync-start] surfaces in the bug report', () => {
+  // The whole point of the [server-info] line is that support can
+  // read a single bug report and know how big the reporter's library
+  // is. Without AC5, the line is invisible in the issue body — even
+  // though it is in main.log.
+
+  it('extractLastSyncBlock returns the most recent [server-info] before the chosen [sync-start]', () => {
+    const si = wrap(
+      '[server-info] artists=2489 albumArtists=2489 albums=12345 audioTracks=23195 jellyfinVersion=10.9.0',
+    );
+    const start = wrap('[sync-start] syncId=abc appVersion=0.7.1');
+    const end = wrap('[sync-end] syncId=abc copied=1 failed=0');
+    const log = [si, start, end];
+    const block = extractLastSyncBlock(log);
+    expect(block.lines[0]).toContain('[server-info]');
+    expect(block.lines[0]).toContain('artists=2489');
+    expect(block.lines[1]).toContain('[sync-start]');
+    expect(block.lines[2]).toContain('[sync-end]');
+  });
+
+  it('picks the LATEST [server-info] when more than one is in the log', () => {
+    const oldSi = wrap(
+      '[server-info] artists=1 albumArtists=1 albums=1 audioTracks=1 jellyfinVersion=10.8.0',
+    );
+    const oldStart = wrap('[sync-start] syncId=old appVersion=0.7.0');
+    const oldEnd = wrap('[sync-end] syncId=old copied=1 failed=0');
+    // Refresh: a new [server-info] lands. Then the new sync.
+    const newSi = wrap(
+      '[server-info] artists=2489 albumArtists=2489 albums=12345 audioTracks=23195 jellyfinVersion=10.9.0',
+    );
+    const newStart = wrap('[sync-start] syncId=new appVersion=0.7.1');
+    const newEnd = wrap('[sync-end] syncId=new copied=1 failed=0');
+    const log = [oldSi, oldStart, oldEnd, newSi, newStart, newEnd];
+    const block = extractLastSyncBlock(log);
+    expect(block.lines[0]).toContain('jellyfinVersion=10.9.0');
+    expect(block.lines[0]).toContain('artists=2489');
+  });
+
+  it('emits "server-info: unknown" when no [server-info] precedes the chosen [sync-start]', () => {
+    // Log rotated out the [server-info] line before the sync — most
+    // likely a long session where 5MB pushed the line out of the
+    // current main.log file. The body must still surface SOMETHING
+    // for support so they know the field is missing.
+    const start = wrap('[sync-start] syncId=abc appVersion=0.7.1');
+    const end = wrap('[sync-end] syncId=abc copied=1 failed=0');
+    const log = [start, end];
+    const body = buildBugReportBody(log.join('\n'));
+    expect(body).toContain('server-info: unknown');
+  });
+
+  it('emits the [server-info] line BEFORE the [sync-start] line in the Last sync block', () => {
+    const si = wrap(
+      '[server-info] artists=2489 albumArtists=2489 albums=12345 audioTracks=23195 jellyfinVersion=10.9.0',
+    );
+    const start = wrap('[sync-start] syncId=abc appVersion=0.7.1');
+    const end = wrap('[sync-end] syncId=abc copied=1 failed=0');
+    const body = buildBugReportBody([si, start, end].join('\n'));
+    // The order matters: support must see [server-info] first, then
+    // [sync-start] (the line that explains WHICH sync it belongs to).
+    const siIdx = body.indexOf('[server-info]');
+    const startIdx = body.indexOf('[sync-start]');
+    expect(siIdx).toBeGreaterThan(-1);
+    expect(startIdx).toBeGreaterThan(siIdx);
+  });
+});
+
+describe('ORAIN-0770 AC6 — bug-report body stays within URL_BUDGET when [server-info] is added', () => {
+  // AC6: the body MUST stay within URL_BUDGET (6300) chars. The new
+  // [server-info] line adds ~80 chars to the "Last sync" section, so
+  // the existing budget allocation has to absorb it. We test the
+  // worst case: a sync with the [server-info] line + a [sync-start]
+  // that already pushes the budget, plus a heavy [track-failed] tail.
+  // The body must still fit in URL_BUDGET - 200 (HANDLER_RESERVE).
+  it('body length stays under URL_BUDGET - 200 with [server-info] + heavy failed-tail', () => {
+    const si = wrap(
+      '[server-info] artists=2489 albumArtists=2489 albums=12345 audioTracks=23195 jellyfinVersion=10.9.0',
+    );
+    const start = wrap(
+      '[sync-start] syncId=ac6 appVersion=0.7.1 platform=darwin arch=arm64 dest=/Volumes/USB destFs=msdos items=2489 tracks=23195 convert=false cover=embed lyrics=off retag=true',
+    );
+    const failed = (i: number): string =>
+      `[2026-09-28T10:00:${String(5 + (i % 50)).padStart(2, '0')}.000Z] [warn] [track-failed] syncId=ac6 trackId=t${i} trackName=Track ${i} phase=download cause=HTTP 500 from /Items/t${i}/Download — body said: {"code":"InternalServerError","message":"upstream jellyfin returned 500"} format=flac bitrate=0 declaredSize=12345678 hasImage=false`;
+    const end = wrap('[sync-end] syncId=ac6 copied=0 failed=50 durationMs=30000');
+    const lines = [si, start, ...Array.from({ length: 50 }, (_, i) => failed(i)), end];
+    const body = buildBugReportBody(lines.join('\n'));
+    expect(body.length).toBeLessThanOrEqual(URL_BUDGET - 200);
+    // And the [server-info] line must still be visible (not trimmed
+    // by an over-eager budget allocator).
+    expect(body).toContain('[server-info]');
   });
 });

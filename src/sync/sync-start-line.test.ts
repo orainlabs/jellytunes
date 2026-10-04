@@ -167,3 +167,92 @@ describe('ORAIN-0740 AC1 — [sync-start] carries the resolved track count', () 
     expect(startLines).toHaveLength(1);
   }, 30_000);
 });
+
+describe('ORAIN-0770 AC1 — [sync-start] carries the item-type breakdown', () => {
+  // jellytunes#27: support needs to know what `items=N` means. A flat
+  // count hides whether the user picked 2489 album-artists, 2489
+  // individual artists, or a mix. [sync-start] must carry a
+  // per-type breakdown calculated from the SyncInput.itemTypes map.
+  it('emits itemTypes=albumArtist:3 album:1 when 3 albumArtists and 1 album are synced', async () => {
+    // 4 items total: 3 album-artists + 1 album. The mock api will receive
+    // the per-item fetches and resolve empty track lists per item. The
+    // [sync-start] line is emitted post-fetch — we only care about the
+    // line content here, not the actual copy phase.
+    const tracks = makeTracks(0);
+    const { logger, info } = makeCapturingLogger();
+    const deps = makeDeps(tracks);
+    const core = createTestSyncCore(
+      {
+        serverUrl: validConfig.serverUrl,
+        apiKey: validConfig.apiKey,
+        userId: validConfig.userId,
+      },
+      deps,
+    );
+    (core as unknown as { log: SyncLogger }).log = logger;
+
+    await core.sync(
+      {
+        itemIds: ['aa1', 'aa2', 'aa3', 'alb1'],
+        itemTypes: new Map<string, ItemType>([
+          ['aa1', 'albumArtist'],
+          ['aa2', 'albumArtist'],
+          ['aa3', 'albumArtist'],
+          ['alb1', 'album'],
+        ]),
+        destinationPath: '/tmp/dest',
+        syncId: 'ac1-breakdown',
+        options: {
+          convertToMp3: false,
+          coverArtMode: 'off',
+          lyricsMode: 'off',
+          embedMetadata: true,
+        },
+      },
+      () => {},
+    );
+
+    const startLines = info.filter((l) => l.includes('[sync-start]'));
+    expect(startLines).toHaveLength(1);
+    // Per-type breakdown is on the same line, encoded as
+    // `itemTypes=albumArtist:3 album:1`.
+    expect(startLines[0]).toContain('itemTypes=albumArtist:3 album:1');
+    // The total items= count stays the sum of the breakdown.
+    expect(startLines[0]).toContain('items=4');
+  }, 30_000);
+
+  it('emits itemTypes=playlist:1 when a single playlist is synced (no breakdown noise)', async () => {
+    const tracks = makeTracks(0);
+    const { logger, info } = makeCapturingLogger();
+    const deps = makeDeps(tracks);
+    const core = createTestSyncCore(
+      {
+        serverUrl: validConfig.serverUrl,
+        apiKey: validConfig.apiKey,
+        userId: validConfig.userId,
+      },
+      deps,
+    );
+    (core as unknown as { log: SyncLogger }).log = logger;
+
+    await core.sync(
+      {
+        itemIds: ['pl1'],
+        itemTypes: new Map<string, ItemType>([['pl1', 'playlist']]),
+        destinationPath: '/tmp/dest',
+        syncId: 'ac1-playlist',
+        options: {
+          convertToMp3: false,
+          coverArtMode: 'off',
+          lyricsMode: 'off',
+          embedMetadata: true,
+        },
+      },
+      () => {},
+    );
+
+    const startLines = info.filter((l) => l.includes('[sync-start]'));
+    expect(startLines[0]).toContain('itemTypes=playlist:1');
+    expect(startLines[0]).toContain('items=1');
+  }, 30_000);
+});

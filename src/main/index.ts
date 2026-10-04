@@ -51,7 +51,17 @@ import { isValidPath } from './path-validation';
 import { buildAuthHeader, CLIENT_NAME_DEFAULT, DEFAULT_DEVICE_NAME } from '../shared/auth-headers';
 // ORAIN-0740: [sync-start]/[sync-end]/[track-failed] log lines + error scrubbing.
 // The wrappers in log-scrub make sure the error object never reaches log.error.
-import { logSyncError, diffAndLogVolumes, scrubPath, type VolumeLogState } from './log-scrub';
+// ORAIN-0770: add logServerInfo + createServerInfoDedupe for the
+// server-totals line (AC2: emitted after first library load and on
+// each refresh, deduplicated against the previous payload).
+import {
+  logSyncError,
+  diffAndLogVolumes,
+  scrubPath,
+  createServerInfoDedupe,
+  type ServerInfoPayload,
+  type VolumeLogState,
+} from './log-scrub';
 import { buildBugReportBody } from './bug-report-excerpt';
 
 // ─── Snap detection (ORAIN-0573) ─────────────────────────────────────────
@@ -1251,6 +1261,52 @@ ipcMain.handle('sync:cancel', () => {
   cancelSync();
   return { cancelled: true };
 });
+
+// ORAIN-0770 AC2: renderer reports the latest server totals + Jellyfin
+// version here so main can emit the [server-info] line. One
+// module-scoped dedupe helper covers the whole app session: an
+// unchanged payload suppresses the line (AC2 last paragraph). The
+// helper is created on first use — see the `serverInfoDedupe` lazy
+// getter below — to keep the module-level constructor side-effect-
+// free (electron-log may not be initialised when this file is parsed).
+let serverInfoDedupe: ReturnType<typeof createServerInfoDedupe> | null = null;
+function getServerInfoDedupe(): ReturnType<typeof createServerInfoDedupe> {
+  if (serverInfoDedupe === null) {
+    serverInfoDedupe = createServerInfoDedupe();
+  }
+  return serverInfoDedupe;
+}
+
+ipcMain.handle(
+  'server-info:report',
+  async (
+    _event,
+    payload: {
+      artists: number | null;
+      albumArtists: number | null;
+      albums: number | null;
+      audioTracks: number | null;
+      jellyfinVersion: string | null;
+    },
+  ): Promise<void> => {
+    // ORAIN-0770 AC3: a malformed payload must NEVER break the library
+    // load. Forward every value through the formatter (which handles
+    // null/undefined defensively) but trap any throw so the renderer's
+    // `Promise<void>` always settles.
+    try {
+      const p: ServerInfoPayload = {
+        artists: payload.artists ?? null,
+        albumArtists: payload.albumArtists ?? null,
+        albums: payload.albums ?? null,
+        audioTracks: payload.audioTracks ?? null,
+        jellyfinVersion: payload.jellyfinVersion ?? null,
+      };
+      getServerInfoDedupe().maybeEmit(log, p);
+    } catch (e) {
+      logSyncError(log, 'server-info:report error', e);
+    }
+  },
+);
 ipcMain.handle('app:version', () => app.getVersion());
 // ORAIN-0562: persistent per-installation DeviceId for the Jellyfin
 // Authorization header. Stable across launches so the server doesn't see a new

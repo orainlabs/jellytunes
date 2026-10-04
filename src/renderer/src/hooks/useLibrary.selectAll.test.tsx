@@ -12,6 +12,8 @@ global.fetch = mockFetch;
 // Mock window.api for logger
 const mockApi = {
   logError: vi.fn(),
+  // ORAIN-0770 AC2: useLibrary.loadStats forwards to window.api.reportServerInfo.
+  reportServerInfo: vi.fn(async () => undefined),
 };
 Object.defineProperty(window, 'api', { value: mockApi, writable: true });
 

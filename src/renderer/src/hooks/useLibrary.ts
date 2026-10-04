@@ -23,6 +23,11 @@ import {
   normalizeAlbumArtist,
 } from '../utils/jellyfin';
 import { logger } from '../utils/logger';
+// ORAIN-0770 AC2: after the renderer reads `/Items/Counts`, forward the
+// totals + Jellyfin version to main so a `[server-info]` line is
+// emitted (deduped) into main.log. Safe to invoke on every load —
+// AC3 means a failing fetch never blocks the library load.
+import { reportServerInfo } from '../utils/serverInfo';
 
 export type TabState = 'loading' | 'loaded' | 'error';
 
@@ -104,24 +109,32 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     const baseUrl = url.replace(/\/$/, '');
     const safeUserId = uid.trim();
     if (!safeUserId) return;
+    let nextStats: LibraryStats | null = null;
     try {
       const res = await fetch(buildUrl(baseUrl, `/Users/${safeUserId}/Items/Counts`), { headers });
       if (res.ok) {
         const data = await res.json();
-        setStats({
+        nextStats = {
           ArtistCount: data.ArtistCount ?? 0,
           AlbumCount: data.AlbumCount ?? 0,
           SongCount: data.ChildCount ?? data.TotalCount ?? 0,
           PlaylistCount: data.PlaylistCount ?? 0,
           ItemCount: data.ItemCount ?? 0,
           AlbumArtistCount: data.AlbumArtistCount ?? 0,
-        });
+        };
+        setStats(nextStats);
       } else {
         setStats(null);
       }
     } catch {
       setStats(null);
     }
+    // ORAIN-0770 AC2: after the first library load (and after each
+    // refresh — refreshLibrary also calls loadStats), forward the
+    // counts + Jellyfin version to main. The fetch helper swallows
+    // every error (AC3) so a flaky /System/Info/Public never breaks
+    // library load.
+    void reportServerInfo({ baseUrl, stats: nextStats });
   };
 
   const updateArtistIndex = (items: Artist[]) => {

@@ -19,6 +19,16 @@ import * as os from 'node:os';
 type SyncPhase = 'download' | 'validation' | 'conversion' | 'tagging' | 'write';
 
 /**
+ * Local mirror of `src/sync/types.ts` `ItemType`. Duplicated rather
+ * than imported to keep `log-scrub` independent of the sync module
+ * (so a future refactor that moves ItemType out of sync/ doesn't
+ * create a circular import). The two definitions MUST stay in lock-
+ * step — a test in `log-scrub.test.ts` covers the union exhaustively
+ * by enumerating a representative shape and asserting it formats.
+ */
+type ItemType = 'artist' | 'album' | 'playlist' | 'albumArtist' | 'genre';
+
+/**
  * Scrub the home directory out of an absolute path. The replacement preserves
  * the original separator so POSIX paths get '~/...' and Windows paths get
  * '~\...'. Empty input is returned unchanged. Paths that do not begin at the
@@ -91,6 +101,14 @@ export function formatSyncStart(input: {
    * `/media/music/` from a `''` returned when the batch had no tracks.
    */
   serverRootPath?: string;
+  /**
+   * ORAIN-0770 AC1: per-type breakdown of the items the user picked
+   * for this sync. Renders as `itemTypes=albumArtist:3 album:1` —
+   * space-separated, deterministic order (sorted by type name). When
+   * omitted (legacy callers), the field is skipped from the line; the
+   * existing `items=N` total still tells support how many were picked.
+   */
+  itemTypeBreakdown?: Map<ItemType, number>;
 }): string {
   const dest = scrubPath(input.destinationPath);
   const serverRoot =
@@ -117,6 +135,9 @@ export function formatSyncStart(input: {
     `lyrics=${input.options.lyricsMode}`,
     `retag=${input.options.embedMetadata}`,
   );
+  if (input.itemTypeBreakdown && input.itemTypeBreakdown.size > 0) {
+    parts.push(`itemTypes=${formatItemTypeBreakdown(input.itemTypeBreakdown)}`);
+  }
   return parts.join(' ');
 }
 
@@ -230,6 +251,119 @@ export function logTrackFailed(
   // pipeline (e.g. a thrown object) cannot leak the original error.
   const safe = { ...args, cause: scrubError(args.cause) };
   log.info(formatTrackFailed(safe));
+}
+
+// =============================================================================
+// SERVER INFO (ORAIN-0770)
+// =============================================================================
+
+/**
+ * Payload for one [server-info] line. Every field is optional; missing
+ * values render as `unknown` (never `undefined`, per ORAIN-0740 AC5).
+ *
+ * Privacy: ONLY counts and a single opaque version string. Never include
+ * track names, album names, server names, library names, or any
+ * user-identifying token here. The line is what support pastes into
+ * a public issue — a leak here defeats the whole purpose.
+ */
+export interface ServerInfoPayload {
+  artists: number | null | undefined;
+  albumArtists: number | null | undefined;
+  albums: number | null | undefined;
+  audioTracks: number | null | undefined;
+  jellyfinVersion: string | null | undefined;
+}
+
+/**
+ * Format one [server-info] line. Output shape (whitespace-separated k=v):
+ *   [server-info] artists=N albumArtists=N albums=N audioTracks=N jellyfinVersion=X
+ * Missing values render as the literal token `unknown`.
+ */
+export function formatServerInfo(payload: ServerInfoPayload): string {
+  return [
+    '[server-info]',
+    `artists=${fmtServerInfoValue(payload.artists)}`,
+    `albumArtists=${fmtServerInfoValue(payload.albumArtists)}`,
+    `albums=${fmtServerInfoValue(payload.albums)}`,
+    `audioTracks=${fmtServerInfoValue(payload.audioTracks)}`,
+    `jellyfinVersion=${fmtServerInfoValue(payload.jellyfinVersion)}`,
+  ].join(' ');
+}
+
+/**
+ * Render a single field. Numbers stringify as-is; null/undefined/empty
+ * string all collapse to `unknown`. The version is a string and never
+ * gets scrubbed — it's a server-side public fact.
+ */
+function fmtServerInfoValue(v: number | string | null | undefined): string {
+  if (v === null || v === undefined) return 'unknown';
+  if (typeof v === 'string' && v.length === 0) return 'unknown';
+  return String(v);
+}
+
+/**
+ * Emit a [server-info] line through the supplied logger.
+ */
+export function logServerInfo(log: LoggerLike, payload: ServerInfoPayload): void {
+  log.info(formatServerInfo(payload));
+}
+
+/**
+ * Stateful dedupe helper. AC2 explicitly requires the [server-info] line
+ * to NOT re-emit when no value changed since the last emission. The main
+ * process owns one instance per session, captured in module state.
+ *
+ * `maybeEmit` returns `true` when the line was emitted (and the caller
+ * can expect to see it in main.log) and `false` when the payload matched
+ * the previous one and the line was suppressed.
+ */
+export interface ServerInfoDedupe {
+  maybeEmit(log: LoggerLike, payload: ServerInfoPayload): boolean;
+}
+
+export function createServerInfoDedupe(): ServerInfoDedupe {
+  let last: ServerInfoPayload | null = null;
+  return {
+    maybeEmit(log, payload) {
+      if (last !== null && serverInfoPayloadEquals(last, payload)) {
+        return false;
+      }
+      logServerInfo(log, payload);
+      last = payload;
+      return true;
+    },
+  };
+}
+
+/**
+ * Compare two payloads for equality. Order-independent at the field
+ * level; every field is compared directly (null === null, undefined
+ * === undefined, numbers === numbers, strings === strings).
+ */
+function serverInfoPayloadEquals(a: ServerInfoPayload, b: ServerInfoPayload): boolean {
+  return (
+    a.artists === b.artists &&
+    a.albumArtists === b.albumArtists &&
+    a.albums === b.albums &&
+    a.audioTracks === b.audioTracks &&
+    a.jellyfinVersion === b.jellyfinVersion
+  );
+}
+
+/**
+ * Render a `Map<ItemType, number>` as a space-separated list of
+ * `type:N` tokens. Output order follows the Map's insertion order,
+ * which is the order types first appear in `SyncInput.itemTypes`.
+ * That ordering is what the test asserts on (`albumArtist` first
+ * because the first three items are album-artists, then `album`),
+ * and it matches what support reads at a glance: the dominant type
+ * comes first.
+ *
+ * Empty / undefined maps produce an empty string — the caller gates
+ * the field on `size > 0` before calling.
+ */
+export function formatItemTypeBreakdown(breakdown: Map<ItemType, number>): string {
+  return [...breakdown.entries()].map(([type, count]) => `${type}:${count}`).join(' ');
 }
 
 // =============================================================================

@@ -837,6 +837,14 @@ class SyncCoreImpl {
       // `itemIds.length` which reports albums, not tracks). This is the
       // only [sync-start] emission in the codebase — index.ts delegates.
       const options = resolveSyncOptions(input.options);
+      // ORAIN-0770 AC1: per-type breakdown so support can read the line
+      // and know what `items=N` actually means (3 album-artists vs 3
+      // albums vs a mix). Built from `input.itemTypes` which the caller
+      // (index.ts) populated in the renderer.
+      const itemTypeBreakdown = new Map<ItemType, number>();
+      for (const t of input.itemTypes.values()) {
+        itemTypeBreakdown.set(t, (itemTypeBreakdown.get(t) ?? 0) + 1);
+      }
       logSyncStart(this.log, {
         appVersion: input.appVersion ?? 'unknown',
         platform: this.platform,
@@ -853,6 +861,7 @@ class SyncCoreImpl {
           lyricsMode: options.lyricsMode ?? 'off',
           embedMetadata: options.embedMetadata ?? true,
         },
+        itemTypeBreakdown,
         syncId,
       });
       syncStartEmitted = true;

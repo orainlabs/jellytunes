@@ -303,6 +303,18 @@ const api = {
   // Open a pre-filled GitHub issue in the browser with recent log lines
   reportBug: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('bug:report'),
 
+  // ORAIN-0770 AC2: renderer forwards the latest server totals + version
+  // to main so a [server-info] line lands in main.log after the first
+  // library load and after each refresh. The main side de-duplicates
+  // (createServerInfoDedupe) so an unchanged payload does not re-emit.
+  reportServerInfo: (payload: {
+    artists: number | null;
+    albumArtists: number | null;
+    albums: number | null;
+    audioTracks: number | null;
+    jellyfinVersion: string | null;
+  }): Promise<void> => ipcRenderer.invoke('server-info:report', payload),
+
   // Check for updates via GitHub Releases API (max once per 24h, no telemetry)
   // Pass force=true to bypass the cache (e.g. manual check button).
   // ORAIN-0573: result now includes `managedBySnap` — true when running under
