@@ -558,26 +558,26 @@ export function DeviceSyncPanel({
             <div className="mt-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-body-md font-medium">ID3 tags</span>
+                  <span className="text-body-md font-medium">Use legacy ID3 tags</span>
                   <p className="text-caption text-on_surface_variant mt-0.5">
                     {id3TagVersion === 'v2.3'
-                      ? 'Legacy v2.3 — for older MP3 players that ignore v2.4'
-                      : 'Modern v2.4 — current players'}
+                      ? 'ID3v2.3 — for older MP3 players that ignore v2.4'
+                      : 'ID3v2.4 — current players'}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  {(['v2.4', 'v2.3'] as const).map((v) => (
-                    <button
-                      key={v}
-                      data-testid={`id3-${v}-button`}
-                      onClick={() => onId3TagVersionChange(v)}
-                      disabled={isSyncing}
-                      className={`px-2.5 py-1 text-label-sm rounded-lg disabled:cursor-default disabled:opacity-50 ${id3TagVersion === v ? 'bg-primary_container text-on_primary_container' : 'bg-surface_container_highest text-on_surface hover:bg-surface_bright'}`}
-                    >
-                      {v === 'v2.4' ? 'v2.4' : 'v2.3 legacy'}
-                    </button>
-                  ))}
-                </div>
+                <button
+                  data-testid="id3-legacy-toggle"
+                  role="switch"
+                  aria-checked={id3TagVersion === 'v2.3'}
+                  aria-label="Use legacy ID3 tags"
+                  onClick={() => onId3TagVersionChange(id3TagVersion === 'v2.3' ? 'v2.4' : 'v2.3')}
+                  disabled={isSyncing}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-default ${id3TagVersion === 'v2.3' ? 'bg-primary_container' : 'bg-surface_container_highest'}`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${id3TagVersion === 'v2.3' ? 'translate-x-6' : 'translate-x-1'}`}
+                  />
+                </button>
               </div>
               <p className="text-caption text-on_surface_variant mt-2">
                 {convertToMp3

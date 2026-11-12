@@ -198,27 +198,42 @@ describe('DeviceSyncPanel', () => {
 
     it('shows modern ID3 tags by default', async () => {
       await renderPanelAndSettle({ convertToMp3: true });
-      expect(screen.getByText(/modern v2\.4/i)).toBeInTheDocument();
-      expect(screen.getByTestId('id3-v2.4-button')).toHaveClass('bg-primary_container');
+      expect(screen.getByText('Use legacy ID3 tags')).toBeInTheDocument();
+      expect(screen.getByText(/ID3v2\.4 — current players/i)).toBeInTheDocument();
+      const toggle = screen.getByTestId('id3-legacy-toggle');
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      expect(toggle).not.toHaveClass('bg-primary_container');
     });
 
     it('describes the legacy mode when v2.3 is selected', async () => {
       await renderPanelAndSettle({ convertToMp3: true, id3TagVersion: 'v2.3' });
-      expect(screen.getByText(/legacy v2\.3/i)).toBeInTheDocument();
-      expect(screen.getByTestId('id3-v2.3-button')).toHaveClass('bg-primary_container');
+      expect(screen.getByText(/ID3v2\.3 — for older MP3 players/i)).toBeInTheDocument();
+      const toggle = screen.getByTestId('id3-legacy-toggle');
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+      expect(toggle).toHaveClass('bg-primary_container');
     });
 
-    it('calls onId3TagVersionChange when the legacy button is clicked', async () => {
+    it('switches to legacy v2.3 when the toggle is turned on', async () => {
       const onId3TagVersionChange = vi.fn();
       await renderPanelAndSettle({ convertToMp3: true, onId3TagVersionChange });
-      await userEvent.click(screen.getByTestId('id3-v2.3-button'));
+      await userEvent.click(screen.getByTestId('id3-legacy-toggle'));
       expect(onId3TagVersionChange).toHaveBeenCalledWith('v2.3');
     });
 
-    it('offers the ID3 choice even when conversion is off (copied MP3s get re-tagged)', async () => {
+    it('switches back to modern v2.4 when the toggle is turned off', async () => {
+      const onId3TagVersionChange = vi.fn();
+      await renderPanelAndSettle({
+        convertToMp3: true,
+        id3TagVersion: 'v2.3',
+        onId3TagVersionChange,
+      });
+      await userEvent.click(screen.getByTestId('id3-legacy-toggle'));
+      expect(onId3TagVersionChange).toHaveBeenCalledWith('v2.4');
+    });
+
+    it('offers the ID3 toggle even when conversion is off (copied MP3s get re-tagged)', async () => {
       await renderPanelAndSettle({ convertToMp3: false });
-      expect(screen.getByTestId('id3-v2.4-button')).toBeInTheDocument();
-      expect(screen.getByTestId('id3-v2.3-button')).toBeInTheDocument();
+      expect(screen.getByTestId('id3-legacy-toggle')).toBeInTheDocument();
     });
   });
 
