@@ -87,6 +87,8 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     onRemoveDestination: vi.fn(),
     lyricsMode: 'off' as const,
     onLyricsModeChange: vi.fn(),
+    id3TagVersion: 'v2.4' as const,
+    onId3TagVersionChange: vi.fn(),
     hasFlacOrM4a: false,
     ...overrides,
   };
@@ -192,6 +194,31 @@ describe('DeviceSyncPanel', () => {
       await renderPanelAndSettle({ convertToMp3: true, onBitrateChange });
       await userEvent.click(screen.getByText('320k'));
       expect(onBitrateChange).toHaveBeenCalledWith('320k');
+    });
+
+    it('shows modern ID3 tags by default', async () => {
+      await renderPanelAndSettle({ convertToMp3: true });
+      expect(screen.getByText(/modern v2\.4/i)).toBeInTheDocument();
+      expect(screen.getByTestId('id3-v2.4-button')).toHaveClass('bg-primary_container');
+    });
+
+    it('describes the legacy mode when v2.3 is selected', async () => {
+      await renderPanelAndSettle({ convertToMp3: true, id3TagVersion: 'v2.3' });
+      expect(screen.getByText(/legacy v2\.3/i)).toBeInTheDocument();
+      expect(screen.getByTestId('id3-v2.3-button')).toHaveClass('bg-primary_container');
+    });
+
+    it('calls onId3TagVersionChange when the legacy button is clicked', async () => {
+      const onId3TagVersionChange = vi.fn();
+      await renderPanelAndSettle({ convertToMp3: true, onId3TagVersionChange });
+      await userEvent.click(screen.getByTestId('id3-v2.3-button'));
+      expect(onId3TagVersionChange).toHaveBeenCalledWith('v2.3');
+    });
+
+    it('offers the ID3 choice even when conversion is off (copied MP3s get re-tagged)', async () => {
+      await renderPanelAndSettle({ convertToMp3: false });
+      expect(screen.getByTestId('id3-v2.4-button')).toBeInTheDocument();
+      expect(screen.getByTestId('id3-v2.3-button')).toBeInTheDocument();
     });
   });
 
@@ -471,7 +498,7 @@ describe('DeviceSyncPanel', () => {
   });
 
   describe('lyrics warning', () => {
-    const LYRICS_WARNING = /FLAC\/M4A no soportan letras sincronizadas/i;
+    const LYRICS_WARNING = /FLAC\/M4A cannot hold synchronized lyrics/i;
 
     it('shows FLAC/M4A warning when lyricsMode is embed and has flac tracks', async () => {
       await renderPanelAndSettle({

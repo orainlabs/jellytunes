@@ -1142,6 +1142,7 @@ ipcMain.handle(
         coverArtMode: CoverArtMode;
         bitrate: '128k' | '192k' | '320k';
         convertToMp3: boolean;
+        id3TagVersion?: 'v2.4' | 'v2.3';
       };
     },
   ) => {

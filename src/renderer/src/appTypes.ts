@@ -119,6 +119,7 @@ export type { LyricsMode } from '../../sync/types';
 export { LyricsModes } from '../../sync/types';
 
 export type Bitrate = '128k' | '192k' | '320k';
+export type Id3TagVersion = 'v2.4' | 'v2.3';
 export type CoverArtMode = 'off' | 'embed' | 'companion';
 
 export interface SyncProgressInfo {
@@ -184,4 +185,6 @@ export interface SavedDestination {
   convertToMp3?: boolean;
   bitrate?: Bitrate;
   coverArtMode?: 'off' | 'embed' | 'companion';
+  /** ID3 version for MP3 output; undefined/'v2.4' = modern, 'v2.3' = legacy players */
+  id3TagVersion?: Id3TagVersion;
 }

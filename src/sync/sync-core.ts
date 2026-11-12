@@ -588,6 +588,7 @@ export interface SyncDependencies {
     serverPath: string | null,
     serverRootPath: string | null,
     lyricsMode: string,
+    id3TagVersion?: string,
   ) => void;
 }
 
@@ -683,6 +684,7 @@ class SyncCoreImpl {
     serverPath: string | null,
     serverRootPath: string | null,
     lyricsMode: string = 'off',
+    id3TagVersion: string = 'v2.4',
   ): void {
     const fn = this.deps.mockUpsert;
     if (fn) {
@@ -698,6 +700,7 @@ class SyncCoreImpl {
         serverPath,
         serverRootPath,
         lyricsMode,
+        id3TagVersion,
       );
     } else {
       upsertSyncedTrack(
@@ -712,6 +715,7 @@ class SyncCoreImpl {
         serverPath,
         serverRootPath,
         lyricsMode,
+        id3TagVersion,
       );
     }
   }
@@ -837,6 +841,12 @@ class SyncCoreImpl {
       // `itemIds.length` which reports albums, not tracks). This is the
       // only [sync-start] emission in the codebase — index.ts delegates.
       const options = resolveSyncOptions(input.options);
+      // MP3 tag version is a per-destination setting. The converter is
+      // shared by every MP3-muxing pass in this sync (convert, tagFile,
+      // lyrics, ReplayGain, strip), so one call here keeps them all
+      // consistent — the muxer would otherwise default back to v2.4 on a
+      // later pass and silently undo the setting.
+      this.deps.converter.setId3TagVersion?.(options.id3TagVersion ?? 'v2.4');
       // ORAIN-0770 AC1: per-type breakdown so support can read the line
       // and know what `items=N` actually means (3 album-artists vs 3
       // albums vs a mix). Built from `input.itemTypes` which the caller
@@ -860,6 +870,7 @@ class SyncCoreImpl {
           coverArtMode: options.coverArtMode ?? 'embed',
           lyricsMode: options.lyricsMode ?? 'off',
           embedMetadata: options.embedMetadata ?? true,
+          id3TagVersion: options.id3TagVersion ?? 'v2.4',
         },
         itemTypeBreakdown,
         syncId,
@@ -1368,8 +1379,13 @@ class SyncCoreImpl {
       encodedBitrate !== null && syncedRecord.encodedBitrate !== encodedBitrate;
     const coverArtChanged = syncedRecord.coverArtMode !== coverArtMode;
     const pathChanged = syncedRecord.destinationPath !== outputPath;
+    // Tag version only affects files written as MP3 (converted, or an MP3
+    // source copied as-is). Re-tagging is enough: the audio is untouched.
+    const writesMp3 = options.convertToMp3 === true || track.format.toLowerCase() === 'mp3';
+    const id3TagChanged =
+      writesMp3 && (syncedRecord.id3TagVersion ?? 'v2.4') !== (options.id3TagVersion ?? 'v2.4');
 
-    if (!metadataChanged && !bitrateChanged && !coverArtChanged) {
+    if (!metadataChanged && !bitrateChanged && !coverArtChanged && !id3TagChanged) {
       if (pathChanged) {
         // ORAIN-0705: three sub-cases for a pathChanged record:
         //   (a) audio already at outputPath → DB-only update (no rename, no download)
@@ -1393,6 +1409,7 @@ class SyncCoreImpl {
             track.path ?? null,
             this.serverRootPath || null,
             options.lyricsMode ?? 'off',
+            options.id3TagVersion ?? 'v2.4',
           );
           const lyricsResult = await this.processLyrics(
             track,
@@ -1475,6 +1492,7 @@ class SyncCoreImpl {
             track.path ?? null,
             this.serverRootPath || null,
             options.lyricsMode ?? 'off',
+            options.id3TagVersion ?? 'v2.4',
           );
           const lyricsResult = await this.processLyrics(
             track,
@@ -1568,7 +1586,7 @@ class SyncCoreImpl {
       };
     }
 
-    if (!pathChanged && (metadataChanged || bitrateChanged || coverArtChanged)) {
+    if (!pathChanged && (metadataChanged || bitrateChanged || coverArtChanged || id3TagChanged)) {
       // AC-2: Strip embedded cover when switching from embed to companion mode
       if (
         coverArtChanged &&
@@ -1601,6 +1619,7 @@ class SyncCoreImpl {
           track.path ?? null,
           this.serverRootPath || null,
           options.lyricsMode ?? 'off',
+          options.id3TagVersion ?? 'v2.4',
         );
         const outputDir = path.dirname(syncedRecord.destinationPath);
         if (coverArtMode === 'companion') {
@@ -1701,6 +1720,7 @@ class SyncCoreImpl {
             track.path ?? null,
             this.serverRootPath || null,
             options.lyricsMode ?? 'off',
+            options.id3TagVersion ?? 'v2.4',
           );
           // Skipped existing cross-format file: FFmpeg was NOT invoked.
           return {
@@ -1725,6 +1745,7 @@ class SyncCoreImpl {
             track.path ?? null,
             this.serverRootPath || null,
             options.lyricsMode ?? 'off',
+            options.id3TagVersion ?? 'v2.4',
           );
           return {
             retagged: false,
@@ -1770,6 +1791,7 @@ class SyncCoreImpl {
         track.path ?? null,
         this.serverRootPath || null,
         options.lyricsMode ?? 'off',
+        options.id3TagVersion ?? 'v2.4',
       );
 
       // Handle lyrics (after file is written/copied)
@@ -2506,6 +2528,7 @@ class SyncCoreImpl {
       coverArtMode: CoverArtMode;
       bitrate: '128k' | '192k' | '320k';
       convertToMp3: boolean;
+      id3TagVersion?: 'v2.4' | 'v2.3';
     },
     preloadedTracks?: Map<string, TrackInfo[]>,
     fs?: FileSystem,
@@ -2735,6 +2758,28 @@ class SyncCoreImpl {
               pathChanged: prev.pathChanged,
             });
           }
+        } else if (
+          (options.convertToMp3 === true || track.format.toLowerCase() === 'mp3') &&
+          (synced.id3TagVersion ?? 'v2.4') !== (options.id3TagVersion ?? 'v2.4')
+        ) {
+          changes.push({
+            trackId: track.id,
+            trackName: track.name,
+            changeType: 'id3_tag_changed',
+          });
+          totalMetaChanged++;
+          if (track.parentItemId) {
+            const prev = albumChanges.get(track.parentItemId) ?? {
+              newTracks: 0,
+              metadataChanged: 0,
+              pathChanged: 0,
+            };
+            albumChanges.set(track.parentItemId, {
+              newTracks: prev.newTracks,
+              metadataChanged: prev.metadataChanged + 1,
+              pathChanged: prev.pathChanged,
+            });
+          }
         } else if (synced.coverArtMode !== options.coverArtMode) {
           changes.push({
             trackId: track.id,
@@ -2841,7 +2886,12 @@ class SyncCoreImpl {
         summary: {
           new: changes.filter((c) => c.changeType === 'new').length,
           metadataChanged: changes.filter((c) =>
-            ['metadata_changed', 'cover_art_changed', 'bitrate_changed'].includes(c.changeType),
+            [
+              'metadata_changed',
+              'cover_art_changed',
+              'bitrate_changed',
+              'id3_tag_changed',
+            ].includes(c.changeType),
           ).length,
           removed: changes.filter((c) => c.changeType === 'removed').length,
           pathChanged: changes.filter((c) => c.changeType === 'path_changed').length,
@@ -3757,6 +3807,7 @@ export interface SyncCore {
       coverArtMode: CoverArtMode;
       bitrate: '128k' | '192k' | '320k';
       convertToMp3: boolean;
+      id3TagVersion?: 'v2.4' | 'v2.3';
     },
     preloadedTracks?: Map<string, TrackInfo[]>,
     fs?: FileSystem,

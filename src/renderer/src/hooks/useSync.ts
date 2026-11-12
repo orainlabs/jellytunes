@@ -13,6 +13,7 @@ import type {
   ItemPreview,
   CoverArtMode,
   LyricsMode,
+  Id3TagVersion,
 } from '../appTypes';
 import type { SyncedItemInfo } from './useDeviceSelections';
 import { getTrackRegistry } from './useTrackRegistry';
@@ -40,6 +41,7 @@ interface UseSyncOptions {
       coverArtMode: CoverArtMode;
       convertToMp3: boolean;
       bitrate: Bitrate;
+      id3TagVersion: Id3TagVersion;
     }>,
   ) => Promise<void>;
 }
@@ -68,6 +70,7 @@ export function useSync({
   const [bitrate, setBitrate] = useState<Bitrate>('192k');
   const [coverArtMode, setCoverArtMode] = useState<CoverArtMode>('embed');
   const [lyricsMode, setLyricsMode] = useState<LyricsMode>('off');
+  const [id3TagVersion, setId3TagVersion] = useState<Id3TagVersion>('v2.4');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgressInfo | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -254,7 +257,7 @@ export function useSync({
         itemTypes: map,
         itemNames: names,
         destinationPath: syncFolder,
-        options: { convertToMp3, bitrate, coverArtMode, lyricsMode },
+        options: { convertToMp3, bitrate, coverArtMode, lyricsMode, id3TagVersion },
       });
 
       unsubscribe?.();
@@ -275,7 +278,7 @@ export function useSync({
         });
         // Re-run analyzeDiff in background to update out-of-sync indicators
         // Pass current coverArtMode to avoid stale ref in revalidateDevice
-        void revalidateDevice({ coverArtMode });
+        void revalidateDevice({ coverArtMode, id3TagVersion });
       } else {
         // ORAIN-0766 AC4: sync-core sets `success=false` whenever ANY track
         // errored (sync-core.ts:654 — `success: errors.length === 0`). The
@@ -309,7 +312,7 @@ export function useSync({
             errors: result.errors,
             lyricsMode,
           });
-          void revalidateDevice({ coverArtMode });
+          void revalidateDevice({ coverArtMode, id3TagVersion });
         } else {
           setSyncSuccessData({
             tracksCopied: 0,
@@ -675,6 +678,8 @@ export function useSync({
     setCoverArtMode,
     lyricsMode,
     setLyricsMode,
+    id3TagVersion,
+    setId3TagVersion,
     isSyncing,
     syncProgress,
     showPreview,

@@ -93,6 +93,18 @@ export type CoverArtMode = 'embed' | 'companion' | 'off';
 export type LyricsMode = 'lrc' | 'embed' | 'off';
 
 /**
+ * ID3 tag version written into MP3 output.
+ *
+ * 'v2.4' is FFmpeg's default and what modern players expect. 'v2.3' is for
+ * older players that cannot read ID3v2.4 at all (for example the Sony
+ * NWZ-B183F, which ignores v2.4 and falls back to ID3v1 or the filename).
+ */
+export type Id3TagVersion = 'v2.4' | 'v2.3';
+
+/** All valid ID3 tag versions (for iteration) */
+export const Id3TagVersions: Id3TagVersion[] = ['v2.4', 'v2.3'];
+
+/**
  * All valid lyrics modes (for iteration)
  */
 export const LyricsModes: LyricsMode[] = ['lrc', 'embed', 'off'];
@@ -127,6 +139,13 @@ export interface SyncOptions {
   coverArtMode?: CoverArtMode;
   /** Lyrics sync mode (default: 'off') */
   lyricsMode?: LyricsMode;
+  /**
+   * ID3 tag version for MP3 output (default: 'v2.4').
+   * 'v2.3' is the legacy-compatible mode for players that ignore ID3v2.4.
+   * Applies to every MP3 JellyTunes writes: converted tracks, copied MP3s
+   * that get re-tagged, and the lyrics/ReplayGain follow-up passes.
+   */
+  id3TagVersion?: Id3TagVersion;
 }
 
 /**
@@ -439,6 +458,7 @@ export type TrackChangeType =
   | 'metadata_changed'
   | 'cover_art_changed'
   | 'bitrate_changed'
+  | 'id3_tag_changed'
   | 'removed'
   | 'path_changed'
   | 'unchanged';

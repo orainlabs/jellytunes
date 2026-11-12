@@ -77,6 +77,8 @@ interface FormatOptions {
   coverArtMode: string;
   lyricsMode: string;
   embedMetadata: boolean;
+  /** ID3 version written to MP3 output. Missing means 'v2.4' (pre-setting records). */
+  id3TagVersion?: string;
 }
 
 /**
@@ -134,6 +136,7 @@ export function formatSyncStart(input: {
     `cover=${input.options.coverArtMode}`,
     `lyrics=${input.options.lyricsMode}`,
     `retag=${input.options.embedMetadata}`,
+    `id3=${input.options.id3TagVersion ?? 'v2.4'}`,
   );
   if (input.itemTypeBreakdown && input.itemTypeBreakdown.size > 0) {
     parts.push(`itemTypes=${formatItemTypeBreakdown(input.itemTypeBreakdown)}`);

@@ -11,6 +11,7 @@ import type {
   PreviewData,
   CoverArtMode,
   LyricsMode,
+  Id3TagVersion,
 } from '../appTypes';
 import type { SyncedItemInfo } from '../hooks/useDeviceSelections';
 import { SyncPreviewModal } from './SyncPreviewModal';
@@ -83,6 +84,7 @@ interface DeviceSyncPanelProps {
   isLoadingSize?: boolean;
   coverArtMode: CoverArtMode;
   lyricsMode: LyricsMode;
+  id3TagVersion: Id3TagVersion;
   hasFlacOrM4a: boolean;
   onToggleItem: (
     id: string,
@@ -92,6 +94,7 @@ interface DeviceSyncPanelProps {
   onBitrateChange: (b: Bitrate) => void;
   onCoverArtModeChange: (m: CoverArtMode) => void;
   onLyricsModeChange: (m: LyricsMode) => void;
+  onId3TagVersionChange: (v: Id3TagVersion) => void;
   onStartSync: () => void;
   onCancelSync: () => void;
   onCancelPreview: () => void;
@@ -142,12 +145,14 @@ export function DeviceSyncPanel({
   isLoadingSize,
   coverArtMode,
   lyricsMode,
+  id3TagVersion,
   hasFlacOrM4a,
   onToggleItem,
   onToggleConvert,
   onBitrateChange,
   onCoverArtModeChange,
   onLyricsModeChange,
+  onId3TagVersionChange,
   onStartSync,
   onCancelSync,
   onCancelPreview,
@@ -547,6 +552,39 @@ export function DeviceSyncPanel({
                 ))}
               </div>
             )}
+
+            {/* ID3 tag version — legacy players such as the Sony NWZ-B183F
+                ignore ID3v2.4 entirely and fall back to ID3v1 or the filename. */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-body-md font-medium">ID3 tags</span>
+                  <p className="text-caption text-on_surface_variant mt-0.5">
+                    {id3TagVersion === 'v2.3'
+                      ? 'Legacy v2.3 — for older MP3 players that ignore v2.4'
+                      : 'Modern v2.4 — current players'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {(['v2.4', 'v2.3'] as const).map((v) => (
+                    <button
+                      key={v}
+                      data-testid={`id3-${v}-button`}
+                      onClick={() => onId3TagVersionChange(v)}
+                      disabled={isSyncing}
+                      className={`px-2.5 py-1 text-label-sm rounded-lg disabled:cursor-default disabled:opacity-50 ${id3TagVersion === v ? 'bg-primary_container text-on_primary_container' : 'bg-surface_container_highest text-on_surface hover:bg-surface_bright'}`}
+                    >
+                      {v === 'v2.4' ? 'v2.4' : 'v2.3 legacy'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-caption text-on_surface_variant mt-2">
+                {convertToMp3
+                  ? 'Applies to every MP3 written to this device, including ones already synced.'
+                  : 'Applies to MP3 files copied to this device, including ones already synced.'}
+              </p>
+            </div>
           </div>
 
           {/* Cover Art Mode */}
@@ -602,7 +640,7 @@ export function DeviceSyncPanel({
             <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-xl bg-warning/20 border border-warning text-warning text-sm">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
               <span>
-                FLAC/M4A no soportan letras sincronizadas — se embeben como texto plano sin
+                FLAC/M4A cannot hold synchronized lyrics — they are embedded as plain text without
                 timestamps.
               </span>
             </div>

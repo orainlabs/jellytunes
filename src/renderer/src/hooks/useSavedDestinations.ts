@@ -57,7 +57,9 @@ export function useSavedDestinations() {
 
   const updateDestination = (
     id: string,
-    patch: Partial<Pick<SavedDestination, 'convertToMp3' | 'bitrate' | 'coverArtMode'>>,
+    patch: Partial<
+      Pick<SavedDestination, 'convertToMp3' | 'bitrate' | 'coverArtMode' | 'id3TagVersion'>
+    >,
   ): void => {
     setDestinations((prev) => {
       const updated = prev.map((d) => (d.id === id ? { ...d, ...patch } : d));

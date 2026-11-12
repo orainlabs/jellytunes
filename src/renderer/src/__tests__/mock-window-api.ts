@@ -34,6 +34,7 @@ export interface MockWindowApi {
       convertToMp3?: boolean;
       bitrate?: '128k' | '192k' | '320k';
       coverArtMode?: 'off' | 'embed' | 'companion';
+      id3TagVersion?: 'v2.4' | 'v2.3';
     };
   }) => Promise<{
     success: boolean;

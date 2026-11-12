@@ -74,11 +74,12 @@ function buildActivationKey(
     convertToMp3: boolean;
     bitrate: '128k' | '192k' | '320k';
     coverArtMode?: 'off' | 'embed' | 'companion';
+    id3TagVersion?: 'v2.4' | 'v2.3';
   },
 ): string | null {
   if (!options) return null;
   const sortedIds = [...options.itemIds].sort().join(',');
-  return `${path}:${sortedIds}:${options.convertToMp3}:${options.bitrate}:${options.coverArtMode ?? 'embed'}`;
+  return `${path}:${sortedIds}:${options.convertToMp3}:${options.bitrate}:${options.coverArtMode ?? 'embed'}:${options.id3TagVersion ?? 'v2.4'}`;
 }
 
 export function useDeviceSelections() {
@@ -182,6 +183,7 @@ export function useDeviceSelections() {
         convertToMp3: boolean;
         bitrate: '128k' | '192k' | '320k';
         coverArtMode?: 'off' | 'embed' | 'companion';
+        id3TagVersion?: 'v2.4' | 'v2.3';
         /** RunTimeTicks per item id — available from library fetch, no extra HTTP calls */
         itemTicks?: Record<string, number>;
       },
@@ -270,6 +272,7 @@ export function useDeviceSelections() {
                 convertToMp3: options.convertToMp3,
                 bitrate: options.bitrate,
                 coverArtMode: options.coverArtMode ?? 'embed',
+                id3TagVersion: options.id3TagVersion ?? 'v2.4',
               },
             })
             .then(
@@ -704,6 +707,7 @@ export function useDeviceSelections() {
         coverArtMode: 'off' | 'embed' | 'companion';
         convertToMp3: boolean;
         bitrate: '128k' | '192k' | '320k';
+        id3TagVersion: 'v2.4' | 'v2.3';
       }>,
     ) => {
       if (!activeDevicePath) return;
@@ -722,6 +726,9 @@ export function useDeviceSelections() {
               convertToMp3: overrides.convertToMp3,
             }),
             ...(overrides?.bitrate !== undefined && { bitrate: overrides.bitrate }),
+            ...(overrides?.id3TagVersion !== undefined && {
+              id3TagVersion: overrides.id3TagVersion,
+            }),
           }
         : undefined;
 
@@ -768,6 +775,7 @@ export function useDeviceSelections() {
         convertToMp3: boolean,
         bitrate: '128k' | '192k' | '320k',
         coverArtMode?: 'off' | 'embed' | 'companion',
+        id3TagVersion?: 'v2.4' | 'v2.3',
       ) => {
         if (lastOptionsRef.current) {
           lastOptionsRef.current = {
@@ -775,6 +783,7 @@ export function useDeviceSelections() {
             convertToMp3,
             bitrate,
             coverArtMode: coverArtMode ?? lastOptionsRef.current.coverArtMode ?? 'embed',
+            id3TagVersion: id3TagVersion ?? lastOptionsRef.current.id3TagVersion ?? 'v2.4',
           };
         }
         bumpRegistryVersion();
