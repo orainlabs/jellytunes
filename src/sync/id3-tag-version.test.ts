@@ -15,7 +15,7 @@
  *      on-disk ID3 header/frames to prove the version, TYER/TDRC swap and
  *      text encoding.
  */
-import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from 'vitest';
 import { spawnSync } from 'child_process';
 import { mkdtempSync, readFileSync, statSync } from 'fs';
 import { PassThrough } from 'stream';
@@ -36,13 +36,40 @@ vi.mock('./ffmpeg-path', () => ({
 }));
 
 // sync-core imports the database module at load time; mock it so these tests
-// do not need a built better-sqlite3 binding.
+// do not need a built better-sqlite3 binding. The mock persists records across
+// a sync + analyzeDiff, which is what the false "out of sync" regression needs.
+const dbState = vi.hoisted(() => ({
+  records: [] as Array<Record<string, unknown>>,
+}));
+
 vi.mock('../main/database', () => ({
   initDatabase: vi.fn(),
   closeDatabase: vi.fn(),
-  upsertSyncedTrack: vi.fn(),
-  getSyncedTracksForDevice: vi.fn(() => []),
-  getSyncedTracksForItem: vi.fn(() => []),
+  upsertSyncedTrack: vi.fn((...args: unknown[]) => {
+    const record: Record<string, unknown> = {
+      id: dbState.records.length + 1,
+      deviceId: 1,
+      itemId: args[1],
+      trackId: args[2],
+      destinationPath: args[3],
+      fileSize: args[4],
+      metadataHash: args[5],
+      coverArtMode: args[6],
+      encodedBitrate: args[7],
+      serverPath: args[8],
+      serverRootPath: args[9],
+      lyricsMode: args[10],
+      id3TagVersion: args[11],
+      syncedAt: new Date().toISOString(),
+    };
+    const index = dbState.records.findIndex((r) => r.trackId === record.trackId);
+    if (index === -1) dbState.records.push(record);
+    else dbState.records[index] = record;
+  }),
+  getSyncedTracksForDevice: vi.fn(() => dbState.records),
+  getSyncedTracksForItem: vi.fn((_mountPoint: string, itemId: string) =>
+    dbState.records.filter((r) => r.itemId === itemId),
+  ),
   getSyncedItems: vi.fn(() => []),
   removeSyncedTracksForItem: vi.fn(),
   removeSyncedTrack: vi.fn(),
@@ -252,6 +279,153 @@ describe('SyncCore propagates the per-destination setting', () => {
     await core.sync({ itemIds: [], itemTypes: new Map(), destinationPath: '/mnt/usb' });
 
     expect(converter.setId3TagVersion).toHaveBeenCalledWith('v2.4');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Post-sync diff must stay clean
+// ---------------------------------------------------------------------------
+
+describe('analyzeDiff after sync reports no pending work', () => {
+  const config: SyncConfig = {
+    serverUrl: 'https://jellyfin.test',
+    apiKey: 'key',
+    userId: '0123456789abcdef0123456789abcdef',
+  };
+  const ITEM_ID = 'album-1';
+  // Mirrors the mock download body in createMockApiClient (ID3 + MPEG header);
+  // matching size keeps download validation deterministic.
+  const BODY_SIZE = 1037;
+
+  function makeTrack(overrides: Record<string, unknown>) {
+    return {
+      id: 'track',
+      name: 'Track',
+      album: 'Album',
+      artists: ['Artist'],
+      albumArtist: 'Artist',
+      path: '/music/Artist/Album/track.flac',
+      format: 'flac',
+      size: BODY_SIZE,
+      trackNumber: 1,
+      parentItemId: ITEM_ID,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    dbState.records.length = 0;
+  });
+
+  it('does not flag a copied MP3 as bitrate-changed when conversion is on', async () => {
+    // 128 kbps MP3 with a 320k target: needsConversion() is false, so the
+    // track is copied as-is and no encodedBitrate is stored. The diff must
+    // mirror that rule instead of comparing null against the target bitrate.
+    const tracks = [
+      makeTrack({
+        id: 'mp3-track',
+        name: 'Already MP3',
+        path: '/music/Artist/Album/already.mp3',
+        format: 'mp3',
+        bitrate: 128_000,
+      }),
+      makeTrack({
+        id: 'flac-track',
+        name: 'Needs Conversion',
+        path: '/music/Artist/Album/lossless.flac',
+        format: 'flac',
+      }),
+    ];
+
+    const fs = createMockFileSystem();
+    fs.__setDirectory?.('/mnt/usb');
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks, errors: [] }),
+    });
+    const core = createSyncCore(config, { api, fs, converter: createMockConverter() });
+    const syncOptions = {
+      convertToMp3: true,
+      bitrate: '320k' as const,
+      coverArtMode: 'embed' as const,
+      id3TagVersion: 'v2.3' as const,
+    };
+    const itemTypes = new Map([[ITEM_ID, 'album' as const]]);
+
+    await core.sync({
+      itemIds: [ITEM_ID],
+      itemTypes,
+      destinationPath: '/mnt/usb',
+      options: syncOptions,
+    });
+    expect(dbState.records).toHaveLength(2);
+
+    const diff = await core.analyzeDiff(
+      [ITEM_ID],
+      itemTypes,
+      '/mnt/usb',
+      syncOptions,
+      new Map([[ITEM_ID, tracks]]),
+    );
+
+    expect(diff.totals.metadataChanged).toBe(0);
+    expect(diff.totals.pathChanged).toBe(0);
+    expect(diff.totals.newTracks).toBe(0);
+  });
+
+  it('stays clean after flipping an existing sync from v2.4 to legacy v2.3', async () => {
+    const tracks = [
+      makeTrack({
+        id: 'mp3-track',
+        name: 'Already MP3',
+        path: '/music/Artist/Album/already.mp3',
+        format: 'mp3',
+        bitrate: 128_000,
+      }),
+      makeTrack({
+        id: 'flac-track',
+        name: 'Needs Conversion',
+        path: '/music/Artist/Album/lossless.flac',
+        format: 'flac',
+      }),
+    ];
+
+    const fs = createMockFileSystem();
+    fs.__setDirectory?.('/mnt/usb');
+    const api = createMockApiClient({
+      getTracksForItems: async () => ({ tracks, errors: [] }),
+    });
+    const core = createSyncCore(config, { api, fs, converter: createMockConverter() });
+    const itemTypes = new Map([[ITEM_ID, 'album' as const]]);
+    const base = { convertToMp3: true, bitrate: '320k' as const, coverArtMode: 'embed' as const };
+
+    // First sync: modern tags.
+    await core.sync({
+      itemIds: [ITEM_ID],
+      itemTypes,
+      destinationPath: '/mnt/usb',
+      options: { ...base, id3TagVersion: 'v2.4' },
+    });
+    // Second sync: the user flips the toggle. Existing MP3s are re-tagged.
+    await core.sync({
+      itemIds: [ITEM_ID],
+      itemTypes,
+      destinationPath: '/mnt/usb',
+      options: { ...base, id3TagVersion: 'v2.3' },
+    });
+
+    expect(dbState.records.map((r) => r.id3TagVersion)).toEqual(['v2.3', 'v2.3']);
+
+    const diff = await core.analyzeDiff(
+      [ITEM_ID],
+      itemTypes,
+      '/mnt/usb',
+      { ...base, id3TagVersion: 'v2.3' },
+      new Map([[ITEM_ID, tracks]]),
+    );
+
+    expect(diff.totals.metadataChanged).toBe(0);
+    expect(diff.totals.pathChanged).toBe(0);
+    expect(diff.totals.newTracks).toBe(0);
   });
 });
 

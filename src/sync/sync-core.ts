@@ -2678,6 +2678,15 @@ class SyncCoreImpl {
       for (const track of serverTracks) {
         const synced = syncedItemMap.get(track.id);
 
+        // Mirror the sync engine's conversion rule exactly. An MP3 at or
+        // below the target bitrate (or with an unknown bitrate) is copied
+        // as-is and stores no encoded_bitrate; comparing that null against
+        // the target made every such track look permanently out of sync the
+        // moment conversion was enabled.
+        const targetBitrateKbps = parseBitrateKbps(options.bitrate);
+        const willConvert =
+          options.convertToMp3 === true && needsConversion(track, targetBitrateKbps);
+
         // ORAIN-0705 AC3: when an `fs` is provided, gate the preview on actual
         // on-disk presence. A synced_tracks record whose destinationPath no
         // longer exists (formatted device, swap to a different volume mounted
@@ -2743,7 +2752,7 @@ class SyncCoreImpl {
               pathChanged: prev.pathChanged,
             });
           }
-        } else if (options.convertToMp3 && synced.encodedBitrate !== options.bitrate) {
+        } else if (willConvert && synced.encodedBitrate !== options.bitrate) {
           changes.push({ trackId: track.id, trackName: track.name, changeType: 'bitrate_changed' });
           totalMetaChanged++;
           if (track.parentItemId) {
