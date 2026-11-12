@@ -52,14 +52,14 @@ Playwright projects are the standing gate for both ends of that range:
 | `jellyfin-v12` | `jellyfin/jellyfin:12.0-rc7.20260831-232051` | `EnableLegacyAuthorization=false`, modern `Authorization: MediaBrowser` only |
 
 `rebuild.sh v12` injects the hardening flag into `system.xml` before baking the
-image. Both suites run the same 10 scenarios and are expected to end **13 passed /
+image. Both suites run the same 11 scenarios and are expected to end **15 passed /
 1 skipped** (E5 is the parked `fixme`; E10 is the new password-mode spec added
 in ORAIN-0564 SO-3). Audited green end-to-end against real containers in
 ORAIN-0599 (see `docs/JELLYFIN_API.md` → "Authentication header").
 
 ## Test Status
 
-The suite runs 10 scenarios (14 Playwright tests):
+The suite runs 11 scenarios (16 Playwright tests):
 
 | Scenario                   | Status     | Notes                                                                                                                                                                                   |
 | -------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -73,6 +73,7 @@ The suite runs 10 scenarios (14 Playwright tests):
 | **E8** Metadata layout     | ✅ Passing | Untagged album (AlbumId→MusicAlbum) and compilation folder placement — 2 tests                                                                                                          |
 | **E9** Navigation          | ✅ Passing | Tabs, server-side search and select-all — 4 tests, no sync, fastest in the suite                                                                                                        |
 | **E10** Password auth      | ✅ Passing | Same library assertion as E1 but drives `login()` in `'password'` mode. Both projects run it. (ORAIN-0564 SO-3)                                                                         |
+| **E12** Legacy ID3 tags    | ✅ Passing | Converts FLAC with v2.3 tags (`TYER`, no v1) and checks copied MP3s stay in sync on a second preview — 2 tests                                                                          |
 
 The dual-project matrix exercises **both** auth flows against both Jellyfin
 majors:

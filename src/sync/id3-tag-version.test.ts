@@ -584,4 +584,48 @@ describe.skipIf(!canRunReal)('real FFmpeg produces the expected ID3 bytes', () =
     const info = parseId3(readFileSync(out));
     expect(info?.major).toBe(3);
   });
+
+  it('re-tagging preserves composer, ISRC, copyright and comment', async () => {
+    // The legacy toggle makes re-tagging routine. FFmpeg copies the input's
+    // tag dictionary by default and only overrides the keys passed with
+    // -metadata, so fields sourced from the file must survive a retag.
+    const seeded = join(dir, 'seeded-tags.mp3');
+    const gen = spawnSync('ffmpeg', [
+      '-y',
+      '-i',
+      flac,
+      '-c:a',
+      'libmp3lame',
+      '-b:a',
+      '192k',
+      '-id3v2_version',
+      '3',
+      '-metadata',
+      'composer=Composer Name',
+      '-metadata',
+      'isrc=USABC1234567',
+      '-metadata',
+      'copyright=2026 Label',
+      '-metadata',
+      'comment=Source comment',
+      seeded,
+    ]);
+    expect(gen.status).toBe(0);
+
+    const out = join(dir, 'retagged-preserved.mp3');
+    const converter = createFFmpegConverter();
+    converter.setId3TagVersion?.('v2.3');
+    const result = await converter.tagFile(seeded, out, { title: 'New Title' });
+    expect(result.success).toBe(true);
+
+    const data = readFileSync(out);
+    const info = parseId3(data);
+    expect(info?.major).toBe(3);
+    expect(info?.frames).toContain('TCOM');
+    expect(info?.frames).toContain('TCOP');
+    // FFmpeg writes ISRC and comment as TXXX user-defined frames; asserting
+    // the payloads proves the values themselves survived the rewrite.
+    expect(data.includes('USABC1234567')).toBe(true);
+    expect(data.includes('Source comment')).toBe(true);
+  });
 });
