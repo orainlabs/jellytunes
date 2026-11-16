@@ -356,7 +356,10 @@ describe('useSync', () => {
 
       // Verify revalidateDevice is called with the current coverArtMode from state
       // This prevents the bug where stale 'embed' was used instead of 'companion'
-      expect(revalidateDevice).toHaveBeenCalledWith({ coverArtMode: 'companion' });
+      expect(revalidateDevice).toHaveBeenCalledWith({
+        coverArtMode: 'companion',
+        id3TagVersion: 'v2.4',
+      });
     });
   });
 

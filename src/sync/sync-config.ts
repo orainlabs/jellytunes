@@ -18,6 +18,7 @@ export const DEFAULT_SYNC_OPTIONS: Omit<Required<SyncOptions>, 'platform'> & {
 } = {
   convertToMp3: false,
   bitrate: '192k',
+  id3TagVersion: 'v2.4',
   skipExisting: true,
   preserveStructure: true,
   filesystemType: 'unknown',

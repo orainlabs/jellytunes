@@ -87,6 +87,8 @@ function renderPanel(overrides: Partial<Parameters<typeof DeviceSyncPanel>[0]> =
     onRemoveDestination: vi.fn(),
     lyricsMode: 'off' as const,
     onLyricsModeChange: vi.fn(),
+    id3TagVersion: 'v2.4' as const,
+    onId3TagVersionChange: vi.fn(),
     hasFlacOrM4a: false,
     ...overrides,
   };
@@ -192,6 +194,46 @@ describe('DeviceSyncPanel', () => {
       await renderPanelAndSettle({ convertToMp3: true, onBitrateChange });
       await userEvent.click(screen.getByText('320k'));
       expect(onBitrateChange).toHaveBeenCalledWith('320k');
+    });
+
+    it('shows modern ID3 tags by default', async () => {
+      await renderPanelAndSettle({ convertToMp3: true });
+      expect(screen.getByText('Use legacy ID3 tags')).toBeInTheDocument();
+      expect(screen.getByText(/ID3v2\.4 — current players/i)).toBeInTheDocument();
+      const toggle = screen.getByTestId('id3-legacy-toggle');
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      expect(toggle).not.toHaveClass('bg-primary_container');
+    });
+
+    it('describes the legacy mode when v2.3 is selected', async () => {
+      await renderPanelAndSettle({ convertToMp3: true, id3TagVersion: 'v2.3' });
+      expect(screen.getByText(/ID3v2\.3 — for older MP3 players/i)).toBeInTheDocument();
+      const toggle = screen.getByTestId('id3-legacy-toggle');
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+      expect(toggle).toHaveClass('bg-primary_container');
+    });
+
+    it('switches to legacy v2.3 when the toggle is turned on', async () => {
+      const onId3TagVersionChange = vi.fn();
+      await renderPanelAndSettle({ convertToMp3: true, onId3TagVersionChange });
+      await userEvent.click(screen.getByTestId('id3-legacy-toggle'));
+      expect(onId3TagVersionChange).toHaveBeenCalledWith('v2.3');
+    });
+
+    it('switches back to modern v2.4 when the toggle is turned off', async () => {
+      const onId3TagVersionChange = vi.fn();
+      await renderPanelAndSettle({
+        convertToMp3: true,
+        id3TagVersion: 'v2.3',
+        onId3TagVersionChange,
+      });
+      await userEvent.click(screen.getByTestId('id3-legacy-toggle'));
+      expect(onId3TagVersionChange).toHaveBeenCalledWith('v2.4');
+    });
+
+    it('offers the ID3 toggle even when conversion is off (copied MP3s get re-tagged)', async () => {
+      await renderPanelAndSettle({ convertToMp3: false });
+      expect(screen.getByTestId('id3-legacy-toggle')).toBeInTheDocument();
     });
   });
 
@@ -471,7 +513,7 @@ describe('DeviceSyncPanel', () => {
   });
 
   describe('lyrics warning', () => {
-    const LYRICS_WARNING = /FLAC\/M4A no soportan letras sincronizadas/i;
+    const LYRICS_WARNING = /FLAC\/M4A cannot hold synchronized lyrics/i;
 
     it('shows FLAC/M4A warning when lyricsMode is embed and has flac tracks', async () => {
       await renderPanelAndSettle({

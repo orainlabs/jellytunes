@@ -44,6 +44,8 @@ export type {
   DestinationValidation,
   ProgressCallback,
   CoverArtMode,
+  LyricsMode,
+  Id3TagVersion,
   TrackChangeType,
   TrackChange,
   ItemDiff,

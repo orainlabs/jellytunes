@@ -129,6 +129,9 @@ vi.mock('better-sqlite3', () => {
                 cover_art_mode: args[6] as string,
                 encoded_bitrate: args[7] as string | null,
                 server_path: args[8] as string | null,
+                server_root_path: args[9] as string | null,
+                lyrics_mode: args[10] as string | undefined,
+                id3_tag_version: args[11] as string | undefined,
                 synced_at: new Date().toISOString(),
               });
               return { lastInsertRowid: id, changes: existing ? 0 : 1 };
@@ -376,6 +379,35 @@ describe('synced_tracks table', () => {
       expect(row!.cover_art_mode).toBe('embed');
       expect(row!.encoded_bitrate).toBe('192k');
       expect(row!.server_path).toBe('/music/track.flac');
+      // Absent argument means the modern default, preserving pre-setting rows.
+      expect(row!.id3_tag_version).toBe('v2.4');
+    });
+
+    it('stores the legacy ID3 tag version when one is supplied', () => {
+      state.devices.set(1, {
+        id: 1,
+        mount_point: '/mnt/usb',
+        name: 'USB',
+        last_sync_at: null,
+      } as MockRow);
+
+      upsertSyncedTrack(
+        '/mnt/usb',
+        'album-1',
+        'track-1',
+        '/mnt/usb/track.mp3',
+        5000000,
+        'abc123',
+        'embed',
+        '192k',
+        '/music/track.flac',
+        null,
+        'off',
+        'v2.3',
+      );
+
+      const row = state.synced_tracks.get('track-1');
+      expect(row!.id3_tag_version).toBe('v2.3');
     });
 
     it('updates existing record on conflict (same device_id, track_id)', () => {

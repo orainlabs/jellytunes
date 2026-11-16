@@ -13,6 +13,7 @@ import type {
   Playlist,
   Genre,
   Bitrate,
+  Id3TagVersion,
 } from './appTypes';
 import { assertExhaustive } from './utils/assertExhaustive';
 
@@ -244,6 +245,7 @@ function AppConnected({
     forcedConvert?: boolean,
     forcedBitrate?: Bitrate,
     forcedCover?: 'off' | 'embed' | 'companion',
+    forcedId3?: Id3TagVersion,
   ) => {
     if (!connection.jellyfinConfig || !connection.userId) return;
 
@@ -312,17 +314,20 @@ function AppConnected({
     const savedConvert = forcedConvert ?? savedDest?.convertToMp3 ?? sync.convertToMp3;
     const savedBitrate = forcedBitrate ?? savedDest?.bitrate ?? sync.bitrate;
     const savedCover = forcedCover ?? savedDest?.coverArtMode ?? 'embed';
+    const savedId3 = forcedId3 ?? savedDest?.id3TagVersion ?? sync.id3TagVersion;
 
     // Sync global state to saved prefs so the panel shows correct values on arrival
     if (
       savedDest &&
       (savedConvert !== sync.convertToMp3 ||
         savedBitrate !== sync.bitrate ||
-        savedCover !== sync.coverArtMode)
+        savedCover !== sync.coverArtMode ||
+        savedId3 !== sync.id3TagVersion)
     ) {
       sync.setConvertToMp3(savedConvert);
       sync.setBitrate(savedBitrate);
       sync.setCoverArtMode(savedCover);
+      sync.setId3TagVersion(savedId3);
     }
 
     await deviceSelections.activateDevice(path, {
@@ -334,6 +339,7 @@ function AppConnected({
       convertToMp3: savedConvert,
       bitrate: savedBitrate,
       coverArtMode: savedCover,
+      id3TagVersion: savedId3,
       // RunTimeTicks from library fetch — enables instant tick-based size estimation
       itemTicks: {
         ...Object.fromEntries(extArtists.map((a) => [a.Id, a.RunTimeTicks ?? 0])),
@@ -352,6 +358,7 @@ function AppConnected({
     const savedConvert = saved.convertToMp3 ?? sync.convertToMp3;
     const savedBitrate = saved.bitrate ?? sync.bitrate;
     const savedCover = saved.coverArtMode ?? 'embed';
+    const savedId3 = saved.id3TagVersion ?? sync.id3TagVersion;
     if (savedConvert !== sync.convertToMp3 || savedBitrate !== sync.bitrate) {
       sync.setConvertToMp3(savedConvert);
       sync.setBitrate(savedBitrate);
@@ -359,7 +366,10 @@ function AppConnected({
     if (savedCover !== sync.coverArtMode) {
       sync.setCoverArtMode(savedCover);
     }
-    void handleDestinationClick(folder, savedConvert, savedBitrate, savedCover);
+    if (savedId3 !== sync.id3TagVersion) {
+      sync.setId3TagVersion(savedId3);
+    }
+    void handleDestinationClick(folder, savedConvert, savedBitrate, savedCover, savedId3);
   };
 
   const handleRemoveDestination = async (
@@ -619,6 +629,7 @@ function AppConnected({
                 bitrate={sync.bitrate}
                 coverArtMode={sync.coverArtMode}
                 lyricsMode={sync.lyricsMode}
+                id3TagVersion={sync.id3TagVersion}
                 hasFlacOrM4a={hasFlacOrM4a}
                 isSyncing={sync.isSyncing}
                 isActivatingDevice={deviceSelections.isActivatingDevice}
@@ -667,6 +678,25 @@ function AppConnected({
                   if (destId) saveDestPrefs(destId, { coverArtMode: m });
                 }}
                 onLyricsModeChange={(m) => sync.setLyricsMode(m)}
+                onId3TagVersionChange={(v) => {
+                  deviceSelections.updateConvertOptions(
+                    sync.convertToMp3,
+                    sync.bitrate,
+                    sync.coverArtMode,
+                    v,
+                  );
+                  sync.setId3TagVersion(v);
+                  const destId = savedDestinations.find(
+                    (d) => d.path === deviceSelections.activeDevicePath,
+                  )?.id;
+                  if (destId) saveDestPrefs(destId, { id3TagVersion: v });
+                  // Re-run the diff so the preview and out-of-sync badges
+                  // reflect that already-synced MP3s will be re-tagged.
+                  void deviceSelections.revalidateDevice({
+                    coverArtMode: sync.coverArtMode,
+                    id3TagVersion: v,
+                  });
+                }}
                 onStartSync={sync.handleStartSync}
                 onCancelSync={sync.handleCancelSync}
                 onCancelPreview={() => sync.setShowPreview(false)}

@@ -6,7 +6,13 @@
  */
 
 import path from 'path';
-import type { TrackInfo, DestinationValidation, TrackMetadata, SyncLogger } from './types';
+import type {
+  Id3TagVersion,
+  TrackInfo,
+  DestinationValidation,
+  TrackMetadata,
+  SyncLogger,
+} from './types';
 import { resolveFFmpegPath, resolveFFprobePath } from './ffmpeg-path';
 import { getJpegFrameType } from './cover-image';
 
@@ -425,6 +431,18 @@ export interface AudioConverter {
     replayGain: { trackGain: string; trackPeak: string },
     format: string,
   ): Promise<{ success: boolean; error?: string }>;
+
+  /**
+   * Select the ID3 version written into MP3 output.
+   *
+   * Optional so existing test doubles keep working; the real converter
+   * implements it. SyncCore calls this once per sync from
+   * `SyncOptions.id3TagVersion`. It must be applied by EVERY path that
+   * muxes an MP3 (convert, tagFile, embedLyrics, embedReplayGain,
+   * stripCoverArt) — the MP3 muxer otherwise defaults back to v2.4 and
+   * silently undoes the setting on the next pass.
+   */
+  setId3TagVersion?(version: Id3TagVersion): void;
 }
 
 /**
@@ -560,8 +578,26 @@ export function syncErrorMessage(message: string): string {
 export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
   const ffmpegPath = resolveFFmpegPath();
   const ffprobePath = resolveFFprobePath();
+  // Modern by default: FFmpeg's own default, so behaviour is unchanged
+  // unless the user opts into legacy tags per destination.
+  let id3TagVersion: Id3TagVersion = 'v2.4';
+
+  /**
+   * Output options for the MP3 muxer. `-id3v2_version` only exists on the
+   * mp3 muxer, so it must not be passed when the output is FLAC/M4A/etc.
+   * v2.3 makes FFmpeg emit TYER instead of TDRC and UTF-16 for non-ASCII
+   * text frames, which is what legacy players require.
+   */
+  const id3Args = (outputPath: string): string[] =>
+    id3TagVersion === 'v2.3' && path.extname(outputPath).toLowerCase() === '.mp3'
+      ? ['-id3v2_version', '3']
+      : [];
 
   return {
+    setId3TagVersion: (version) => {
+      id3TagVersion = version;
+    },
+
     convertToMp3: async (input, output, bitrate) => {
       assertFilesystemPath(output);
       const { spawn } = require('child_process');
@@ -577,6 +613,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           '44100',
           '-ac',
           '2',
+          ...id3Args(output),
           '-y', // overwrite output
           output,
         ];
@@ -635,6 +672,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           '44100',
           '-ac',
           '2',
+          ...id3Args(output),
           '-y',
           output,
         ];
@@ -733,7 +771,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         if (metadata.comment)
           args.push('-metadata', `comment=${sanitizeMetadataField(metadata.comment)}`);
 
-        args.push('-y', output);
+        args.push(...id3Args(output), '-y', output);
 
         // stdio: ['ignore', 'pipe', 'pipe'] — stdin is no longer piped (we
         // pass the file by path). stderr/stdout remain pipe-able for the
@@ -850,6 +888,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         if (metadata.comment)
           args.push('-metadata', `comment=${sanitizeMetadataField(metadata.comment)}`);
 
+        args.push(...id3Args(tempOutputPath));
         args.push(tempOutputPath);
 
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
@@ -965,10 +1004,12 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
       const path = require('path');
 
       return new Promise((resolve) => {
-        // Use explicit format parameter if provided, otherwise derive from input path
-        const ext = format
-          ? `.${format.replace(/^\./, '')}`
-          : path.extname(inputPath).toLowerCase();
+        // Prefer the file's real extension over the caller-supplied `format`:
+        // that is the SOURCE format and is stale after a FLAC→MP3 conversion.
+        // Using it for the temp name makes the follow-up pass mux an MP3
+        // stream into a `.flac` container, which FFmpeg rejects.
+        const fileExt = path.extname(inputPath).toLowerCase();
+        const ext = fileExt !== '' ? fileExt : format ? `.${format.replace(/^\./, '')}` : '';
         const useTempOutput = inputPath === outputPath;
         const tempOutputPath = useTempOutput
           ? `${os.tmpdir()}/jt-lyrics-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
@@ -996,7 +1037,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           args.push('-metadata', `lyrics=${safeLyrics}`);
         }
 
-        args.push('-c', 'copy', '-y', tempOutputPath);
+        args.push(...id3Args(tempOutputPath), '-c', 'copy', '-y', tempOutputPath);
 
         let stderrOutput = '';
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
@@ -1077,6 +1118,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
           '-vn', // skip video/cover streams
           '-c',
           'copy', // passthrough audio encoding
+          ...id3Args(tempOutputPath),
           '-y', // overwrite output
           tempOutputPath,
         ];
@@ -1149,9 +1191,12 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
       const path = require('path');
 
       return new Promise((resolve) => {
-        const ext = format
-          ? `.${format.replace(/^\./, '')}`
-          : path.extname(inputPath).toLowerCase();
+        // Prefer the file's real extension over the caller-supplied `format`:
+        // that is the SOURCE format and is stale after a FLAC→MP3 conversion.
+        // Using it for the temp name makes the follow-up pass mux an MP3
+        // stream into a `.flac` container, which FFmpeg rejects.
+        const fileExt = path.extname(inputPath).toLowerCase();
+        const ext = fileExt !== '' ? fileExt : format ? `.${format.replace(/^\./, '')}` : '';
         const useTempOutput = inputPath === outputPath;
         const tempOutputPath = useTempOutput
           ? `${os.tmpdir()}/jt-replaygain-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
@@ -1166,7 +1211,7 @@ export function createFFmpegConverter(logger?: SyncLogger): AudioConverter {
         args.push('-metadata', `REPLAYGAIN_TRACK_GAIN=${replayGain.trackGain}`);
         args.push('-metadata', `REPLAYGAIN_TRACK_PEAK=${replayGain.trackPeak}`);
 
-        args.push('-c', 'copy', '-y', tempOutputPath);
+        args.push(...id3Args(tempOutputPath), '-c', 'copy', '-y', tempOutputPath);
 
         let stderrOutput = '';
         const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });

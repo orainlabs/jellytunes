@@ -51,6 +51,8 @@ export interface SyncedTrackRecord {
   /** Lyrics mode at time of sync ('lrc', 'embed', or 'off') */
   lyricsMode: string;
   encodedBitrate: string | null;
+  /** ID3 tag version the MP3 was written with ('v2.4' or 'v2.3'). NULL for legacy records. */
+  id3TagVersion: string | null;
   serverPath: string | null;
   serverRootPath: string | null;
   syncedAt: string;
@@ -110,6 +112,7 @@ export function initDatabase(): void {
       metadata_hash   TEXT,
       cover_art_mode  TEXT NOT NULL DEFAULT 'embed',
       encoded_bitrate TEXT,
+      id3_tag_version TEXT,
       server_path     TEXT,
       server_root_path TEXT,
       synced_at       TEXT NOT NULL DEFAULT (datetime('now')),
@@ -145,6 +148,12 @@ export function initDatabase(): void {
   // Migration: add lyrics_mode column for tracking lyrics sync mode per track
   if (!columnExists(db, 'synced_tracks', 'lyrics_mode')) {
     db.exec("ALTER TABLE synced_tracks ADD COLUMN lyrics_mode TEXT NOT NULL DEFAULT 'off'");
+  }
+  // Migration: track the ID3 version of MP3 outputs so switching between
+  // modern (v2.4) and legacy (v2.3) tags re-tags already-synced tracks.
+  // NULL means the column predates this setting; callers treat it as v2.4.
+  if (!columnExists(db, 'synced_tracks', 'id3_tag_version')) {
+    db.exec('ALTER TABLE synced_tracks ADD COLUMN id3_tag_version TEXT');
   }
 
   log.info('Database ready');
@@ -373,6 +382,7 @@ export function upsertSyncedTrack(
   serverPath: string | null,
   serverRootPath: string | null,
   lyricsMode: string = 'off',
+  id3TagVersion: string = 'v2.4',
 ): void {
   const database = requireDb();
   // Auto-register device if not yet in DB — must exist before we can insert tracks
@@ -381,8 +391,8 @@ export function upsertSyncedTrack(
   database
     .prepare(
       `
-      INSERT INTO synced_tracks (device_id, item_id, track_id, destination_path, file_size, metadata_hash, cover_art_mode, encoded_bitrate, server_path, server_root_path, lyrics_mode, synced_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      INSERT INTO synced_tracks (device_id, item_id, track_id, destination_path, file_size, metadata_hash, cover_art_mode, encoded_bitrate, server_path, server_root_path, lyrics_mode, id3_tag_version, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(device_id, track_id) DO UPDATE SET
         destination_path = excluded.destination_path,
         file_size = excluded.file_size,
@@ -392,6 +402,7 @@ export function upsertSyncedTrack(
         server_path = excluded.server_path,
         server_root_path = excluded.server_root_path,
         lyrics_mode = excluded.lyrics_mode,
+        id3_tag_version = excluded.id3_tag_version,
         synced_at = datetime('now')
     `,
     )
@@ -407,6 +418,7 @@ export function upsertSyncedTrack(
       serverPath,
       serverRootPath,
       lyricsMode,
+      id3TagVersion,
     );
 }
 
@@ -427,6 +439,7 @@ export function getSyncedTracksForDevice(mountPoint: string): SyncedTrackRecord[
              destination_path AS destinationPath, file_size AS fileSize,
              metadata_hash AS metadataHash, cover_art_mode AS coverArtMode,
              lyrics_mode AS lyricsMode,
+             id3_tag_version AS id3TagVersion,
              encoded_bitrate AS encodedBitrate, server_path AS serverPath,
              server_root_path AS serverRootPath, synced_at AS syncedAt
       FROM synced_tracks
@@ -454,6 +467,7 @@ export function getSyncedTracksForItem(mountPoint: string, itemId: string): Sync
              destination_path AS destinationPath, file_size AS fileSize,
              metadata_hash AS metadataHash, cover_art_mode AS coverArtMode,
              lyrics_mode AS lyricsMode,
+             id3_tag_version AS id3TagVersion,
              encoded_bitrate AS encodedBitrate, server_path AS serverPath,
              server_root_path AS serverRootPath, synced_at AS syncedAt
       FROM synced_tracks

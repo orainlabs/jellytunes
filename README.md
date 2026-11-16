@@ -30,6 +30,7 @@ JellyTunes is a desktop app for [Jellyfin](https://jellyfin.org) users who want 
 - **Out-of-sync detection** — tracks that changed on the server since the last sync are automatically flagged for update
 - **Sync preview** — a three-column breakdown of exactly what will be added, updated, or removed — with per-category track count, size, and duration — before you commit to a sync
 - **FLAC to MP3 conversion** — built-in FFmpeg support with configurable bitrate (128k / 192k / 320k); settings saved per device
+- **Legacy ID3 tags** — write MP3 tags as ID3v2.3 for older players that cannot read ID3v2.4 (for example Sony Walkman models); configurable per device, and switching modes re-tags files already on the device
 - **Lyrics sync** — download `.lrc` sidecar files or embed lyrics directly into tracks (supports Jellyfin 10.9+ JSON lyrics); mode is configurable per device
 - **Cover art modes** — embed cover art into each track or write companion `cover.jpg` files; chosen per device and persisted
 - **ReplayGain tags** — ReplayGain metadata from Jellyfin is embedded into synced tracks for consistent playback volume

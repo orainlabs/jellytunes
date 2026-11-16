@@ -6385,6 +6385,7 @@ describe('cleanEmptyDir', () => {
             serverPath: string | null,
             serverRootPath: string | null,
             lyricsMode = 'off',
+            id3TagVersion = 'v2.4',
           ) => {
             const existing = sharedRecords.find((r) => r.trackId === trackId);
             if (existing) {
@@ -6412,6 +6413,7 @@ describe('cleanEmptyDir', () => {
                 serverPath: serverPath ?? null,
                 serverRootPath: serverRootPath ?? null,
                 lyricsMode,
+                id3TagVersion: id3TagVersion ?? 'v2.4',
                 syncedAt: new Date().toISOString(),
               });
             }
@@ -7465,6 +7467,7 @@ describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
       metadataHash: overrides.metadataHash ?? HASH_0705,
       coverArtMode: 'embed',
       encodedBitrate: '192k',
+      id3TagVersion: 'v2.4',
       serverPath: '/music/Artist/Album/track.mp3',
       serverRootPath: null,
       syncedAt: new Date().toISOString(),
@@ -7656,6 +7659,59 @@ describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
       expect.stringContaining('Artist/Album 2'),
       expect.any(String),
       'off',
+      'v2.4',
+    );
+  });
+
+  it('re-tags an already-synced MP3 when id3TagVersion changes (no re-download)', async () => {
+    const downloadSpy = vi.fn();
+    const tagFileSpy = vi.fn(async () => ({ success: true }));
+
+    const fsMock = createMockFileSystem();
+    const SYNCED_PATH = '/music/music/Artist/Album 2/track.mp3';
+    fsMock.__setDirectory?.('/music/music/Artist/Album 2');
+    fsMock.writeFile(SYNCED_PATH, Buffer.from('present'));
+
+    const deps = createMockDeps({
+      api: createMockApiClient({
+        getTracksForItems: async () => ({
+          tracks: [makeTrack({ path: '/music/Artist/Album 2/track.mp3' })],
+          errors: [],
+        }),
+        downloadItem: downloadSpy,
+      }),
+      fs: fsMock,
+      converter: { ...createMockConverter(), tagFile: tagFileSpy },
+    });
+
+    const record = existingRecord({ destinationPath: SYNCED_PATH });
+    vi.mocked(getSyncedTracksForDevice).mockReturnValue([record] as any);
+    vi.mocked(getSyncedTracksForItem).mockReturnValue([record] as any);
+
+    const core = createTestSyncCore(validConfig, deps);
+    await core.sync({
+      itemIds: ['album-0705'],
+      itemTypes: new Map([['album-0705', 'album' as ItemType]]),
+      destinationPath: '/music',
+      options: { convertToMp3: false, id3TagVersion: 'v2.3' },
+    });
+
+    // Existing audio is re-tagged in place; nothing is downloaded.
+    expect(tagFileSpy).toHaveBeenCalledTimes(1);
+    expect(downloadSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(upsertSyncedTrack)).toHaveBeenCalledWith(
+      '/music',
+      '',
+      'track-0705',
+      SYNCED_PATH,
+      expect.any(Number),
+      HASH_0705,
+      'embed',
+      null,
+      expect.stringContaining('Artist/Album 2'),
+      expect.any(String),
+      'off',
+      'v2.3',
     );
   });
 
@@ -7714,6 +7770,7 @@ describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
       expect.stringContaining('Artist/Album 2'),
       expect.any(String),
       'off',
+      'v2.4',
     );
   });
 
@@ -7801,6 +7858,7 @@ describe('ORAIN-0705: defensive sync on formatted/wiped device', () => {
       expect.stringContaining('Artist/Album 2'),
       expect.any(String),
       'off',
+      'v2.4',
     );
     expect(result.success).toBe(true);
     expect(result.errors ?? []).toHaveLength(0);

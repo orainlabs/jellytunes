@@ -126,6 +126,7 @@ describe('formatSyncStart', () => {
       coverArtMode: 'embed',
       lyricsMode: 'lrc',
       embedMetadata: true,
+      id3TagVersion: 'v2.3',
     },
     syncId: 'abc123',
   };
@@ -147,6 +148,7 @@ describe('formatSyncStart', () => {
     expect(out).toContain('cover=embed');
     expect(out).toContain('lyrics=lrc');
     expect(out).toContain('retag=true');
+    expect(out).toContain('id3=v2.3');
   });
 
   it('redacts home in destinationPath before formatting', () => {
